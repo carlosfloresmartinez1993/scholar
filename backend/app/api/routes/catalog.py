@@ -413,6 +413,34 @@ async def create_group(
     return group
 
 
+@router.get("/groups/{group_id}/students")
+async def list_group_students(
+    session: SessionDep, _: AnyStaff, group_id: uuid.UUID
+) -> list[dict]:
+    """Enrolled students of a group (staff view; the integration API has its own)."""
+    from app.models import GroupEnrollment, Student
+
+    rows = (
+        await session.exec(
+            select(Student, GroupEnrollment)
+            .join(GroupEnrollment, GroupEnrollment.student_id == Student.id)
+            .where(GroupEnrollment.group_id == group_id)
+            .order_by(Student.full_name)
+        )
+    ).all()
+    return [
+        {
+            "student_id": str(s.id),
+            "full_name": s.full_name,
+            "curp": s.curp,
+            "enrollment_number": s.enrollment_number,
+            "kind": e.kind,
+            "status": e.status,
+        }
+        for s, e in rows
+    ]
+
+
 @router.get("/groups/{group_id}/subjects")
 async def list_group_subjects(
     session: SessionDep, _: AnyStaff, group_id: uuid.UUID
