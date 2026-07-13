@@ -7,6 +7,7 @@ import {
   BadgeDollarSign,
   CalendarDays,
   Check,
+  Eye,
   FilePlus,
   FileText,
   Pencil,
@@ -522,6 +523,15 @@ function ExpedienteTab({ student }: { student: Student }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
+                    <Button variant="ghost" size="sm" asChild>
+                      <a
+                        href={`/api/v1/documents/files/${d.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Eye className="size-4" /> Ver
+                      </a>
+                    </Button>
                     {d.status === "pendiente" && (
                       <>
                         <Button

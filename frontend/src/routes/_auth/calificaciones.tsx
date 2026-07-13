@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { FileSignature, FileText, NotebookPen } from "lucide-react";
+import { Eye, FileSignature, FileText, NotebookPen } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
@@ -336,6 +336,7 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
   const [kind, setKind] = useState<ActaKind>("ordinaria");
   const [signing, setSigning] = useState<GradeActa | null>(null);
   const [signName, setSignName] = useState("");
+  const [viewing, setViewing] = useState<GradeActa | null>(null);
 
   const generate = useMutation({
     mutationFn: () =>
@@ -426,7 +427,10 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
                     <Badge variant="outline">Sin firmar</Badge>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell className="whitespace-nowrap">
+                  <Button variant="ghost" size="sm" onClick={() => setViewing(a)}>
+                    <Eye className="size-4" /> Ver
+                  </Button>
                   {!a.signed_at && (
                     <Button
                       variant="ghost"
@@ -488,6 +492,85 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
           </form>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={!!viewing}
+        onOpenChange={(v) => {
+          if (!v) setViewing(null);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Acta {viewing?.folio}
+              <span className="ml-2 font-normal capitalize text-muted-foreground">
+                {viewing?.kind}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          {viewing && <ActaSnapshot acta={viewing} />}
+        </DialogContent>
+      </Dialog>
     </section>
+  );
+}
+
+interface ActaSnapshotRow {
+  matricula: string;
+  curp: string;
+  nombre: string;
+  calificacion: number | null;
+  estatus: keyof typeof SUBJECT_STATUS_LABELS;
+}
+
+function ActaSnapshot({ acta }: { acta: GradeActa }) {
+  let rows: ActaSnapshotRow[] = [];
+  try {
+    rows = JSON.parse(acta.snapshot);
+  } catch {
+    return <p className="text-sm text-destructive">Acta ilegible</p>;
+  }
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Generada el {formatDateTime(acta.generated_at)}
+        {acta.signed_at &&
+          ` · Firmada por ${acta.signed_by_name} el ${formatDateTime(acta.signed_at)}`}
+      </p>
+      <div className="rounded-xl border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Matrícula</TableHead>
+              <TableHead>Alumno</TableHead>
+              <TableHead>Calificación</TableHead>
+              <TableHead>Estatus</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.matricula}>
+                <TableCell data-numeric>{r.matricula}</TableCell>
+                <TableCell className="font-semibold">{r.nombre}</TableCell>
+                <TableCell data-numeric>{r.calificacion ?? "—"}</TableCell>
+                <TableCell>
+                  {SUBJECT_STATUS_LABELS[r.estatus] ?? r.estatus}
+                </TableCell>
+              </TableRow>
+            ))}
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={4}
+                  className="py-6 text-center text-muted-foreground"
+                >
+                  Sin alumnos en el acta
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
   );
 }
