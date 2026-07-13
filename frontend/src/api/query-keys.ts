@@ -44,6 +44,12 @@ export const queryKeys = {
   issuedDocuments: (studentId?: string) =>
     ["issued-documents", studentId ?? "all"] as const,
 
+  calendarPrograms: ["calendar-programs"] as const,
+  calendarGroups: (programId?: string) =>
+    ["calendar-groups", programId ?? "all"] as const,
+  studentCalendar: (studentId: string) =>
+    ["student-calendar", studentId] as const,
+
   concepts: ["concepts"] as const,
   statement: (studentId: string) => ["statement", studentId] as const,
   scholarships: (studentId?: string) =>

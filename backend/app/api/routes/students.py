@@ -17,6 +17,7 @@ from app.models import (
     GroupEnrollmentCreate,
     GroupEnrollmentKind,
     GroupEnrollmentPublic,
+    GroupEnrollmentStatus,
     GroupSubject,
     PlanEnrollmentCreate,
     PlanEnrollmentPublic,
@@ -34,7 +35,7 @@ from app.models import (
     Term,
     UserRole,
 )
-from app.services import audit
+from app.services import audit, calendar
 from app.services.academics import (
     active_plan_enrollment,
     check_prerequisites,
@@ -284,6 +285,36 @@ async def list_subject_enrollments(
             select(SubjectEnrollment).where(SubjectEnrollment.student_id == student_id)
         )
     ).all()
+
+
+# --- Calendar schedule (calendar.inue.online) -----------------------------------------
+
+@router.get("/{student_id}/calendar")
+async def student_calendar(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+) -> dict:
+    """Published schedule blocks of the student's active groups, read from the
+    calendar system via each Group.calendar_group_id link."""
+    if await session.get(Student, student_id) is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    groups = (
+        await session.exec(
+            select(Group)
+            .join(GroupEnrollment, GroupEnrollment.group_id == Group.id)
+            .where(
+                GroupEnrollment.student_id == student_id,
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            )
+        )
+    ).all()
+    linked_groups = [g for g in groups if g.calendar_group_id]
+    if not linked_groups:
+        return {"items": [], "linked": False}
+    items: list[dict] = []
+    for group in linked_groups:
+        blocks = await calendar.get_schedule(group.calendar_group_id)
+        items.extend({"group_code": group.code, **block} for block in blocks)
+    return {"items": items, "linked": True}
 
 
 # --- SEP export (RT-10) --------------------------------------------------------------

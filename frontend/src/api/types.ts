@@ -145,6 +145,7 @@ export interface Program {
   name: string;
   level: EducationLevel;
   is_active: boolean;
+  calendar_program_id?: string | null;
 }
 
 export interface Rvoe {
@@ -211,6 +212,7 @@ export interface Group {
   code: string;
   period_number: number;
   is_active: boolean;
+  calendar_group_id?: string | null;
 }
 
 export interface GroupSubject {
@@ -492,6 +494,48 @@ export interface CollectionReport {
   payments_count: number;
   total: number;
   by_method: Record<string, number>;
+}
+
+// --- Calendar system (calendar.inue.online) ---------------------------------
+
+export interface CalendarProgram {
+  id: string;
+  name: string;
+  rvoe?: string | null;
+  campus: "instituto_siscom" | "inue_presencial" | "inue_online";
+  level: "maestria" | "licenciatura" | "bachillerato";
+}
+
+export interface CalendarGroup {
+  id: string;
+  code: string;
+  program_id?: string | null;
+  term_id: string;
+}
+
+export interface ScheduleMeeting {
+  /** 0 = lunes */
+  weekday: number;
+  start_time: string; // "HH:MM:SS"
+  end_time: string; // "HH:MM:SS"
+}
+
+export interface StudentScheduleItem {
+  id: string;
+  group_code: string;
+  subject: string;
+  professor?: string | null;
+  classroom?: string | null;
+  classroom_is_virtual: boolean;
+  start_date: string;
+  end_date: string;
+  group_codes: string[];
+  meetings: ScheduleMeeting[];
+}
+
+export interface StudentCalendar {
+  items: StudentScheduleItem[];
+  linked: boolean;
 }
 
 export interface AgingRow {

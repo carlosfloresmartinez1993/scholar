@@ -19,6 +19,7 @@ from app.models import (
     GroupSubject,
     GroupSubjectCreate,
     GroupSubjectPublic,
+    GroupUpdate,
     Institution,
     InstitutionPublic,
     InstitutionUpdate,
@@ -31,6 +32,7 @@ from app.models import (
     Program,
     ProgramCreate,
     ProgramPublic,
+    ProgramUpdate,
     Rvoe,
     RvoeCreate,
     RvoePublic,
@@ -41,7 +43,7 @@ from app.models import (
     TermPublic,
     TermUpdate,
 )
-from app.services import audit
+from app.services import audit, calendar
 from app.services.academics import require_operable_rvoe
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -116,6 +118,44 @@ async def create_program(
     await session.commit()
     await session.refresh(program)
     return program
+
+
+@router.patch("/programs/{program_id}")
+async def update_program(
+    session: SessionDep,
+    current_user: ServiciosEscolares,
+    program_id: uuid.UUID,
+    body: ProgramUpdate,
+) -> ProgramPublic:
+    program = await session.get(Program, program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(program, k, v)
+    session.add(program)
+    audit.record(session, actor=current_user.email, action="program.updated",
+                 entity="program", entity_id=str(program_id))
+    await session.commit()
+    await session.refresh(program)
+    return program
+
+
+# --- Calendar system (calendar.inue.online) — linking catalogs ------------------
+
+@router.get("/calendar/programs")
+async def list_calendar_programs(_: AnyStaff) -> list[dict]:
+    """Programs of the calendar system (to link Program.calendar_program_id)."""
+    return await calendar.get_programs()
+
+
+@router.get("/calendar/groups")
+async def list_calendar_groups(
+    _: AnyStaff,
+    term_id: uuid.UUID | None = None,
+    program_id: uuid.UUID | None = None,
+) -> list[dict]:
+    """Groups of the calendar system (to link Group.calendar_group_id)."""
+    return await calendar.get_groups(term_id=term_id, program_id=program_id)
 
 
 # --- RVOE (RT-01/02/03) ---------------------------------------------------------
@@ -408,6 +448,23 @@ async def create_group(
     session.add(group)
     audit.record(session, actor=current_user.email, action="group.created",
                  entity="group", entity_id=str(group.id), detail=group.code)
+    await session.commit()
+    await session.refresh(group)
+    return group
+
+
+@router.patch("/groups/{group_id}")
+async def update_group(
+    session: SessionDep, current_user: AcademicStaff, group_id: uuid.UUID, body: GroupUpdate
+) -> GroupPublic:
+    group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(group, k, v)
+    session.add(group)
+    audit.record(session, actor=current_user.email, action="group.updated",
+                 entity="group", entity_id=str(group_id))
     await session.commit()
     await session.refresh(group)
     return group

@@ -2,8 +2,13 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
-import { api, ApiError } from "@/api/client";
+import { CalendarDays, Plus, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
+import {
+  api,
+  ApiError,
+  getCalendarPrograms,
+  linkProgramToCalendar,
+} from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
   Campus,
@@ -156,6 +161,7 @@ function ProgramasPage() {
         </Table>
       </div>
 
+      {program && <ProgramCalendarLink program={program} />}
       {program && (
         <RvoeSection
           program={program}
@@ -175,6 +181,76 @@ function ProgramasPage() {
       )}
       {planVersionId && <SubjectsSection planVersionId={planVersionId} />}
     </div>
+  );
+}
+
+// --- Calendar link (calendar.inue.online) ---------------------------------------
+
+const NONE = "__none__";
+
+function ProgramCalendarLink({ program }: { program: Program }) {
+  const queryClient = useQueryClient();
+  const { data: calendarPrograms, isError } = useQuery({
+    queryKey: queryKeys.calendarPrograms,
+    queryFn: getCalendarPrograms,
+    retry: false,
+  });
+
+  const link = useMutation({
+    mutationFn: (calendarProgramId: string | null) =>
+      linkProgramToCalendar(program.id, calendarProgramId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.programs });
+      toast.success("Vinculación con el calendario actualizada");
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al vincular"),
+  });
+
+  const linked = calendarPrograms?.find(
+    (cp) => cp.id === program.calendar_program_id,
+  );
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card px-4 py-3">
+      <CalendarDays className="size-4 text-muted-foreground" />
+      <span className="text-sm font-semibold">Calendario</span>
+      {isError ? (
+        <span className="text-sm text-muted-foreground">
+          Integración con el calendario no disponible
+        </span>
+      ) : (
+        <>
+          {program.calendar_program_id ? (
+            <Badge variant="secondary">
+              {linked?.name ?? program.calendar_program_id}
+            </Badge>
+          ) : (
+            <span className="text-sm text-muted-foreground">Sin vincular</span>
+          )}
+          <div className="ml-auto w-72">
+            <Select
+              value={program.calendar_program_id ?? NONE}
+              onValueChange={(v) => link.mutate(v === NONE ? null : v)}
+              disabled={link.isPending}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Vincular programa del calendario" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Sin vincular</SelectItem>
+                {calendarPrograms?.map((cp) => (
+                  <SelectItem key={cp.id} value={cp.id}>
+                    {cp.name}
+                    {cp.rvoe ? ` · RVOE ${cp.rvoe}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

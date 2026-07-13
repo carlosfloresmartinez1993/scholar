@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # Read-only integration API for the calendar system (calendar.inue.online)
     INTEGRATION_API_KEY: str = "changethis"
 
+    # Outbound client for the calendar system (timetable-engine). Empty URL
+    # disables the integration (endpoints depending on it return 503).
+    CALENDAR_API_URL: str = ""
+    CALENDAR_API_KEY: str = "changethis"
+
     # Student/teacher document uploads (mount a volume here in production)
     UPLOADS_DIR: str = "./uploads"
 
@@ -102,6 +107,8 @@ class Settings(BaseSettings):
         self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
         self._check_default_secret("FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD)
         self._check_default_secret("INTEGRATION_API_KEY", self.INTEGRATION_API_KEY)
+        if self.CALENDAR_API_URL:
+            self._check_default_secret("CALENDAR_API_KEY", self.CALENDAR_API_KEY)
         return self
 
 

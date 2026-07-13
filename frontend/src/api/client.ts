@@ -1,3 +1,11 @@
+import type {
+  CalendarGroup,
+  CalendarProgram,
+  Group,
+  Program,
+  StudentCalendar,
+} from "./types";
+
 const BASE_URL = "/api/v1";
 
 let isRefreshing = false;
@@ -107,6 +115,43 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
+
+// --- Calendar system (calendar.inue.online) ---------------------------------
+
+export const getCalendarPrograms = () =>
+  api<CalendarProgram[]>("/catalog/calendar/programs");
+
+export const getCalendarGroups = (filters?: {
+  term_id?: string;
+  program_id?: string;
+}) => {
+  const params = new URLSearchParams();
+  if (filters?.term_id) params.set("term_id", filters.term_id);
+  if (filters?.program_id) params.set("program_id", filters.program_id);
+  const qs = params.toString();
+  return api<CalendarGroup[]>(`/catalog/calendar/groups${qs ? `?${qs}` : ""}`);
+};
+
+export const linkProgramToCalendar = (
+  programId: string,
+  calendarProgramId: string | null,
+) =>
+  api<Program>(`/catalog/programs/${programId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ calendar_program_id: calendarProgramId }),
+  });
+
+export const linkGroupToCalendar = (
+  groupId: string,
+  calendarGroupId: string | null,
+) =>
+  api<Group>(`/catalog/groups/${groupId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ calendar_group_id: calendarGroupId }),
+  });
+
+export const getStudentCalendar = (studentId: string) =>
+  api<StudentCalendar>(`/students/${studentId}/calendar`);
 
 // Public endpoints (no auth, no refresh/redirect)
 export async function apiPublic<T>(

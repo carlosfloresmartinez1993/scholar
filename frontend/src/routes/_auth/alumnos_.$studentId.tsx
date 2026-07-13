@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   BadgeDollarSign,
+  CalendarDays,
   Check,
   FilePlus,
   FileText,
@@ -13,7 +14,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { api, apiUpload, ApiError } from "@/api/client";
+import { api, apiUpload, ApiError, getStudentCalendar } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
   AccountStatement,
@@ -58,6 +59,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/empty-state";
 import { SearchableSelect } from "@/components/searchable-select";
 import {
   Tabs,
@@ -136,6 +138,7 @@ function AlumnoDetailPage() {
           <TabsTrigger value="datos">Datos</TabsTrigger>
           <TabsTrigger value="expediente">Expediente</TabsTrigger>
           <TabsTrigger value="academico">Académico</TabsTrigger>
+          <TabsTrigger value="horario">Horario</TabsTrigger>
           <TabsTrigger value="cuenta">Estado de cuenta</TabsTrigger>
           <TabsTrigger value="justificantes">Justificantes</TabsTrigger>
         </TabsList>
@@ -147,6 +150,9 @@ function AlumnoDetailPage() {
         </TabsContent>
         <TabsContent value="academico" className="mt-4">
           <AcademicoTab student={student} />
+        </TabsContent>
+        <TabsContent value="horario" className="mt-4">
+          <HorarioTab student={student} />
         </TabsContent>
         <TabsContent value="cuenta" className="mt-4">
           <CuentaTab student={student} />
@@ -2155,6 +2161,123 @@ function ScholarshipDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// --- Horario (calendar.inue.online) ---------------------------------------------------
+
+const WEEKDAY_LABELS = [
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado",
+  "Domingo",
+];
+
+/** "HH:MM:SS" -> "HH:MM" */
+const formatTime = (t: string) => t.slice(0, 5);
+
+function HorarioTab({ student }: { student: Student }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.studentCalendar(student.id),
+    queryFn: () => getStudentCalendar(student.id),
+    retry: false,
+  });
+
+  if (isLoading) {
+    return <Skeleton className="h-64 w-full rounded-2xl" />;
+  }
+
+  if (error || !data) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="Horario no disponible"
+        description={
+          error instanceof ApiError
+            ? error.message
+            : "No se pudo consultar el sistema de calendario."
+        }
+      />
+    );
+  }
+
+  if (!data.linked) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="Grupo sin vincular al calendario"
+        description="Los grupos del alumno no están vinculados al sistema de calendario. Vincúlelos en la sección «Grupos» para consultar su horario."
+      />
+    );
+  }
+
+  const rows = data.items
+    .flatMap((item) => item.meetings.map((meeting) => ({ item, meeting })))
+    .sort(
+      (a, b) =>
+        a.meeting.weekday - b.meeting.weekday ||
+        a.meeting.start_time.localeCompare(b.meeting.start_time),
+    );
+
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="Sin clases programadas"
+        description="El calendario aún no tiene bloques publicados para los grupos del alumno."
+      />
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Día</TableHead>
+            <TableHead>Horario</TableHead>
+            <TableHead>Materia</TableHead>
+            <TableHead>Profesor</TableHead>
+            <TableHead>Aula</TableHead>
+            <TableHead>Grupo</TableHead>
+            <TableHead>Vigencia</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(({ item, meeting }, i) => (
+            <TableRow key={`${item.id}-${meeting.weekday}-${meeting.start_time}-${i}`}>
+              <TableCell className="font-semibold">
+                {WEEKDAY_LABELS[meeting.weekday] ?? "—"}
+              </TableCell>
+              <TableCell data-numeric className="whitespace-nowrap">
+                {formatTime(meeting.start_time)} – {formatTime(meeting.end_time)}
+              </TableCell>
+              <TableCell className="font-semibold">{item.subject}</TableCell>
+              <TableCell
+                className={item.professor ? "" : "text-muted-foreground"}
+              >
+                {item.professor ?? "Sin asignar"}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {item.classroom ?? (item.classroom_is_virtual ? "Virtual" : "—")}
+                {item.classroom && item.classroom_is_virtual && (
+                  <Badge variant="outline" className="ml-2">
+                    Virtual
+                  </Badge>
+                )}
+              </TableCell>
+              <TableCell data-numeric>{item.group_code}</TableCell>
+              <TableCell className="whitespace-nowrap text-muted-foreground">
+                {formatDate(item.start_date)} – {formatDate(item.end_date)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 

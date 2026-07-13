@@ -109,6 +109,8 @@ class Program(ProgramBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     institution_id: uuid.UUID = Field(foreign_key="institutions.id", index=True)
     is_active: bool = True
+    # id of the matching program in the calendar system (no FK: other database)
+    calendar_program_id: uuid.UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -116,10 +118,15 @@ class ProgramCreate(ProgramBase):
     pass
 
 
+class ProgramUpdate(SQLModel):
+    calendar_program_id: uuid.UUID | None = None
+
+
 class ProgramPublic(ProgramBase):
     id: uuid.UUID
     institution_id: uuid.UUID
     is_active: bool
+    calendar_program_id: uuid.UUID | None = None
 
 
 class RvoeBase(SQLModel):
@@ -279,6 +286,8 @@ class Group(GroupBase, table=True):
     plan_version_id: uuid.UUID = Field(foreign_key="plan_versions.id", index=True)
     term_id: uuid.UUID = Field(foreign_key="terms.id", index=True)
     campus_id: uuid.UUID = Field(foreign_key="campuses.id", index=True)
+    # id of the matching group in the calendar system (no FK: other database)
+    calendar_group_id: uuid.UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -288,11 +297,16 @@ class GroupCreate(GroupBase):
     campus_id: uuid.UUID
 
 
+class GroupUpdate(SQLModel):
+    calendar_group_id: uuid.UUID | None = None
+
+
 class GroupPublic(GroupBase):
     id: uuid.UUID
     plan_version_id: uuid.UUID
     term_id: uuid.UUID
     campus_id: uuid.UUID
+    calendar_group_id: uuid.UUID | None = None
 
 
 class GroupSubjectBase(SQLModel):

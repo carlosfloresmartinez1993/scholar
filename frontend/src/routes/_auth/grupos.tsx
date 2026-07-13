@@ -7,8 +7,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil, Plus, UserPlus, Users } from "lucide-react";
-import { api, ApiError } from "@/api/client";
+import { CalendarDays, Pencil, Plus, UserPlus, Users } from "lucide-react";
+import {
+  api,
+  ApiError,
+  getCalendarGroups,
+  linkGroupToCalendar,
+} from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
   Campus,
@@ -360,6 +365,94 @@ function CreateGroupDialog({
   );
 }
 
+// --- Calendar link (calendar.inue.online) --------------------------------------
+
+function GroupCalendarLink({ group }: { group: Group }) {
+  const queryClient = useQueryClient();
+  const { data: planVersions } = useQuery({
+    queryKey: queryKeys.planVersions(),
+    queryFn: () => api<PlanVersion[]>("/catalog/plan-versions"),
+  });
+  const { data: rvoes } = useQuery({
+    queryKey: queryKeys.rvoes(),
+    queryFn: () => api<Rvoe[]>("/catalog/rvoes"),
+  });
+  const { data: programs } = useQuery({
+    queryKey: queryKeys.programs,
+    queryFn: () => api<Program[]>("/catalog/programs"),
+  });
+
+  const planVersion = planVersions?.find((pv) => pv.id === group.plan_version_id);
+  const rvoe = rvoes?.find((r) => r.id === planVersion?.rvoe_id);
+  const program = programs?.find((p) => p.id === rvoe?.program_id);
+  const calendarProgramId = program?.calendar_program_id ?? undefined;
+
+  const { data: calendarGroups, isError } = useQuery({
+    queryKey: queryKeys.calendarGroups(calendarProgramId),
+    queryFn: () =>
+      getCalendarGroups(
+        calendarProgramId ? { program_id: calendarProgramId } : undefined,
+      ),
+    retry: false,
+  });
+
+  const link = useMutation({
+    mutationFn: (calendarGroupId: string | null) =>
+      linkGroupToCalendar(group.id, calendarGroupId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
+      toast.success("Vinculación con el calendario actualizada");
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al vincular"),
+  });
+
+  const linked = calendarGroups?.find(
+    (cg) => cg.id === group.calendar_group_id,
+  );
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card px-4 py-3">
+      <CalendarDays className="size-4 text-muted-foreground" />
+      <span className="text-sm font-semibold">Calendario</span>
+      {isError ? (
+        <span className="text-sm text-muted-foreground">
+          Integración con el calendario no disponible
+        </span>
+      ) : (
+        <>
+          {group.calendar_group_id ? (
+            <Badge variant="secondary">
+              {linked?.code ?? group.calendar_group_id}
+            </Badge>
+          ) : (
+            <span className="text-sm text-muted-foreground">Sin vincular</span>
+          )}
+          <div className="ml-auto w-72">
+            <Select
+              value={group.calendar_group_id ?? NONE}
+              onValueChange={(v) => link.mutate(v === NONE ? null : v)}
+              disabled={link.isPending}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Vincular grupo del calendario" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Sin vincular</SelectItem>
+                {calendarGroups?.map((cg) => (
+                  <SelectItem key={cg.id} value={cg.id}>
+                    {cg.code}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 // --- Group detail ------------------------------------------------------------
 
 function GroupDetail({ group }: { group: Group }) {
@@ -431,6 +524,8 @@ function GroupDetail({ group }: { group: Group }) {
 
   return (
     <div className="space-y-6">
+      <GroupCalendarLink group={group} />
+
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">Materias del grupo {group.code}</h2>
