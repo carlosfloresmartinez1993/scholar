@@ -2,15 +2,17 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   Banknote,
-  BadgeCheck,
   GraduationCap,
+  HandCoins,
+  TrendingDown,
+  TrendingUp,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
-import type { AgingRow, Group, Rvoe, Student, Term } from "@/api/types";
-import { formatMoney } from "@/lib/format";
+import type { DashboardStats, EducationLevel, MetricDelta } from "@/api/types";
+import { formatMoney, LEVEL_LABELS } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -19,77 +21,78 @@ export const Route = createFileRoute("/_auth/")({
   component: InicioPage,
 });
 
+const LEVEL_ORDER: EducationLevel[] = [
+  "tsu",
+  "licenciatura",
+  "especialidad",
+  "maestria",
+  "doctorado",
+];
+
 function InicioPage() {
-  const { data: students, isLoading: loadingStudents } = useQuery({
-    queryKey: queryKeys.students(),
-    queryFn: () => api<Student[]>("/students?limit=1000"),
-  });
-  const { data: terms } = useQuery({
-    queryKey: queryKeys.terms,
-    queryFn: () => api<Term[]>("/catalog/terms"),
-  });
-  const openTerm = terms?.find((t) => t.is_open);
-  const { data: groups, isLoading: loadingGroups } = useQuery({
-    queryKey: queryKeys.groups(openTerm?.id),
-    queryFn: () => api<Group[]>(`/catalog/groups?term_id=${openTerm!.id}`),
-    enabled: !!openTerm,
-  });
-  const { data: rvoes, isLoading: loadingRvoes } = useQuery({
-    queryKey: queryKeys.rvoes(),
-    queryFn: () => api<Rvoe[]>("/catalog/rvoes"),
-  });
-  // Requires rol de tesorería — swallow the 403 for other roles.
-  const { data: aging, isError: agingError } = useQuery({
-    queryKey: queryKeys.aging,
-    queryFn: () => api<AgingRow[]>("/treasury/reports/aging"),
+  const { data: stats, isLoading } = useQuery({
+    queryKey: queryKeys.dashboardStats,
+    queryFn: () => api<DashboardStats>("/dashboard/stats"),
   });
 
-  const activeStudents = students?.filter((s) => s.status === "activo").length;
-  const vigentes = rvoes?.filter((r) => r.status === "vigente").length;
-  const overdue = aging?.reduce((sum, r) => sum + r.balance, 0);
+  const sumCurrent = (m?: Record<EducationLevel, MetricDelta>) =>
+    m ? LEVEL_ORDER.reduce((s, l) => s + (m[l]?.current ?? 0), 0) : 0;
+  const sumPrevious = (m?: Record<EducationLevel, MetricDelta>) =>
+    m ? LEVEL_ORDER.reduce((s, l) => s + (m[l]?.previous ?? 0), 0) : 0;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl">Inicio</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {openTerm
-            ? `Ciclo en curso: ${openTerm.name}`
+          {stats?.term
+            ? `Ciclo en curso: ${stats.term.name}`
             : "No hay un ciclo abierto — cree uno en «Periodos»."}
+          {stats?.prev_term && (
+            <span> · comparado con {stats.prev_term.name}</span>
+          )}
         </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
+        <LevelStatCard
           icon={GraduationCap}
           label="Alumnos activos"
-          value={activeStudents}
-          loading={loadingStudents}
+          metric={stats?.students}
+          total={sumCurrent(stats?.students)}
+          previous={sumPrevious(stats?.students)}
+          loading={isLoading}
           to="/alumnos"
           linkLabel="Ver alumnos"
         />
-        <StatCard
+        <LevelStatCard
           icon={Users}
-          label={openTerm ? `Grupos de ${openTerm.name}` : "Grupos del ciclo"}
-          value={openTerm ? groups?.length : 0}
-          loading={!!openTerm && loadingGroups}
+          label="Grupos activos"
+          metric={stats?.groups}
+          total={sumCurrent(stats?.groups)}
+          previous={sumPrevious(stats?.groups)}
+          loading={isLoading}
           to="/grupos"
           linkLabel="Ver grupos"
         />
-        <StatCard
-          icon={BadgeCheck}
-          label="RVOEs vigentes"
-          value={vigentes}
-          loading={loadingRvoes}
-          to="/programas"
-          linkLabel="Ver programas"
+        <LevelStatCard
+          icon={HandCoins}
+          label="Alumnos becados"
+          metric={stats?.scholars}
+          total={sumCurrent(stats?.scholars)}
+          previous={sumPrevious(stats?.scholars)}
+          loading={isLoading}
+          to="/tesoreria"
+          linkLabel="Ver becas"
         />
-        <StatCard
+        <LevelStatCard
           icon={Banknote}
           label="Cartera vencida"
-          value={agingError ? undefined : overdue}
           money
-          loading={!aging && !agingError}
+          invertDelta
+          total={stats?.cartera_vencida.current ?? 0}
+          previous={stats?.cartera_vencida.previous ?? 0}
+          loading={isLoading}
           to="/tesoreria"
           linkLabel="Ver tesorería"
         />
@@ -108,31 +111,81 @@ function InicioPage() {
         />
         <QuickLink
           to="/tesoreria"
-          title="Cobranza"
-          description="Consulte el reporte de cobranza, la cartera vencida y aplique recargos."
+          title="Caja y cobranza"
+          description="Cobre a los alumnos, imprima recibos, facture y revise la cartera vencida."
         />
       </div>
     </div>
   );
 }
 
-function StatCard({
+function deltaPct(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null; // null = sin base comparable
+  return ((current - previous) / previous) * 100;
+}
+
+function DeltaBadge({
+  current,
+  previous,
+  invert,
+}: {
+  current: number;
+  previous: number;
+  invert?: boolean;
+}) {
+  const pct = deltaPct(current, previous);
+  if (pct === null)
+    return <span className="text-xs text-muted-foreground">nuevo</span>;
+  const up = pct > 0;
+  const flat = Math.abs(pct) < 0.05;
+  // For cartera vencida a drop is good, so invert the color meaning.
+  const good = flat ? true : invert ? !up : up;
+  const Icon = up ? TrendingUp : TrendingDown;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-semibold ${
+        flat
+          ? "text-muted-foreground"
+          : good
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-red-600 dark:text-red-400"
+      }`}
+    >
+      {!flat && <Icon className="size-3.5" />}
+      {up ? "+" : ""}
+      {pct.toFixed(1)}%
+    </span>
+  );
+}
+
+function LevelStatCard({
   icon: Icon,
   label,
-  value,
+  metric,
+  total,
+  previous,
   loading,
   money,
+  invertDelta,
   to,
   linkLabel,
 }: {
   icon: LucideIcon;
   label: string;
-  value?: number;
+  metric?: Record<EducationLevel, MetricDelta>;
+  total: number;
+  previous: number;
   loading?: boolean;
   money?: boolean;
+  invertDelta?: boolean;
   to: string;
   linkLabel: string;
 }) {
+  const levelRows = metric
+    ? LEVEL_ORDER.filter(
+        (l) => (metric[l]?.current ?? 0) > 0 || (metric[l]?.previous ?? 0) > 0,
+      )
+    : [];
   return (
     <Card className="rounded-2xl">
       <CardContent className="flex flex-col gap-3 p-5">
@@ -147,9 +200,30 @@ function StatCard({
         {loading ? (
           <Skeleton className="h-9 w-24" />
         ) : (
-          <p className="text-3xl font-bold" data-numeric>
-            {value == null ? "—" : money ? formatMoney(value) : value}
-          </p>
+          <div className="flex items-end justify-between gap-2">
+            <p className="text-3xl font-bold" data-numeric>
+              {money ? formatMoney(total) : total}
+            </p>
+            <DeltaBadge current={total} previous={previous} invert={invertDelta} />
+          </div>
+        )}
+        {!loading && !money && (
+          <div className="space-y-0.5">
+            {levelRows.map((l) => (
+              <div
+                key={l}
+                className="flex justify-between text-xs text-muted-foreground"
+              >
+                <span>{LEVEL_LABELS[l]}</span>
+                <span data-numeric className="font-semibold">
+                  {metric![l].current}
+                </span>
+              </div>
+            ))}
+            {levelRows.length === 0 && (
+              <p className="text-xs text-muted-foreground">Sin datos del ciclo</p>
+            )}
+          </div>
         )}
         <Button variant="outline" size="sm" className="w-fit" asChild>
           <Link to={to}>{linkLabel}</Link>

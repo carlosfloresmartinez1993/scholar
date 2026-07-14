@@ -122,6 +122,8 @@ from app.models.treasury import (
     ChargeCreate,
     ChargePublic,
     ChargeStatus,
+    FiscalProfileBase,
+    FiscalProfilePublic,
     Payment,
     PaymentCreate,
     PaymentMethod,
@@ -131,4 +133,5 @@ from app.models.treasury import (
     ScholarshipCreate,
     ScholarshipPublic,
     ScholarshipStatus,
+    StudentFiscalProfile,
 )

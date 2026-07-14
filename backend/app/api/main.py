@@ -5,6 +5,7 @@ from app.api.routes import (
     audit,
     auth,
     catalog,
+    dashboard,
     documents,
     grades,
     health,
@@ -19,6 +20,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(catalog.router)
+api_router.include_router(dashboard.router)
 api_router.include_router(students.router)
 api_router.include_router(grades.router)
 api_router.include_router(attendance.router)

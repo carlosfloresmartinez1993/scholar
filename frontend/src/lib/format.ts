@@ -141,7 +141,9 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 };
 
 export const SCHOLARSHIP_STATUS_LABELS: Record<ScholarshipStatus, string> = {
+  solicitada: "Solicitada",
   activa: "Activa",
+  suspendida: "Suspendida",
   vencida: "Vencida",
   cancelada: "Cancelada",
 };

@@ -75,6 +75,10 @@ AnyStaff = Annotated[User, Depends(require_roles(*STAFF_ALL))]
 TreasuryStaff = Annotated[
     User, Depends(require_roles(UserRole.admin_sistema, UserRole.direccion, UserRole.tesoreria))
 ]
+# Authorizes actions requiring management sign-off (e.g. scholarship approval).
+Authorizer = Annotated[
+    User, Depends(require_roles(UserRole.admin_sistema, UserRole.direccion))
+]
 TeacherOrAcademic = Annotated[
     User, Depends(require_roles(*STAFF_ACADEMIC, UserRole.docente))
 ]

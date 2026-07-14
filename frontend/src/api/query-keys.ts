@@ -54,7 +54,12 @@ export const queryKeys = {
   statement: (studentId: string) => ["statement", studentId] as const,
   scholarships: (studentId?: string) =>
     ["scholarships", studentId ?? "all"] as const,
+  scholarshipsByStatus: (status: string) =>
+    ["scholarships", "status", status] as const,
+  scholarshipReport: ["scholarship-report"] as const,
+  fiscalProfile: (studentId: string) => ["fiscal-profile", studentId] as const,
   collectionReport: (from: string, to: string) =>
     ["collection-report", from, to] as const,
   aging: ["aging"] as const,
+  dashboardStats: ["dashboard-stats"] as const,
 };

@@ -95,7 +95,12 @@ export type ChargeStatus = "pendiente" | "parcial" | "pagado" | "cancelado";
 
 export type PaymentMethod = "efectivo" | "transferencia" | "deposito" | "tarjeta";
 
-export type ScholarshipStatus = "activa" | "vencida" | "cancelada";
+export type ScholarshipStatus =
+  | "solicitada"
+  | "activa"
+  | "suspendida"
+  | "vencida"
+  | "cancelada";
 
 // --- Users / audit ----------------------------------------------------------
 
@@ -125,6 +130,8 @@ export interface Institution {
   id: string;
   name: string;
   short_name: string;
+  rfc: string;
+  fiscal_address: string;
   late_fee_pct: number;
   late_fee_grace_days: number;
   block_documents_on_debt: boolean;
@@ -485,7 +492,51 @@ export interface Scholarship {
   fixed_amount?: number | null;
   valid_from: string;
   valid_to?: string | null;
+  tolerance_days: number;
   status: ScholarshipStatus;
+  approved_by?: string | null;
+}
+
+export interface FiscalProfile {
+  id: string;
+  student_id: string;
+  rfc: string;
+  razon_social: string;
+  regimen_fiscal: string;
+  uso_cfdi: string;
+  email: string;
+  cp: string;
+  calle: string;
+  no_ext: string;
+  no_int: string;
+  colonia: string;
+  municipio: string;
+  estado: string;
+  pais: string;
+}
+
+export interface ScholarshipReport {
+  active_students: number;
+  students_with_scholarship: number;
+  pct_with_scholarship: number;
+  beca_mes: number;
+  beca_cuatrimestre: number;
+}
+
+/** current vs previous-term value for one dashboard metric */
+export interface MetricDelta {
+  current: number;
+  previous: number;
+}
+
+export interface DashboardStats {
+  term: { id: string; name: string } | null;
+  prev_term: { id: string; name: string } | null;
+  /** keyed by EducationLevel */
+  students: Record<EducationLevel, MetricDelta>;
+  groups: Record<EducationLevel, MetricDelta>;
+  scholars: Record<EducationLevel, MetricDelta>;
+  cartera_vencida: MetricDelta;
 }
 
 export interface CollectionReport {

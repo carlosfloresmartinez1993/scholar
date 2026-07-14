@@ -49,6 +49,9 @@ class PeriodType(str, Enum):
 class InstitutionBase(SQLModel):
     name: str = Field(max_length=255)
     short_name: str = Field(max_length=64)
+    # Datos fiscales para recibos/comprobantes (encabezado del ticket)
+    rfc: str = Field(default="", max_length=13)
+    fiscal_address: str = Field(default="", max_length=512)
     # Treasury config (RF-T06/T07)
     late_fee_pct: float = Field(default=0.0, ge=0)
     late_fee_grace_days: int = Field(default=0, ge=0)
@@ -68,6 +71,8 @@ class InstitutionPublic(InstitutionBase):
 class InstitutionUpdate(SQLModel):
     name: str | None = None
     short_name: str | None = None
+    rfc: str | None = None
+    fiscal_address: str | None = None
     late_fee_pct: float | None = None
     late_fee_grace_days: int | None = None
     block_documents_on_debt: bool | None = None

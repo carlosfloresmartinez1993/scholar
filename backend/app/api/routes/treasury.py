@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, SessionDep, TreasuryStaff
+from app.api.deps import AnyStaff, Authorizer, SessionDep, TreasuryStaff
 from app.api.routes.catalog import get_default_institution
 from app.models import (
     AccountStatement,
@@ -21,6 +21,8 @@ from app.models import (
     ChargeCreate,
     ChargePublic,
     ChargeStatus,
+    FiscalProfileBase,
+    FiscalProfilePublic,
     Payment,
     PaymentCreate,
     PaymentPlanGenerateIn,
@@ -28,7 +30,9 @@ from app.models import (
     Scholarship,
     ScholarshipCreate,
     ScholarshipPublic,
+    ScholarshipStatus,
     Student,
+    StudentFiscalProfile,
 )
 from app.models.common import utcnow
 from app.services import audit
@@ -37,8 +41,10 @@ from app.services.treasury import (
     active_scholarship_discount,
     apply_late_fees,
     charge_paid_amount,
+    enforce_scholarship_tolerance,
     overdue_balance,
     refresh_charge_status,
+    scholarship_metrics,
     student_charges_public,
 )
 
@@ -259,11 +265,14 @@ async def account_statement(
 
 @router.get("/scholarships")
 async def list_scholarships(
-    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID | None = None
+    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID | None = None,
+    status: ScholarshipStatus | None = None,
 ) -> list[ScholarshipPublic]:
-    q = select(Scholarship)
+    q = select(Scholarship).order_by(Scholarship.created_at.desc())  # type: ignore[attr-defined]
     if student_id:
         q = q.where(Scholarship.student_id == student_id)
+    if status:
+        q = q.where(Scholarship.status == status)
     return (await session.exec(q)).all()
 
 
@@ -271,17 +280,99 @@ async def list_scholarships(
 async def create_scholarship(
     session: SessionDep, current_user: TreasuryStaff, body: ScholarshipCreate
 ) -> ScholarshipPublic:
+    """RF-T05: captures a scholarship *request*. It stays `solicitada` (no
+    discount) until an admin authorizes it."""
     if await session.get(Student, body.student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
     if (body.pct is None) == (body.fixed_amount is None):
         raise HTTPException(status_code=400, detail="Indica porcentaje o monto fijo (solo uno)")
-    scholarship = Scholarship(**body.model_dump(), approved_by=current_user.id)
+    scholarship = Scholarship(
+        **body.model_dump(), status=ScholarshipStatus.solicitada, requested_by=current_user.id
+    )
     session.add(scholarship)
-    audit.record(session, actor=current_user.email, action="scholarship.created",
+    audit.record(session, actor=current_user.email, action="scholarship.requested",
                  entity="scholarship", entity_id=str(scholarship.id), detail=body.name)
     await session.commit()
     await session.refresh(scholarship)
     return scholarship
+
+
+@router.post("/scholarships/{scholarship_id}/authorize")
+async def authorize_scholarship(
+    session: SessionDep, current_user: Authorizer, scholarship_id: uuid.UUID
+) -> ScholarshipPublic:
+    """Admin sign-off: a `solicitada` scholarship becomes `activa` and starts
+    discounting future charges (RF-T05)."""
+    scholarship = await session.get(Scholarship, scholarship_id)
+    if scholarship is None:
+        raise HTTPException(status_code=404, detail="Beca no encontrada")
+    if scholarship.status != ScholarshipStatus.solicitada:
+        raise HTTPException(status_code=409, detail="La beca no está en solicitud")
+    scholarship.status = ScholarshipStatus.activa
+    scholarship.approved_by = current_user.id
+    scholarship.authorized_at = utcnow()
+    session.add(scholarship)
+    audit.record(session, actor=current_user.email, action="scholarship.authorized",
+                 entity="scholarship", entity_id=str(scholarship.id), detail=scholarship.name)
+    await session.commit()
+    await session.refresh(scholarship)
+    return scholarship
+
+
+@router.post("/scholarships/{scholarship_id}/reject")
+async def reject_scholarship(
+    session: SessionDep, current_user: Authorizer, scholarship_id: uuid.UUID, reason: str = ""
+) -> ScholarshipPublic:
+    scholarship = await session.get(Scholarship, scholarship_id)
+    if scholarship is None:
+        raise HTTPException(status_code=404, detail="Beca no encontrada")
+    if scholarship.status not in (ScholarshipStatus.solicitada, ScholarshipStatus.activa):
+        raise HTTPException(status_code=409, detail="La beca no puede rechazarse")
+    scholarship.status = ScholarshipStatus.cancelada
+    session.add(scholarship)
+    audit.record(session, actor=current_user.email, action="scholarship.rejected",
+                 entity="scholarship", entity_id=str(scholarship.id), detail=reason)
+    await session.commit()
+    await session.refresh(scholarship)
+    return scholarship
+
+
+# --- Fiscal profile (Caja → Facturar) ----------------------------------------------------
+
+@router.get("/students/{student_id}/fiscal")
+async def get_fiscal_profile(
+    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID
+) -> FiscalProfilePublic | None:
+    return (
+        await session.exec(
+            select(StudentFiscalProfile).where(StudentFiscalProfile.student_id == student_id)
+        )
+    ).first()
+
+
+@router.put("/students/{student_id}/fiscal")
+async def upsert_fiscal_profile(
+    session: SessionDep, current_user: TreasuryStaff, student_id: uuid.UUID, body: FiscalProfileBase
+) -> FiscalProfilePublic:
+    if await session.get(Student, student_id) is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    profile = (
+        await session.exec(
+            select(StudentFiscalProfile).where(StudentFiscalProfile.student_id == student_id)
+        )
+    ).first()
+    if profile is None:
+        profile = StudentFiscalProfile(student_id=student_id, **body.model_dump())
+    else:
+        for k, v in body.model_dump().items():
+            setattr(profile, k, v)
+        profile.updated_at = utcnow()
+    session.add(profile)
+    audit.record(session, actor=current_user.email, action="fiscal_profile.saved",
+                 entity="student", entity_id=str(student_id), detail=body.rfc)
+    await session.commit()
+    await session.refresh(profile)
+    return profile
 
 
 # --- Late fees (RF-T06) -----------------------------------------------------------------------
@@ -289,11 +380,21 @@ async def create_scholarship(
 @router.post("/late-fees/run")
 async def run_late_fees(session: SessionDep, current_user: TreasuryStaff) -> dict:
     institution = await get_default_institution(session)
+    # First revoke scholarships whose tolerance lapsed, so their charges become
+    # eligible for a recargo in the same run (RF-T05/T06).
+    suspended = await enforce_scholarship_tolerance(session, institution)
     created = await apply_late_fees(session, institution, current_user.id)
     audit.record(session, actor=current_user.email, action="late_fees.applied",
-                 entity="institution", entity_id=str(institution.id), detail=str(created))
+                 entity="institution", entity_id=str(institution.id),
+                 detail=f"recargos={created} becas_suspendidas={suspended}")
     await session.commit()
-    return {"created": created}
+    return {"created": created, "scholarships_suspended": suspended}
+
+
+@router.get("/reports/scholarships")
+async def scholarship_report(session: SessionDep, _: TreasuryStaff) -> dict:
+    """RF-T reports: becados, % becados y beca aplicada acumulada al día."""
+    return await scholarship_metrics(session)
 
 
 # --- Reports & export (RF-T08, RF-T10) ----------------------------------------------------------

@@ -29,17 +29,25 @@ async def test_treasury_flow(client, seed):
         "name": "Colegiatura Licenciatura", "kind": "colegiatura", "amount": 2500,
     })).json()
 
-    # 50% scholarship (RF-T05)
+    # 50% scholarship (RF-T05): captured as a request, no discount until authorized
     scholarship = await client.post("/api/v1/treasury/scholarships", json={
         "student_id": student["id"], "name": "Beca excelencia", "pct": 50,
         "valid_from": (TODAY - timedelta(days=90)).isoformat(),
     })
     assert scholarship.status_code == 201
+    assert scholarship.json()["status"] == "solicitada"
     both = await client.post("/api/v1/treasury/scholarships", json={
         "student_id": student["id"], "name": "Inválida", "pct": 50, "fixed_amount": 100,
         "valid_from": TODAY.isoformat(),
     })
     assert both.status_code == 400
+
+    # admin authorization activates it (superuser passes the Authorizer role check)
+    authorized = await client.post(
+        f"/api/v1/treasury/scholarships/{scholarship.json()['id']}/authorize"
+    )
+    assert authorized.status_code == 200, authorized.text
+    assert authorized.json()["status"] == "activa"
 
     # payment plan of 3 monthly installments (RF-T02) with discount applied
     plan = await client.post("/api/v1/treasury/payment-plans", json={
@@ -116,6 +124,55 @@ async def test_treasury_flow(client, seed):
         "curp": "GOMA020202MBCXNS08", "full_name": "X", "campus_id": campus_id,
     })
     assert denied.status_code == 403
+
+
+async def test_scholarship_tolerance_and_reports(client, seed):
+    """RF-T05: within the tolerance window a beca charge earns no recargo and the
+    scholarship stays active; past it, the scholarship is suspended."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    student = await make_student(client, campus_id, curp="GOMA020202MBCXNS08")
+
+    concept = (await client.post("/api/v1/treasury/concepts", json={
+        "name": "Colegiatura", "kind": "colegiatura", "amount": 2000,
+    })).json()
+    sch = (await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Beca", "pct": 50,
+        "valid_from": (TODAY - timedelta(days=90)).isoformat(), "tolerance_days": 15,
+    })).json()
+    await client.post(f"/api/v1/treasury/scholarships/{sch['id']}/authorize")
+
+    # Charge overdue by 10 days — still inside the 15-day tolerance.
+    c1 = (await client.post("/api/v1/treasury/charges", json={
+        "student_id": student["id"], "concept_id": concept["id"],
+        "description": "Colegiatura", "amount": 2000,
+        "due_date": (TODAY - timedelta(days=10)).isoformat(),
+    })).json()
+    assert c1["scholarship_discount"] == 1000.0
+
+    run = (await client.post("/api/v1/treasury/late-fees/run")).json()
+    assert run["created"] == 0 and run["scholarships_suspended"] == 0
+    active = (await client.get(
+        f"/api/v1/treasury/scholarships?student_id={student['id']}"
+    )).json()
+    assert active[0]["status"] == "activa"
+
+    # A second charge past the tolerance window → scholarship suspended + recargos.
+    await client.post("/api/v1/treasury/charges", json={
+        "student_id": student["id"], "concept_id": concept["id"],
+        "description": "Colegiatura vieja", "amount": 2000,
+        "due_date": (TODAY - timedelta(days=20)).isoformat(),
+    })
+    run2 = (await client.post("/api/v1/treasury/late-fees/run")).json()
+    assert run2["scholarships_suspended"] == 1
+    assert run2["created"] >= 1
+
+    report = (await client.get("/api/v1/treasury/reports/scholarships")).json()
+    assert set(report) >= {"active_students", "students_with_scholarship",
+                           "pct_with_scholarship", "beca_mes", "beca_cuatrimestre"}
+    stats = await client.get("/api/v1/dashboard/stats")
+    assert stats.status_code == 200
+    assert "cartera_vencida" in stats.json()
 
 
 async def test_attendance_right_to_exam(client, seed):

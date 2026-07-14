@@ -149,9 +149,11 @@ class PaymentPublic(SQLModel):
 
 
 class ScholarshipStatus(str, Enum):
-    activa = "activa"
-    vencida = "vencida"
-    cancelada = "cancelada"
+    solicitada = "solicitada"  # captured by treasury, awaiting admin authorization
+    activa = "activa"          # authorized; discounts apply
+    suspendida = "suspendida"  # lost for not paying within tolerance (RF-T05 tolerance)
+    vencida = "vencida"        # past valid_to
+    cancelada = "cancelada"    # rejected or revoked
 
 
 class ScholarshipBase(SQLModel):
@@ -160,15 +162,23 @@ class ScholarshipBase(SQLModel):
     fixed_amount: float | None = Field(default=None, ge=0)  # or fixed amount per charge
     valid_from: date
     valid_to: date | None = None
+    # Días de tolerancia tras el vencimiento del cargo con beca: si el alumno no
+    # paga dentro de la ventana pierde la beca y no se le genera recargo mientras
+    # esté dentro de ella.
+    tolerance_days: int = Field(default=0, ge=0)
 
 
 class Scholarship(ScholarshipBase, table=True):
-    """RF-T05: applies to colegiatura charges generated while valid."""
+    """RF-T05: applies to colegiatura charges generated while valid. A new
+    scholarship is created as `solicitada` and only starts discounting once an
+    admin authorizes it (approved_by/authorized_at set)."""
     __tablename__ = "scholarships"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     student_id: uuid.UUID = Field(foreign_key="students.id", index=True)
-    status: ScholarshipStatus = ScholarshipStatus.activa
-    approved_by: uuid.UUID = Field(foreign_key="users.id")
+    status: ScholarshipStatus = ScholarshipStatus.solicitada
+    requested_by: uuid.UUID = Field(foreign_key="users.id")
+    approved_by: uuid.UUID | None = Field(default=None, foreign_key="users.id")
+    authorized_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -180,6 +190,39 @@ class ScholarshipPublic(ScholarshipBase):
     id: uuid.UUID
     student_id: uuid.UUID
     status: ScholarshipStatus
+    approved_by: uuid.UUID | None = None
+
+
+# --- Fiscal data for invoicing (Caja → Facturar) --------------------------------------
+
+class FiscalProfileBase(SQLModel):
+    rfc: str = Field(max_length=13)
+    razon_social: str = Field(max_length=255)
+    regimen_fiscal: str = Field(default="", max_length=8)   # clave SAT c_RegimenFiscal
+    uso_cfdi: str = Field(default="G03", max_length=8)      # clave SAT c_UsoCFDI
+    email: str = Field(default="", max_length=255)
+    cp: str = Field(default="", max_length=5)               # código postal fiscal
+    calle: str = Field(default="", max_length=255)
+    no_ext: str = Field(default="", max_length=32)
+    no_int: str = Field(default="", max_length=32)
+    colonia: str = Field(default="", max_length=255)
+    municipio: str = Field(default="", max_length=255)
+    estado: str = Field(default="", max_length=255)
+    pais: str = Field(default="México", max_length=64)
+
+
+class StudentFiscalProfile(FiscalProfileBase, table=True):
+    """Datos fiscales del alumno/receptor para facturación (RF-T)."""
+    __tablename__ = "student_fiscal_profiles"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    student_id: uuid.UUID = Field(foreign_key="students.id", unique=True, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FiscalProfilePublic(FiscalProfileBase):
+    id: uuid.UUID
+    student_id: uuid.UUID
 
 
 class AccountStatement(SQLModel):

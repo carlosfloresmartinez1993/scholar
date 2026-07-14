@@ -1523,7 +1523,13 @@ function CuentaTab({ student }: { student: Student }) {
                   </TableCell>
                   <TableCell>
                     <Badge
-                      variant={s.status === "activa" ? "default" : "outline"}
+                      variant={
+                        s.status === "activa"
+                          ? "default"
+                          : s.status === "suspendida" || s.status === "cancelada"
+                            ? "destructive"
+                            : "outline"
+                      }
                     >
                       {SCHOLARSHIP_STATUS_LABELS[s.status]}
                     </Badge>
@@ -2096,6 +2102,7 @@ function ScholarshipDialog({
     fixed_amount: "",
     valid_from: todayISO(),
     valid_to: "",
+    tolerance_days: "0",
   });
 
   const save = useMutation({
@@ -2109,11 +2116,12 @@ function ScholarshipDialog({
           fixed_amount: form.fixed_amount ? Number(form.fixed_amount) : null,
           valid_from: form.valid_from,
           valid_to: form.valid_to || null,
+          tolerance_days: Number(form.tolerance_days) || 0,
         }),
       }),
     onSuccess: () => {
       onDone();
-      toast.success("Beca registrada");
+      toast.success("Beca solicitada — requiere autorización de un administrador");
       onOpenChange(false);
     },
     onError: (e) =>
@@ -2124,9 +2132,11 @@ function ScholarshipDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Nueva beca</DialogTitle>
+          <DialogTitle>Solicitar beca</DialogTitle>
           <DialogDescription>
-            Indique porcentaje o monto fijo (uno de los dos).
+            Indique porcentaje o monto fijo (uno de los dos). La beca queda como{" "}
+            <b>solicitada</b> y no aplica descuentos hasta que un administrador la
+            autorice.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -2201,6 +2211,22 @@ function ScholarshipDialog({
                 onChange={(e) => setForm({ ...form, valid_to: e.target.value })}
               />
             </div>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="b-tol">Tolerancia de pago (días)</Label>
+            <Input
+              id="b-tol"
+              type="number"
+              min={0}
+              value={form.tolerance_days}
+              onChange={(e) =>
+                setForm({ ...form, tolerance_days: e.target.value })
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Días tras el vencimiento para pagar sin perder la beca ni generar
+              recargo.
+            </p>
           </div>
           <DialogFooter>
             <Button type="submit" className="font-bold" disabled={save.isPending}>

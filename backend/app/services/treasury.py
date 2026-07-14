@@ -141,10 +141,73 @@ async def active_scholarship_discount(
     return round(best, 2)
 
 
+async def scholarship_tolerance_days(
+    session: AsyncSession, student_id: uuid.UUID, on: date
+) -> int:
+    """Max payment-tolerance window (días) among the student's active scholarships
+    covering `on`. Beca charges get this as extra grace before a recargo (RF-T05)."""
+    scholarships = (
+        await session.exec(
+            select(Scholarship).where(
+                Scholarship.student_id == student_id,
+                Scholarship.status == ScholarshipStatus.activa,
+            )
+        )
+    ).all()
+    best = 0
+    for s in scholarships:
+        if s.valid_from > on or (s.valid_to and s.valid_to < on):
+            continue
+        best = max(best, s.tolerance_days)
+    return best
+
+
+async def enforce_scholarship_tolerance(
+    session: AsyncSession, institution: Institution, today: date | None = None
+) -> int:
+    """RF-T05: an active scholarship is suspended once the student leaves a
+    beca charge unpaid past its due date + the scholarship tolerance window.
+    Returns how many scholarships were suspended. Caller commits."""
+    today = today or utcnow().date()
+    scholarships = (
+        await session.exec(
+            select(Scholarship)
+            .join(Student, Student.id == Scholarship.student_id)
+            .where(
+                Student.institution_id == institution.id,
+                Scholarship.status == ScholarshipStatus.activa,
+            )
+        )
+    ).all()
+    suspended = 0
+    for s in scholarships:
+        charges = (
+            await session.exec(
+                select(Charge).where(
+                    Charge.student_id == s.student_id,
+                    Charge.scholarship_discount > 0,
+                    Charge.due_date < today - timedelta(days=s.tolerance_days),
+                    Charge.status.in_([ChargeStatus.pendiente, ChargeStatus.parcial]),  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+        overdue_unpaid = False
+        for c in charges:
+            if _net(c) - await charge_paid_amount(session, c.id) > 0:
+                overdue_unpaid = True
+                break
+        if overdue_unpaid:
+            s.status = ScholarshipStatus.suspendida
+            session.add(s)
+            suspended += 1
+    return suspended
+
+
 async def apply_late_fees(
     session: AsyncSession, institution: Institution, created_by: uuid.UUID, today: date | None = None
 ) -> int:
     """RF-T06: creates a recargo charge for each overdue charge without one.
+    Beca charges still inside the scholarship tolerance window are skipped.
     Returns the number of late fees created. Caller commits."""
     if institution.late_fee_pct <= 0:
         return 0
@@ -173,6 +236,11 @@ async def apply_late_fees(
     for charge in overdue:
         if charge.id in existing:
             continue
+        # Beca charge still within its scholarship tolerance → no recargo yet.
+        if charge.scholarship_discount > 0:
+            tol = await scholarship_tolerance_days(session, charge.student_id, charge.due_date)
+            if (today - charge.due_date).days <= tol:
+                continue
         remaining = max(_net(charge) - await charge_paid_amount(session, charge.id), 0.0)
         if remaining <= 0:
             continue
@@ -189,3 +257,48 @@ async def apply_late_fees(
         )
         created += 1
     return created
+
+
+async def scholarship_metrics(session: AsyncSession, today: date | None = None) -> dict:
+    """RF-T reports: #/‰ becados and beca aplicada acumulada al día (mes/cuatrimestre)."""
+    today = today or utcnow().date()
+    active_students = (
+        await session.exec(
+            select(func.count()).select_from(Student).where(Student.status == "activo")
+        )
+    ).one()
+    with_scholarship = (
+        await session.exec(
+            select(func.count(func.distinct(Scholarship.student_id))).where(
+                Scholarship.status == ScholarshipStatus.activa
+            )
+        )
+    ).one()
+
+    async def _beca_sum(since: date) -> float:
+        total = (
+            await session.exec(
+                select(func.coalesce(func.sum(Charge.scholarship_discount), 0.0)).where(
+                    Charge.status != ChargeStatus.cancelado,
+                    Charge.due_date >= since,
+                    Charge.due_date <= today,
+                )
+            )
+        ).one()
+        return round(float(total), 2)
+
+    from app.models import Term  # local import to avoid cycle at module load
+
+    open_term = (
+        await session.exec(select(Term).where(Term.is_open == True))  # noqa: E712
+    ).first()
+    term_start = open_term.start_date if open_term else today.replace(day=1)
+    return {
+        "active_students": int(active_students),
+        "students_with_scholarship": int(with_scholarship),
+        "pct_with_scholarship": round(100 * int(with_scholarship) / int(active_students), 1)
+        if active_students
+        else 0.0,
+        "beca_mes": await _beca_sum(today.replace(day=1)),
+        "beca_cuatrimestre": await _beca_sum(term_start),
+    }
