@@ -31,6 +31,25 @@ async def charge_paid_amount(session: AsyncSession, charge_id: uuid.UUID) -> flo
     return float(paid)
 
 
+async def charges_paid_map(
+    session: AsyncSession, charge_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, float]:
+    """Paid (non-cancelled) totals for many charges in one grouped query."""
+    if not charge_ids:
+        return {}
+    rows = (
+        await session.exec(
+            select(Payment.charge_id, func.sum(Payment.amount))
+            .where(
+                Payment.charge_id.in_(charge_ids),  # type: ignore[attr-defined]
+                Payment.cancelled == False,  # noqa: E712
+            )
+            .group_by(Payment.charge_id)
+        )
+    ).all()
+    return {charge_id: float(paid) for charge_id, paid in rows}
+
+
 def _net(charge: Charge) -> float:
     return max(charge.amount - charge.scholarship_discount, 0.0)
 
@@ -55,9 +74,10 @@ async def student_charges_public(session: AsyncSession, student_id: uuid.UUID) -
             select(Charge).where(Charge.student_id == student_id).order_by(Charge.due_date)
         )
     ).all()
+    paid_map = await charges_paid_map(session, [c.id for c in charges])
     out = []
     for c in charges:
-        paid = await charge_paid_amount(session, c.id)
+        paid = paid_map.get(c.id, 0.0)
         pub = ChargePublic(
             id=c.id,
             student_id=c.student_id,

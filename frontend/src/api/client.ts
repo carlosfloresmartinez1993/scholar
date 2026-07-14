@@ -152,20 +152,3 @@ export const linkGroupToCalendar = (
 
 export const getStudentCalendar = (studentId: string) =>
   api<StudentCalendar>(`/students/${studentId}/calendar`);
-
-// Public endpoints (no auth, no refresh/redirect)
-export async function apiPublic<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  if (!res.ok) throw await parseError(res);
-  return res.json();
-}

@@ -176,7 +176,10 @@ export function formatDate(d?: string | null): string {
 
 export function formatDateTime(d?: string | null): string {
   if (!d) return "—";
-  return new Date(d).toLocaleString("es-MX", {
+  // Backend serializes naive UTC timestamps (no offset); mark them as UTC so
+  // they are not misparsed as local time.
+  const iso = /[Zz]|[+-]\d\d:?\d\d$/.test(d) ? d : `${d}Z`;
+  return new Date(iso).toLocaleString("es-MX", {
     day: "numeric",
     month: "short",
     year: "numeric",

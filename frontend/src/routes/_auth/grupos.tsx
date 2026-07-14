@@ -655,7 +655,7 @@ function GroupDetail({ group }: { group: Group }) {
       </section>
 
       <GroupSubjectDialog
-        key={editingSubject?.id ?? "new"}
+        key={`${group.id}-${editingSubject?.id ?? "new"}`}
         open={subjectDialogOpen}
         onOpenChange={setSubjectDialogOpen}
         group={group}
@@ -665,6 +665,7 @@ function GroupDetail({ group }: { group: Group }) {
       />
 
       <EnrollDialog
+        key={group.id}
         open={enrollOpen}
         onOpenChange={setEnrollOpen}
         group={group}

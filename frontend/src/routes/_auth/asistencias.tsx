@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -6,8 +6,10 @@ import { Check, ClipboardCheck, Save, X } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
+  AttendanceRecord,
   AttendanceReportRow,
   AttendanceStatus,
+  ClassSession,
   GradeGrid,
   Group,
   GroupSubject,
@@ -171,7 +173,7 @@ function AsistenciasPage() {
         />
       ) : (
         <>
-          <RollCallSection groupSubjectId={groupSubjectId} />
+          <RollCallSection key={groupSubjectId} groupSubjectId={groupSubjectId} />
           <ReportSection groupSubjectId={groupSubjectId} />
         </>
       )}
@@ -192,6 +194,34 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
     queryKey: queryKeys.gradeGrid(groupSubjectId),
     queryFn: () => api<GradeGrid>(`/grades/group-subjects/${groupSubjectId}/grid`),
   });
+
+  const { data: sessions } = useQuery({
+    queryKey: queryKeys.sessions(groupSubjectId),
+    queryFn: () =>
+      api<ClassSession[]>(`/attendance/group-subjects/${groupSubjectId}/sessions`),
+  });
+  const existingSession = sessions?.find(
+    (s) => s.session_date === date && s.sequence === 1,
+  );
+
+  const { data: existingRecords } = useQuery({
+    queryKey: queryKeys.sessionRecords(existingSession?.id ?? ""),
+    queryFn: () =>
+      api<AttendanceRecord[]>(
+        `/attendance/sessions/${existingSession!.id}/records`,
+      ),
+    enabled: !!existingSession,
+  });
+
+  useEffect(() => {
+    setMarks(
+      existingRecords
+        ? Object.fromEntries(
+            existingRecords.map((r) => [r.student_id, r.status]),
+          )
+        : {},
+    );
+  }, [date, existingRecords]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -214,8 +244,8 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.sessions(groupSubjectId),
       });
+      queryClient.invalidateQueries({ queryKey: ["session-records"] });
       toast.success("Asistencia registrada");
-      setMarks({});
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -250,6 +280,13 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
           </Button>
         </div>
       </div>
+
+      {existingSession && (
+        <p className="text-sm text-muted-foreground">
+          Ya hay una sesión registrada para esta fecha; al guardar se
+          actualizará el pase de lista existente.
+        </p>
+      )}
 
       <div className="rounded-2xl border bg-card">
         <Table>

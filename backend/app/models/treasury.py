@@ -70,10 +70,6 @@ class Charge(SQLModel, table=True):
     created_by: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow)
 
-    @property
-    def net_amount(self) -> float:
-        return max(self.amount - self.scholarship_discount, 0.0)
-
 
 class ChargeCreate(SQLModel):
     student_id: uuid.UUID

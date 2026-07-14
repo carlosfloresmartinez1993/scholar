@@ -81,21 +81,3 @@ export function DateRangeFilter({
     </div>
   );
 }
-
-/** Dates in [from, to] falling on `weekday` (0=Monday), for occupancy math. */
-export function countWeekdayInRange(
-  from: string,
-  to: string,
-  weekday: number,
-): number {
-  const lo = new Date(`${from}T00:00:00`);
-  const hi = new Date(`${to}T00:00:00`);
-  if (hi < lo) return 0;
-  // JS getDay(): 0=Sunday — convert to 0=Monday
-  const loWd = (lo.getDay() + 6) % 7;
-  const offset = (weekday - loWd + 7) % 7;
-  const first = new Date(lo);
-  first.setDate(lo.getDate() + offset);
-  if (first > hi) return 0;
-  return Math.floor((hi.getTime() - first.getTime()) / 86_400_000 / 7) + 1;
-}

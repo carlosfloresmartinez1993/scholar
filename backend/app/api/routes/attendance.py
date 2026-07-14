@@ -150,10 +150,16 @@ async def attendance_report(
             )
         )
     ).all()
+    students = {
+        s.id: s
+        for s in (
+            await session.exec(select(Student).where(Student.id.in_(student_ids)))
+        ).all()
+    }
     out = []
     for student_id in student_ids:
         summary = await attendance_summary(session, student_id, group_subject_id)
-        student = await session.get(Student, student_id)
+        student = students.get(student_id)
         summary["student_name"] = student.full_name if student else ""
         summary["enrollment_number"] = student.enrollment_number if student else ""
         out.append(summary)
@@ -224,6 +230,8 @@ async def upload_evidence(
     justification.evidence_path = path
     justification.evidence_filename = file.filename or "evidencia"
     session.add(justification)
+    audit.record(session, actor=current_user.email, action="justification.evidence_uploaded",
+                 entity="justification", entity_id=str(justification_id))
     await session.commit()
     await session.refresh(justification)
     return justification

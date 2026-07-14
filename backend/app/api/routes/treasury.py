@@ -4,7 +4,7 @@ fees (RF-T06), collection reports (RF-T08) and accounting export (RF-T10)."""
 import csv
 import io
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -108,8 +108,6 @@ async def generate_payment_plan(
     created_ids = []
     for i in range(body.installments):
         if body.day_interval:
-            from datetime import timedelta
-
             due = body.first_due_date + timedelta(days=body.day_interval * i)
         else:  # monthly, same day
             month_index = body.first_due_date.month - 1 + i
@@ -147,8 +145,25 @@ async def cancel_charge(
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
     if await charge_paid_amount(session, charge_id) > 0:
         raise HTTPException(status_code=409, detail="El cargo ya tiene pagos aplicados")
+    late_fees = (
+        await session.exec(
+            select(Charge).where(
+                Charge.source_charge_id == charge_id,
+                Charge.status != ChargeStatus.cancelado,
+            )
+        )
+    ).all()
+    for fee in late_fees:
+        if await charge_paid_amount(session, fee.id) > 0:
+            raise HTTPException(status_code=409, detail="El recargo asociado ya tiene pagos aplicados")
     charge.status = ChargeStatus.cancelado
     session.add(charge)
+    for fee in late_fees:
+        fee.status = ChargeStatus.cancelado
+        session.add(fee)
+        audit.record(session, actor=current_user.email, action="charge.cancelled",
+                     entity="charge", entity_id=str(fee.id),
+                     detail=f"Recargo cancelado junto con el cargo origen. {reason}".strip())
     audit.record(session, actor=current_user.email, action="charge.cancelled",
                  entity="charge", entity_id=str(charge_id), detail=reason)
     await session.commit()
@@ -211,7 +226,7 @@ async def cancel_payment(
 
 @router.get("/students/{student_id}/statement")
 async def account_statement(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID
 ) -> AccountStatement:
     """RF-T04: cargos, pagos, saldo y próximos vencimientos."""
     if await session.get(Student, student_id) is None:
@@ -244,7 +259,7 @@ async def account_statement(
 
 @router.get("/scholarships")
 async def list_scholarships(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID | None = None
+    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID | None = None
 ) -> list[ScholarshipPublic]:
     q = select(Scholarship)
     if student_id:
@@ -292,7 +307,7 @@ async def collection_report(
             select(Payment).where(
                 Payment.cancelled == False,  # noqa: E712
                 Payment.received_at >= date_from,
-                Payment.received_at <= date_to,
+                Payment.received_at < date_to + timedelta(days=1),
             )
         )
     ).all()
@@ -355,7 +370,7 @@ async def export_movements(
         await session.exec(
             select(Payment, Student)
             .join(Student, Student.id == Payment.student_id)
-            .where(Payment.received_at >= date_from, Payment.received_at <= date_to)
+            .where(Payment.received_at >= date_from, Payment.received_at < date_to + timedelta(days=1))
             .order_by(Payment.received_at)
         )
     ).all()

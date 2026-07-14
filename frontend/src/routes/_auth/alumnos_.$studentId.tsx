@@ -12,6 +12,7 @@ import {
   FileText,
   Pencil,
   Plus,
+  TriangleAlertIcon,
   Upload,
   X,
 } from "lucide-react";
@@ -100,10 +101,26 @@ const NONE = "__none__";
 
 function AlumnoDetailPage() {
   const { studentId } = Route.useParams();
-  const { data: student, isLoading } = useQuery({
+  const { data: student, isLoading, error } = useQuery({
     queryKey: queryKeys.student(studentId),
     queryFn: () => api<Student>(`/students/${studentId}`),
   });
+
+  if (error) {
+    return (
+      <EmptyState
+        icon={TriangleAlertIcon}
+        title="No se pudo cargar el alumno"
+        description={
+          error instanceof ApiError ? error.message : "Intenta de nuevo más tarde."
+        }
+      >
+        <Button variant="outline" asChild>
+          <Link to="/alumnos">Volver a alumnos</Link>
+        </Button>
+      </EmptyState>
+    );
+  }
 
   if (isLoading || !student) {
     return <Skeleton className="h-96 w-full rounded-2xl" />;
@@ -356,7 +373,7 @@ function DatosTab({ student }: { student: Student }) {
 
 function ExpedienteTab({ student }: { student: Student }) {
   const queryClient = useQueryClient();
-  const { data: expediente, isLoading } = useQuery({
+  const { data: expediente, isLoading, error } = useQuery({
     queryKey: queryKeys.expediente(student.id),
     queryFn: () => api<Expediente>(`/documents/students/${student.id}/expediente`),
   });
@@ -398,6 +415,17 @@ function ExpedienteTab({ student }: { student: Student }) {
       toast.error(e instanceof ApiError ? e.message : "Error al revisar"),
   });
 
+  if (error) {
+    return (
+      <EmptyState
+        icon={TriangleAlertIcon}
+        title="No se pudo cargar el expediente"
+        description={
+          error instanceof ApiError ? error.message : "Intenta de nuevo más tarde."
+        }
+      />
+    );
+  }
   if (isLoading || !expediente) {
     return <Skeleton className="h-64 w-full rounded-2xl" />;
   }
@@ -1214,7 +1242,7 @@ function AcademicoTab({ student }: { student: Student }) {
 
 function CuentaTab({ student }: { student: Student }) {
   const queryClient = useQueryClient();
-  const { data: statement, isLoading } = useQuery({
+  const { data: statement, isLoading, error } = useQuery({
     queryKey: queryKeys.statement(student.id),
     queryFn: () =>
       api<AccountStatement>(`/treasury/students/${student.id}/statement`),
@@ -1272,6 +1300,17 @@ function CuentaTab({ student }: { student: Student }) {
       toast.error(e instanceof ApiError ? e.message : "Error al cancelar"),
   });
 
+  if (error) {
+    return (
+      <EmptyState
+        icon={TriangleAlertIcon}
+        title="No se pudo cargar el estado de cuenta"
+        description={
+          error instanceof ApiError ? error.message : "Intenta de nuevo más tarde."
+        }
+      />
+    );
+  }
   if (isLoading || !statement) {
     return <Skeleton className="h-64 w-full rounded-2xl" />;
   }

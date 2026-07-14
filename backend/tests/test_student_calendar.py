@@ -48,7 +48,7 @@ async def test_student_calendar(client, seed, monkeypatch):
     # group not linked to the calendar -> linked: false, no upstream call
     response = await client.get(f"/api/v1/students/{student['id']}/calendar")
     assert response.status_code == 200
-    assert response.json() == {"items": [], "linked": False}
+    assert response.json() == {"items": [], "linked": False, "errors": []}
 
     # link the group to a calendar group
     calendar_group_id = str(uuid.uuid4())

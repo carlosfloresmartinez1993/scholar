@@ -536,6 +536,12 @@ async def update_group_subject(
     group_subject = await session.get(GroupSubject, group_subject_id)
     if group_subject is None:
         raise HTTPException(status_code=404, detail="Materia de grupo no encontrada")
+    if body.plan_subject_id != group_subject.plan_subject_id:
+        group = await session.get(Group, group_subject.group_id)
+        subject = await session.get(PlanSubject, body.plan_subject_id)
+        if subject is None or group is None or subject.plan_version_id != group.plan_version_id:
+            raise HTTPException(status_code=400, detail="La materia no pertenece al plan del grupo")
+        group_subject.plan_subject_id = body.plan_subject_id
     group_subject.teacher_user_id = body.teacher_user_id
     group_subject.schedule_text = body.schedule_text
     session.add(group_subject)

@@ -1,17 +1,19 @@
 """Students: registry by CURP (RT-09), plan enrollment (fixes the RVOE, RF-C04),
 group/subject enrollment with seriación (RF-C07) and RVOE blocking (RT-03),
 and the SEP statistics export (RT-10)."""
+import asyncio
 import csv
 import io
 import uuid
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlmodel import select
+from sqlmodel import func, select
 
 from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
 from app.api.routes.catalog import get_default_institution
 from app.models import (
+    FolioCounter,
     Group,
     GroupEnrollment,
     GroupEnrollmentCreate,
@@ -81,9 +83,30 @@ async def create_student(
     ).first()
     if dup:
         raise HTTPException(status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)")
-    # matrícula: YY + sequential
-    count = len((await session.exec(select(Student.id))).all())
-    enrollment_number = f"{institution.short_name[:4].upper()}{count + 1:06d}"
+    # matrícula: institution prefix + per-institution sequence (row-locked counter,
+    # like folios RF-D05, so concurrent creates and deletions never collide)
+    prefix = institution.short_name[:4].upper()
+    counter = (
+        await session.exec(
+            select(FolioCounter)
+            .where(FolioCounter.institution_id == institution.id, FolioCounter.series == "MAT")
+            .with_for_update()
+        )
+    ).first()
+    if counter is None:
+        # seed from existing matrículas (zero-padded, so max() is the highest number)
+        last = (
+            await session.exec(
+                select(func.max(Student.enrollment_number)).where(
+                    Student.institution_id == institution.id
+                )
+            )
+        ).first()
+        seed = int(last[-6:]) if last and last[-6:].isdigit() else 0
+        counter = FolioCounter(institution_id=institution.id, series="MAT", last_number=seed)
+    counter.last_number += 1
+    session.add(counter)
+    enrollment_number = f"{prefix}{counter.last_number:06d}"
     student = Student(
         **body.model_dump(), institution_id=institution.id, enrollment_number=enrollment_number
     )
@@ -301,20 +324,33 @@ async def student_calendar(
         await session.exec(
             select(Group)
             .join(GroupEnrollment, GroupEnrollment.group_id == Group.id)
+            .join(Term, Term.id == Group.term_id)
             .where(
                 GroupEnrollment.student_id == student_id,
                 GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                Term.is_open == True,  # noqa: E712 - only current terms, not past/future ones
             )
         )
     ).all()
     linked_groups = [g for g in groups if g.calendar_group_id]
     if not linked_groups:
-        return {"items": [], "linked": False}
+        return {"items": [], "linked": False, "errors": []}
+
+    async def fetch(group: Group) -> list[dict] | None:
+        try:
+            return await calendar.get_schedule(group.calendar_group_id)
+        except HTTPException:
+            return None  # one bad link/upstream error must not hide the other groups
+
+    results = await asyncio.gather(*(fetch(group) for group in linked_groups))
     items: list[dict] = []
-    for group in linked_groups:
-        blocks = await calendar.get_schedule(group.calendar_group_id)
+    errors: list[str] = []
+    for group, blocks in zip(linked_groups, results):
+        if blocks is None:
+            errors.append(group.code)
+            continue
         items.extend({"group_code": group.code, **block} for block in blocks)
-    return {"items": items, "linked": True}
+    return {"items": items, "linked": True, "errors": errors}
 
 
 # --- SEP export (RT-10) --------------------------------------------------------------

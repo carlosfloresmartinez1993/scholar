@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
+from app.api.deps import AcademicStaff, AnyStaff, ServiciosEscolares, SessionDep
 from app.api.routes.catalog import get_default_institution
 from app.models import (
     DocumentRequirement,
@@ -118,7 +118,7 @@ async def upload_student_document(
 
 @router.get("/students/{student_id}/documents")
 async def list_student_documents(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+    session: SessionDep, _: AcademicStaff, student_id: uuid.UUID
 ) -> list[StudentDocumentPublic]:
     return (
         await session.exec(
@@ -131,7 +131,7 @@ async def list_student_documents(
 
 @router.get("/files/{document_id}")
 async def download_student_document(
-    session: SessionDep, _: AnyStaff, document_id: uuid.UUID
+    session: SessionDep, _: AcademicStaff, document_id: uuid.UUID
 ) -> FileResponse:
     document = await session.get(StudentDocument, document_id)
     if document is None:
@@ -168,7 +168,7 @@ async def review_student_document(
 # --- Expediente view (RF-D01/D02) ----------------------------------------------------
 
 @router.get("/students/{student_id}/expediente")
-async def expediente(session: SessionDep, _: AnyStaff, student_id: uuid.UUID) -> dict:
+async def expediente(session: SessionDep, _: AcademicStaff, student_id: uuid.UUID) -> dict:
     """Single view: data, checklist status, documents, issued docs, debt flag."""
     student = await session.get(Student, student_id)
     if student is None:

@@ -5,6 +5,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.api.deps import AnyStaff, CurrentUser, ServiciosEscolares, SessionDep, TeacherOrAcademic
@@ -158,6 +159,8 @@ async def capture_grade(
     if enrollment is None:
         raise HTTPException(status_code=404, detail="Inscripción de materia no encontrada")
     group_subject = await session.get(GroupSubject, enrollment.group_subject_id)
+    if group_subject is None:
+        raise HTTPException(status_code=404, detail="Materia de grupo no encontrada")
     await _can_capture(session, current_user, group_subject)
     await _capture_window_open(session, group_subject)
     component = await session.get(EvaluationComponent, body.component_id)
@@ -189,7 +192,16 @@ async def capture_grade(
             captured_by=current_user.id,
         )
         session.add(grade)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            # ponytail: two concurrent captures for the same component (double
+            # submit / two open tabs); ask the client to retry rather than
+            # upserting mid-transaction
+            await session.rollback()
+            raise HTTPException(
+                status_code=409, detail="La calificación ya fue capturada, intenta de nuevo"
+            )
         audit.record(session, actor=current_user.email, action="grade.captured",
                      entity="grade", entity_id=str(grade.id),
                      detail=f"{component.label}: {body.value}")
