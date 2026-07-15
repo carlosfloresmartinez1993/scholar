@@ -45,6 +45,23 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
             "subject_b": subject_b, "term": term, "group": group}
 
 
+async def test_cross_campus_enrollment_rejected(client, seed):
+    """A student can only enroll in a group of their own campus (Servo Plantel key)."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))  # group on campus A
+    other_campus = (await client.post("/api/v1/catalog/campuses", json={
+        "name": "Campus Tijuana",
+    })).json()
+    student_b = (await client.post("/api/v1/students", json={
+        "curp": CURP_B, "full_name": "Ana Gómez", "campus_id": other_campus["id"],
+    })).json()
+    blocked = await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student_b["id"], "group_id": catalog["group"]["id"],
+    })
+    assert blocked.status_code == 409, blocked.text
+    assert "planteles distintos" in blocked.json()["detail"]
+
+
 async def test_full_academic_flow(client, seed):
     await login(client)
     campus_id = str(seed["campus"].id)

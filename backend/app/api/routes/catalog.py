@@ -428,12 +428,15 @@ async def list_groups(
     _: AnyStaff,
     term_id: uuid.UUID | None = None,
     plan_version_id: uuid.UUID | None = None,
+    campus_id: uuid.UUID | None = None,
 ) -> list[GroupPublic]:
     q = select(Group).order_by(Group.code)
     if term_id:
         q = q.where(Group.term_id == term_id)
     if plan_version_id:
         q = q.where(Group.plan_version_id == plan_version_id)
+    if campus_id:
+        q = q.where(Group.campus_id == campus_id)
     return (await session.exec(q)).all()
 
 
@@ -441,10 +444,11 @@ async def list_groups(
 async def create_group(
     session: SessionDep, current_user: AcademicStaff, body: GroupCreate
 ) -> GroupPublic:
-    await require_operable_rvoe(session, body.plan_version_id)  # RT-03
+    rvoe = await require_operable_rvoe(session, body.plan_version_id)  # RT-03
     if await session.get(Term, body.term_id) is None:
         raise HTTPException(status_code=404, detail="Ciclo no encontrado")
-    group = Group(**body.model_dump())
+    # campus is derived from the plan's RVOE, not supplied by the client
+    group = Group(**body.model_dump(), campus_id=rvoe.campus_id)
     session.add(group)
     audit.record(session, actor=current_user.email, action="group.created",
                  entity="group", entity_id=str(group.id), detail=group.code)

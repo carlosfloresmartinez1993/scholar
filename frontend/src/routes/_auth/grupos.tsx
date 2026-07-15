@@ -19,7 +19,6 @@ import type {
   Campus,
   GradeGrid,
   Group,
-  GroupEnrollmentKind,
   GroupSubject,
   PlanSubject,
   PlanVersion,
@@ -232,7 +231,6 @@ function GruposPage() {
           open={createOpen}
           onOpenChange={setCreateOpen}
           termId={termId}
-          campuses={campuses ?? []}
           planVersionLabels={planVersionLabels}
         />
       )}
@@ -244,13 +242,11 @@ function CreateGroupDialog({
   open,
   onOpenChange,
   termId,
-  campuses,
   planVersionLabels,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   termId: string;
-  campuses: Campus[];
   planVersionLabels: Map<string, string>;
 }) {
   const queryClient = useQueryClient();
@@ -258,7 +254,6 @@ function CreateGroupDialog({
     code: "",
     period_number: 1,
     plan_version_id: "",
-    campus_id: "",
   });
 
   const save = useMutation({
@@ -271,7 +266,7 @@ function CreateGroupDialog({
       queryClient.invalidateQueries({ queryKey: ["groups"] });
       toast.success("Grupo creado");
       onOpenChange(false);
-      setForm({ code: "", period_number: 1, plan_version_id: "", campus_id: "" });
+      setForm({ code: "", period_number: 1, plan_version_id: "" });
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -330,31 +325,14 @@ function CreateGroupDialog({
               placeholder="Seleccione un plan"
             />
           </div>
-          <div className="grid gap-2">
-            <Label>Campus</Label>
-            <Select
-              value={form.campus_id}
-              onValueChange={(v) => setForm({ ...form, campus_id: v })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Seleccione un campus" />
-              </SelectTrigger>
-              <SelectContent>
-                {campuses.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            El campus se toma del RVOE del plan seleccionado.
+          </p>
           <DialogFooter>
             <Button
               type="submit"
               className="font-bold"
-              disabled={
-                save.isPending || !form.plan_version_id || !form.campus_id
-              }
+              disabled={save.isPending || !form.plan_version_id}
             >
               {save.isPending ? "Guardando…" : "Guardar"}
             </Button>
@@ -814,13 +792,14 @@ function EnrollDialog({
   onDone: () => void;
 }) {
   const [studentId, setStudentId] = useState("");
-  const [kind, setKind] = useState<GroupEnrollmentKind>("inscripcion");
   const [subjectIds, setSubjectIds] = useState<string[]>([]);
   const [override, setOverride] = useState(false);
 
+  // only students of the group's campus can enroll (Servo Plantel key)
   const { data: students } = useQuery({
-    queryKey: queryKeys.students(),
-    queryFn: () => api<Student[]>("/students?limit=1000"),
+    queryKey: ["students", "by-campus", group.campus_id],
+    queryFn: () =>
+      api<Student[]>(`/students?limit=1000&campus_id=${group.campus_id}`),
     enabled: open,
   });
 
@@ -831,7 +810,6 @@ function EnrollDialog({
         body: JSON.stringify({
           student_id: studentId,
           group_id: group.id,
-          kind,
           plan_subject_ids: subjectIds,
           override_prerequisites: override,
         }),
@@ -885,21 +863,6 @@ function EnrollDialog({
               placeholder="Buscar alumno…"
               searchPlaceholder="Nombre, matrícula o CURP…"
             />
-          </div>
-          <div className="grid gap-2">
-            <Label>Tipo de inscripción</Label>
-            <Select
-              value={kind}
-              onValueChange={(v) => setKind(v as GroupEnrollmentKind)}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="inscripcion">Inscripción</SelectItem>
-                <SelectItem value="reinscripcion">Reinscripción</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
           <div className="grid gap-2">
             <Label>Materias (opcional — vacío inscribe todas)</Label>

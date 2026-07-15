@@ -334,24 +334,26 @@ function AlumnosPage() {
                 />
               </div>
             </div>
-            <div className="grid gap-2">
-              <Label>Campus</Label>
-              <Select
-                value={form.campus_id}
-                onValueChange={(v) => setForm({ ...form, campus_id: v })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccione un campus" />
-                </SelectTrigger>
-                <SelectContent>
-                  {campuses?.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {campuses && campuses.length > 1 && (
+              <div className="grid gap-2">
+                <Label>Campus</Label>
+                <Select
+                  value={form.campus_id}
+                  onValueChange={(v) => setForm({ ...form, campus_id: v })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Seleccione un campus" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {campuses.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {!editing ? (
               <div className="grid gap-2">
                 <Label>Tipo de ingreso</Label>
