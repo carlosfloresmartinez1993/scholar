@@ -891,13 +891,18 @@ function EnrollDialog({
               ))}
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <Checkbox
-              checked={override}
-              onCheckedChange={(v) => setOverride(v === true)}
-            />
-            Omitir validación de seriación (autorización especial)
-          </label>
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted-foreground">
+              Opciones avanzadas
+            </summary>
+            <label className="mt-2 flex items-center gap-2 font-medium">
+              <Checkbox
+                checked={override}
+                onCheckedChange={(v) => setOverride(v === true)}
+              />
+              Omitir validación de seriación (autorización especial)
+            </label>
+          </details>
           <DialogFooter>
             <Button
               type="submit"

@@ -2,6 +2,8 @@
 // print dialog (the cashier sets the RPH326B as the default printer). No PDF lib
 // and no local agent: window.print() drives the installed thermal driver.
 import { importeEnLetra } from "@/lib/numero-letras";
+import { PAYMENT_METHOD_LABELS } from "@/lib/format";
+import type { Charge, Institution, Payment } from "@/api/types";
 
 export interface ReceiptLine {
   cantidad: number;
@@ -32,6 +34,41 @@ export interface FiscalReceptor {
   usoCfdi: string;
   cp: string;
   domicilio: string;
+}
+
+// Map a registered payment to receipt data. Shared by Caja and the per-student
+// payment dialog so both print the same 80mm receipt.
+export function paymentToReceiptData(
+  payment: Payment,
+  ctx: {
+    institution: Institution;
+    student: { full_name: string; enrollment_number: string };
+    charges: Charge[];
+    cajero: string;
+  },
+): ReceiptData {
+  const charge = ctx.charges.find((c) => c.id === payment.charge_id);
+  return {
+    institutionName: ctx.institution.name,
+    rfc: ctx.institution.rfc,
+    fiscalAddress: ctx.institution.fiscal_address,
+    folio: payment.receipt_folio,
+    date: payment.received_at,
+    studentName: ctx.student.full_name,
+    enrollmentNumber: ctx.student.enrollment_number,
+    lines: [
+      {
+        cantidad: 1,
+        concepto: charge ? charge.description : "Abono a cuenta",
+        importe: payment.amount,
+      },
+    ],
+    formaPago:
+      PAYMENT_METHOD_LABELS[payment.method] +
+      (payment.bank_reference ? ` · ${payment.bank_reference}` : ""),
+    observaciones: payment.notes || undefined,
+    cajero: ctx.cajero,
+  };
 }
 
 const money = (n: number) =>
