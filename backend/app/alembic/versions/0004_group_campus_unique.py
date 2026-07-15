@@ -24,5 +24,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Fails by design if two campuses share a (term, code): re-narrowing to
+    # (term, code) is impossible while such rows exist. Reconcile those groups
+    # first — silently mutating/dropping them would lose data.
     op.drop_constraint('uq_group_code', 'groups', type_='unique')
     op.create_unique_constraint('uq_group_code', 'groups', ['term_id', 'code'])

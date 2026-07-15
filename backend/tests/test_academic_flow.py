@@ -35,12 +35,14 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
         "name": "2026-2", "period_type": "cuatrimestral",
         "start_date": "2026-09-01", "end_date": "2026-12-15",
     })).json()
+    # campus is intentionally NOT sent: it must be derived from the plan's RVOE
     group_response = await client.post("/api/v1/catalog/groups", json={
         "code": "LD-1A", "period_number": 1, "plan_version_id": plan["id"],
-        "term_id": term["id"], "campus_id": campus_id,
+        "term_id": term["id"],
     })
     assert group_response.status_code == 201, group_response.text
     group = group_response.json()
+    assert group["campus_id"] == rvoe["campus_id"]  # derived, not client-supplied
     return {"program": program, "rvoe": rvoe, "plan": plan, "subject_a": subject_a,
             "subject_b": subject_b, "term": term, "group": group}
 

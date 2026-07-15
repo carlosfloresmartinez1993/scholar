@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -105,6 +105,14 @@ function AlumnosPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
   const [form, setForm] = useState<StudentForm>(emptyForm);
+
+  // Backfill the campus default if the dialog was opened before campuses loaded
+  // (with a single campus the picker is hidden, so an empty id would stick).
+  useEffect(() => {
+    if (campuses?.length && !form.campus_id) {
+      setForm((f) => ({ ...f, campus_id: campuses[0].id }));
+    }
+  }, [campuses, form.campus_id]);
 
   const curpValue = form.curp.toUpperCase();
   const curpValid = CURP_RE.test(curpValue);
