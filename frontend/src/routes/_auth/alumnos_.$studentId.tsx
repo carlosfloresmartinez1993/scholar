@@ -1283,13 +1283,13 @@ function CuentaTab({ student }: { student: Student }) {
     queryFn: () => api<UserPublic>("/auth/me"),
   });
   const reprint = (payment: Payment) => {
-    if (!institution) return;
+    if (!institution || !me) return; // button is disabled until both resolve
     printReceipt(
       paymentToReceiptData(payment, {
         institution,
         student,
         charges: statement?.charges ?? [],
-        cajero: me?.full_name ?? "",
+        cajero: me.full_name,
       }),
     );
   };
@@ -1503,7 +1503,7 @@ function CuentaTab({ student }: { student: Student }) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={!institution}
+                          disabled={!institution || !me}
                           onClick={() => reprint(p)}
                         >
                           Recibo
@@ -1757,13 +1757,13 @@ function PaymentDialog({
     onSuccess: (payment) => {
       onDone();
       toast.success("Pago registrado");
-      if (institution) {
+      if (institution && me) {
         printReceipt(
           paymentToReceiptData(payment, {
             institution,
             student,
             charges,
-            cajero: me?.full_name ?? "",
+            cajero: me.full_name,
           }),
         );
       } else {
