@@ -33,7 +33,7 @@ const LEVEL_ORDER: EducationLevel[] = [
 ];
 
 function InicioPage() {
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, isError } = useQuery({
     queryKey: queryKeys.dashboardStats,
     queryFn: () => api<DashboardStats>("/dashboard/stats"),
   });
@@ -105,9 +105,13 @@ function InicioPage() {
         <h2 className="text-lg font-bold">Pendientes</h2>
         {isLoading ? (
           <Skeleton className="h-20 w-full rounded-2xl" />
+        ) : isError || !stats ? (
+          <p className="rounded-2xl border border-destructive/40 bg-card p-5 text-sm text-destructive">
+            No se pudieron cargar los pendientes.
+          </p>
         ) : (
           (() => {
-            const p = stats?.pending;
+            const p = stats.pending;
             const items = [
               {
                 to: "/asistencias",

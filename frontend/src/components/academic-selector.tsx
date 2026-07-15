@@ -37,7 +37,11 @@ export function useAcademicSelector() {
   const [sel, setSelRaw] = useState<Selection>(loadSelection);
   const setSel = (next: Selection) => {
     setSelRaw(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // persistence is best-effort (private mode / quota); ignore
+    }
   };
 
   const { data: terms } = useQuery({

@@ -110,7 +110,11 @@ async def _pending_tasks(session: AsyncSession, open_term_id: uuid.UUID) -> dict
         .where(AbsenceJustification.status == JustificationStatus.pendiente)
     )
     unsigned_actas = await session.scalar(
-        select(func.count()).select_from(GradeActa).where(GradeActa.signed_at.is_(None))  # type: ignore[union-attr]
+        select(func.count())
+        .select_from(GradeActa)
+        .join(GroupSubject, GroupSubject.id == GradeActa.group_subject_id)
+        .join(Group, Group.id == GroupSubject.group_id)
+        .where(Group.term_id == open_term_id, GradeActa.signed_at.is_(None))  # type: ignore[union-attr]
     )
     # group-subjects of the open term with no teacher assigned
     groups_without_teacher = await session.scalar(

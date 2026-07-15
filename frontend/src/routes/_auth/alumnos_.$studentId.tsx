@@ -1503,6 +1503,7 @@ function CuentaTab({ student }: { student: Student }) {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={!institution}
                           onClick={() => reprint(p)}
                         >
                           Recibo
@@ -1765,6 +1766,8 @@ function PaymentDialog({
             cajero: me?.full_name ?? "",
           }),
         );
+      } else {
+        toast.warning("Pago guardado; el recibo no está disponible aún");
       }
       onOpenChange(false);
       setForm({

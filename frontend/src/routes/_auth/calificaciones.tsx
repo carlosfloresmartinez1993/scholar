@@ -347,6 +347,7 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
                     <Button
                       variant="ghost"
                       size="sm"
+                      disabled={!me}
                       onClick={() => {
                         setSignName(me?.full_name ?? "");
                         setSigning(a);
