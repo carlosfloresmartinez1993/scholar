@@ -35,14 +35,33 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
         "name": "2026-2", "period_type": "cuatrimestral",
         "start_date": "2026-09-01", "end_date": "2026-12-15",
     })).json()
+    # campus is intentionally NOT sent: it must be derived from the plan's RVOE
     group_response = await client.post("/api/v1/catalog/groups", json={
         "code": "LD-1A", "period_number": 1, "plan_version_id": plan["id"],
-        "term_id": term["id"], "campus_id": campus_id,
+        "term_id": term["id"],
     })
     assert group_response.status_code == 201, group_response.text
     group = group_response.json()
+    assert group["campus_id"] == rvoe["campus_id"]  # derived, not client-supplied
     return {"program": program, "rvoe": rvoe, "plan": plan, "subject_a": subject_a,
             "subject_b": subject_b, "term": term, "group": group}
+
+
+async def test_cross_campus_enrollment_rejected(client, seed):
+    """A student can only enroll in a group of their own campus (Servo Plantel key)."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))  # group on campus A
+    other_campus = (await client.post("/api/v1/catalog/campuses", json={
+        "name": "Campus Tijuana",
+    })).json()
+    student_b = (await client.post("/api/v1/students", json={
+        "curp": CURP_B, "full_name": "Ana Gómez", "campus_id": other_campus["id"],
+    })).json()
+    blocked = await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student_b["id"], "group_id": catalog["group"]["id"],
+    })
+    assert blocked.status_code == 409, blocked.text
+    assert "planteles distintos" in blocked.json()["detail"]
 
 
 async def test_full_academic_flow(client, seed):

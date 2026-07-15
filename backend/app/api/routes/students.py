@@ -53,10 +53,13 @@ async def list_students(
     _: AnyStaff,
     q: str | None = None,
     status: str | None = None,
+    campus_id: uuid.UUID | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[StudentPublic]:
     query = select(Student).order_by(Student.full_name).limit(min(limit, 500)).offset(offset)
+    if campus_id:
+        query = query.where(Student.campus_id == campus_id)
     if q:
         like = f"%{q.upper()}%"
         query = query.where(
@@ -214,6 +217,12 @@ async def enroll_in_group(
     group = await session.get(Group, body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    # Servo keys inscripciones by (Ciclo, Plantel, ...): a student can only enroll
+    # in a group of their own campus.
+    if student.campus_id != group.campus_id:
+        raise HTTPException(
+            status_code=409, detail="El alumno y el grupo pertenecen a planteles distintos"
+        )
     await require_operable_rvoe(session, group.plan_version_id)  # RT-03
     plan_enrollment = await active_plan_enrollment(session, student, group.plan_version_id)
 
@@ -259,7 +268,7 @@ async def enroll_in_group(
             )
         )
     ).first()
-    kind = GroupEnrollmentKind.reinscripcion if previous else body.kind
+    kind = GroupEnrollmentKind.reinscripcion if previous else GroupEnrollmentKind.inscripcion
 
     enrollment = GroupEnrollment(
         student_id=student.id,

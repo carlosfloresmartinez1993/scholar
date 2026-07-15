@@ -5,6 +5,7 @@ from app.models.catalog import (
     Campus,
     CampusCreate,
     CampusPublic,
+    CampusUpdate,
     EducationLevel,
     Group,
     GroupCreate,

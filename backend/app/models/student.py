@@ -143,7 +143,7 @@ class GroupEnrollment(SQLModel, table=True):
 class GroupEnrollmentCreate(SQLModel):
     student_id: uuid.UUID
     group_id: uuid.UUID
-    kind: GroupEnrollmentKind = GroupEnrollmentKind.inscripcion
+    # kind (inscripción/reinscripción) is derived server-side from enrollment history
     # subjects to enroll; empty = all subjects of the group
     plan_subject_ids: list[uuid.UUID] = []
     # skip seriación validation (requires servicios_escolares role; audited)
