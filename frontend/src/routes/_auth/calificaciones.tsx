@@ -13,6 +13,7 @@ import type {
   GroupSubject,
   PlanSubject,
   Term,
+  UserPublic,
 } from "@/api/types";
 import {
   EVALUATION_KIND_LABELS,
@@ -332,6 +333,10 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
     queryFn: () =>
       api<GradeActa[]>(`/grades/group-subjects/${groupSubjectId}/actas`),
   });
+  const { data: me } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<UserPublic>("/auth/me"),
+  });
 
   const [kind, setKind] = useState<ActaKind>("ordinaria");
   const [signing, setSigning] = useState<GradeActa | null>(null);
@@ -435,7 +440,10 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setSigning(a)}
+                      onClick={() => {
+                        setSignName(me?.full_name ?? "");
+                        setSigning(a);
+                      }}
                     >
                       <FileSignature className="size-4" /> Firmar
                     </Button>

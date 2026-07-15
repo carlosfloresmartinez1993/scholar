@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -733,7 +733,15 @@ function UploadDocumentDialog({
           </div>
           <div className="grid gap-2">
             <Label>Requisito (opcional)</Label>
-            <Select value={requirementId} onValueChange={setRequirementId}>
+            <Select
+              value={requirementId}
+              onValueChange={(v) => {
+                setRequirementId(v);
+                // default the title to the requirement name (unless already typed)
+                const r = requirements.find((x) => x.id === v);
+                if (r && !title.trim()) setTitle(r.name);
+              }}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -791,6 +799,12 @@ function IssueDocumentDialog({
       api<PlanEnrollment[]>(`/students/${student.id}/plan-enrollments`),
     enabled: open,
   });
+  // a student usually has one plan — default to it instead of "sin plan"
+  useEffect(() => {
+    if (planVersionId === NONE && enrollments?.length === 1) {
+      setPlanVersionId(enrollments[0].plan_version_id);
+    }
+  }, [enrollments, planVersionId]);
   const planVersionLabels = usePlanVersionLabels();
 
   const issue = useMutation({

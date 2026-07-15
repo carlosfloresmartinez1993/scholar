@@ -20,7 +20,6 @@ import {
   ScrollText,
   LogOut,
   ChevronDown,
-  Clock,
   KeyRound,
   PanelLeftClose,
   PanelLeftOpen,
@@ -220,7 +219,6 @@ function Header({ me }: { me?: UserPublic }) {
       </span>
 
       <div className="flex items-center gap-4">
-        <LiveClock />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="gap-2 font-semibold">
@@ -345,37 +343,3 @@ function PasswordDialog({
   );
 }
 
-const TZ = "America/Tijuana";
-
-function LiveClock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <time
-      className="hidden items-center gap-2 text-sm md:flex"
-      title="Hora local del plantel (America/Tijuana)"
-      dateTime={now.toISOString()}
-    >
-      <Clock className="size-4 text-muted-foreground" aria-hidden="true" />
-      <span className="capitalize text-muted-foreground">
-        {now.toLocaleDateString("es-MX", {
-          timeZone: TZ,
-          weekday: "short",
-          day: "numeric",
-          month: "short",
-        })}
-      </span>
-      <span className="font-bold" data-numeric>
-        {now.toLocaleTimeString("es-MX", {
-          timeZone: TZ,
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })}
-      </span>
-    </time>
-  );
-}
