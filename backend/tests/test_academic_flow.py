@@ -47,6 +47,29 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
             "subject_b": subject_b, "term": term, "group": group}
 
 
+async def test_group_enrollment_autocreates_plan_enrollment(client, seed):
+    """Enrolling into a group creates the plan enrollment in one act (no separate step)."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    await client.post("/api/v1/catalog/group-subjects", json={
+        "group_id": catalog["group"]["id"],
+        "plan_subject_id": catalog["subject_a"]["id"],
+    })
+    student = (await client.post("/api/v1/students", json={
+        "curp": CURP_A, "full_name": "Sin Plan", "campus_id": str(seed["campus"].id),
+    })).json()
+    # no explicit plan-enrollment call
+    enrollment = await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": catalog["group"]["id"],
+    })
+    assert enrollment.status_code == 201, enrollment.text
+    plans = (await client.get(
+        f"/api/v1/students/{student['id']}/plan-enrollments"
+    )).json()
+    assert len(plans) == 1
+    assert plans[0]["plan_version_id"] == catalog["plan"]["id"]
+
+
 async def test_dashboard_pending_tasks(client, seed):
     """The work queue surfaces group-subjects with no teacher assigned."""
     await login(client)

@@ -190,3 +190,32 @@ async def active_plan_enrollment(
             status_code=404, detail="El alumno no está inscrito en ese plan de estudios"
         )
     return enrollment
+
+
+async def get_or_create_plan_enrollment(
+    session: AsyncSession,
+    student: Student,
+    plan_version_id: uuid.UUID,
+    start_term_id: uuid.UUID,
+) -> tuple[StudentPlanEnrollment, bool]:
+    """Return the student's plan enrollment, creating it if absent (so enrolling
+    into a group is a single act — no separate plan-enrollment step). The bool
+    is True when a new enrollment was created."""
+    existing = (
+        await session.exec(
+            select(StudentPlanEnrollment).where(
+                StudentPlanEnrollment.student_id == student.id,
+                StudentPlanEnrollment.plan_version_id == plan_version_id,
+            )
+        )
+    ).first()
+    if existing:
+        return existing, False
+    enrollment = StudentPlanEnrollment(
+        student_id=student.id,
+        plan_version_id=plan_version_id,
+        start_term_id=start_term_id,
+    )
+    session.add(enrollment)
+    await session.flush()
+    return enrollment, True
