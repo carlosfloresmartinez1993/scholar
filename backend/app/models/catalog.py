@@ -88,6 +88,8 @@ class Campus(CampusBase, table=True):
     __tablename__ = "campuses"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     institution_id: uuid.UUID = Field(foreign_key="institutions.id", index=True)
+    # id of the matching campus in the calendar system (no FK: other database)
+    calendar_campus_id: uuid.UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -95,9 +97,14 @@ class CampusCreate(CampusBase):
     institution_id: uuid.UUID | None = None  # defaults to the single institution
 
 
+class CampusUpdate(SQLModel):
+    calendar_campus_id: uuid.UUID | None = None
+
+
 class CampusPublic(CampusBase):
     id: uuid.UUID
     institution_id: uuid.UUID
+    calendar_campus_id: uuid.UUID | None = None
 
 
 # --- Program / RVOE (RT-01, RT-02, RT-03) ------------------------------------

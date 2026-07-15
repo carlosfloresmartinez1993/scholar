@@ -37,6 +37,10 @@ async def _get(path: str, params: dict[str, str] | None = None) -> Any:
     return response.json()
 
 
+async def get_campuses() -> list[dict]:
+    return await _get("/campuses")
+
+
 async def get_programs() -> list[dict]:
     return await _get("/programs")
 

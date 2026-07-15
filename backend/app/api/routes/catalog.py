@@ -10,6 +10,7 @@ from app.models import (
     Campus,
     CampusCreate,
     CampusPublic,
+    CampusUpdate,
     EvaluationComponent,
     EvaluationComponentCreate,
     EvaluationComponentPublic,
@@ -99,6 +100,24 @@ async def create_campus(
     return campus
 
 
+@router.patch("/campuses/{campus_id}")
+async def update_campus(
+    session: SessionDep, current_user: ServiciosEscolares, campus_id: uuid.UUID,
+    body: CampusUpdate,
+) -> CampusPublic:
+    campus = await session.get(Campus, campus_id)
+    if campus is None:
+        raise HTTPException(status_code=404, detail="Campus no encontrado")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(campus, k, v)
+    session.add(campus)
+    audit.record(session, actor=current_user.email, action="campus.updated",
+                 entity="campus", entity_id=str(campus_id))
+    await session.commit()
+    await session.refresh(campus)
+    return campus
+
+
 # --- Programs ------------------------------------------------------------------
 
 @router.get("/programs")
@@ -141,6 +160,12 @@ async def update_program(
 
 
 # --- Calendar system (calendar.inue.online) — linking catalogs ------------------
+
+@router.get("/calendar/campuses")
+async def list_calendar_campuses(_: AnyStaff) -> list[dict]:
+    """Campuses of the calendar system (to link Campus.calendar_campus_id)."""
+    return await calendar.get_campuses()
+
 
 @router.get("/calendar/programs")
 async def list_calendar_programs(_: AnyStaff) -> list[dict]:
