@@ -1782,6 +1782,20 @@ function PaymentDialog({
   const openCharges = charges.filter(
     (c) => c.status === "pendiente" || c.status === "parcial",
   );
+  const oldestOpen = openCharges.length
+    ? [...openCharges].sort((a, b) => a.due_date.localeCompare(b.due_date))[0]
+    : null;
+  // default to settling the oldest open charge instead of "sin cargo"
+  useEffect(() => {
+    if (open && oldestOpen && form.charge_id === NONE && form.amount === "") {
+      setForm((f) => ({
+        ...f,
+        charge_id: oldestOpen.id,
+        amount: String(oldestOpen.balance),
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, oldestOpen?.id]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
