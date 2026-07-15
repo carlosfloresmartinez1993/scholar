@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -24,9 +24,11 @@ import type {
   Charge,
   ChargeConcept,
   Expediente,
+  Institution,
   IssuedDocumentKind,
   Justification,
   Kardex,
+  Payment,
   PaymentMethod,
   PlanEnrollment,
   PlanVersion,
@@ -37,7 +39,9 @@ import type {
   Student,
   StudentStatus,
   Term,
+  UserPublic,
 } from "@/api/types";
+import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import {
   ADMISSION_TYPE_LABELS,
   CHARGE_STATUS_LABELS,
@@ -733,7 +737,15 @@ function UploadDocumentDialog({
           </div>
           <div className="grid gap-2">
             <Label>Requisito (opcional)</Label>
-            <Select value={requirementId} onValueChange={setRequirementId}>
+            <Select
+              value={requirementId}
+              onValueChange={(v) => {
+                setRequirementId(v);
+                // default the title to the requirement name (unless already typed)
+                const r = requirements.find((x) => x.id === v);
+                if (r && !title.trim()) setTitle(r.name);
+              }}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -791,6 +803,12 @@ function IssueDocumentDialog({
       api<PlanEnrollment[]>(`/students/${student.id}/plan-enrollments`),
     enabled: open,
   });
+  // a student usually has one plan — default to it instead of "sin plan"
+  useEffect(() => {
+    if (planVersionId === NONE && enrollments?.length === 1) {
+      setPlanVersionId(enrollments[0].plan_version_id);
+    }
+  }, [enrollments, planVersionId]);
   const planVersionLabels = usePlanVersionLabels();
 
   const issue = useMutation({
@@ -1256,6 +1274,25 @@ function CuentaTab({ student }: { student: Student }) {
     queryKey: queryKeys.concepts,
     queryFn: () => api<ChargeConcept[]>("/treasury/concepts"),
   });
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
+  const { data: me } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<UserPublic>("/auth/me"),
+  });
+  const reprint = (payment: Payment) => {
+    if (!institution || !me) return; // button is disabled until both resolve
+    printReceipt(
+      paymentToReceiptData(payment, {
+        institution,
+        student,
+        charges: statement?.charges ?? [],
+        cajero: me.full_name,
+      }),
+    );
+  };
 
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [chargeOpen, setChargeOpen] = useState(false);
@@ -1462,14 +1499,24 @@ function CuentaTab({ student }: { student: Student }) {
                   </TableCell>
                   <TableCell>
                     {!p.cancelled && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() => setCancellingPayment(p.id)}
-                      >
-                        Cancelar
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!institution || !me}
+                          onClick={() => reprint(p)}
+                        >
+                          Recibo
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => setCancellingPayment(p.id)}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
@@ -1684,10 +1731,19 @@ function PaymentDialog({
     bank_reference: "",
     notes: "",
   });
+  // for the printed receipt (parity with Caja)
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
+  const { data: me } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<UserPublic>("/auth/me"),
+  });
 
   const save = useMutation({
     mutationFn: () =>
-      api(`/treasury/payments`, {
+      api<Payment>(`/treasury/payments`, {
         method: "POST",
         body: JSON.stringify({
           student_id: student.id,
@@ -1698,9 +1754,21 @@ function PaymentDialog({
           notes: form.notes,
         }),
       }),
-    onSuccess: () => {
+    onSuccess: (payment) => {
       onDone();
       toast.success("Pago registrado");
+      if (institution && me) {
+        printReceipt(
+          paymentToReceiptData(payment, {
+            institution,
+            student,
+            charges,
+            cajero: me.full_name,
+          }),
+        );
+      } else {
+        toast.warning("Pago guardado; el recibo no está disponible aún");
+      }
       onOpenChange(false);
       setForm({
         charge_id: NONE,
@@ -1717,6 +1785,20 @@ function PaymentDialog({
   const openCharges = charges.filter(
     (c) => c.status === "pendiente" || c.status === "parcial",
   );
+  const oldestOpen = openCharges.length
+    ? [...openCharges].sort((a, b) => a.due_date.localeCompare(b.due_date))[0]
+    : null;
+  // default to settling the oldest open charge instead of "sin cargo"
+  useEffect(() => {
+    if (open && oldestOpen && form.charge_id === NONE && form.amount === "") {
+      setForm((f) => ({
+        ...f,
+        charge_id: oldestOpen.id,
+        amount: String(oldestOpen.balance),
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, oldestOpen?.id]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

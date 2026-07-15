@@ -47,6 +47,20 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
             "subject_b": subject_b, "term": term, "group": group}
 
 
+async def test_dashboard_pending_tasks(client, seed):
+    """The work queue surfaces group-subjects with no teacher assigned."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    await client.post("/api/v1/catalog/group-subjects", json={
+        "group_id": catalog["group"]["id"],
+        "plan_subject_id": catalog["subject_a"]["id"],
+    })  # no teacher_user_id
+    stats = (await client.get("/api/v1/dashboard/stats")).json()
+    assert stats["pending"]["groups_without_teacher"] >= 1
+    assert stats["pending"]["justifications_pending"] == 0
+    assert stats["pending"]["unsigned_actas"] == 0
+
+
 async def test_cross_campus_enrollment_rejected(client, seed):
     """A student can only enroll in a group of their own campus (Servo Plantel key)."""
     await login(client)

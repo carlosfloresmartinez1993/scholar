@@ -42,7 +42,12 @@ import {
   PAYMENT_METHOD_LABELS,
   SCHOLARSHIP_STATUS_LABELS,
 } from "@/lib/format";
-import { printComprobante, printReceipt, type ReceiptData } from "@/lib/receipt";
+import {
+  paymentToReceiptData,
+  printComprobante,
+  printReceipt,
+  type ReceiptData,
+} from "@/lib/receipt";
 import {
   DateRangeFilter,
   presetRange,
@@ -151,28 +156,12 @@ function CajaTab() {
 
   const receiptFor = (payment: Payment): ReceiptData | null => {
     if (!institution || !student) return null;
-    const charge = statement?.charges.find((c) => c.id === payment.charge_id);
-    return {
-      institutionName: institution.name,
-      rfc: institution.rfc,
-      fiscalAddress: institution.fiscal_address,
-      folio: payment.receipt_folio,
-      date: payment.received_at,
-      studentName: student.full_name,
-      enrollmentNumber: student.enrollment_number,
-      lines: [
-        {
-          cantidad: 1,
-          concepto: charge ? charge.description : "Abono a cuenta",
-          importe: payment.amount,
-        },
-      ],
-      formaPago:
-        PAYMENT_METHOD_LABELS[payment.method] +
-        (payment.bank_reference ? ` · ${payment.bank_reference}` : ""),
-      observaciones: payment.notes || undefined,
+    return paymentToReceiptData(payment, {
+      institution,
+      student,
+      charges: statement?.charges ?? [],
       cajero: me?.full_name ?? "",
-    };
+    });
   };
 
   const printPaymentReceipt = (payment: Payment) => {
