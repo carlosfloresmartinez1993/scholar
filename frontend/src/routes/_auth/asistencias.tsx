@@ -5,18 +5,15 @@ import { toast } from "sonner";
 import { Check, ClipboardCheck, Save, X } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
+import { useAcademicSelector } from "@/components/academic-selector";
 import type {
   AttendanceRecord,
   AttendanceReportRow,
   AttendanceStatus,
   ClassSession,
   GradeGrid,
-  Group,
-  GroupSubject,
   Justification,
-  PlanSubject,
   Student,
-  Term,
 } from "@/api/types";
 import {
   ATTENDANCE_STATUS_LABELS,
@@ -31,13 +28,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -66,104 +56,13 @@ const ROLL_STATUSES: AttendanceStatus[] = [
 ];
 
 function AsistenciasPage() {
-  const { data: terms } = useQuery({
-    queryKey: queryKeys.terms,
-    queryFn: () => api<Term[]>("/catalog/terms"),
-  });
-  const [selectedTerm, setSelectedTerm] = useState<string | null>(null);
-  const termId = selectedTerm ?? terms?.find((t) => t.is_open)?.id ?? null;
-
-  const [groupId, setGroupId] = useState<string | null>(null);
-  const [groupSubjectId, setGroupSubjectId] = useState<string | null>(null);
-
-  const { data: groups } = useQuery({
-    queryKey: queryKeys.groups(termId ?? undefined),
-    queryFn: () => api<Group[]>(`/catalog/groups?term_id=${termId}`),
-    enabled: !!termId,
-  });
-  const group = groups?.find((g) => g.id === groupId);
-
-  const { data: groupSubjects } = useQuery({
-    queryKey: queryKeys.groupSubjects(groupId ?? ""),
-    queryFn: () => api<GroupSubject[]>(`/catalog/groups/${groupId}/subjects`),
-    enabled: !!groupId,
-  });
-  const { data: planSubjects } = useQuery({
-    queryKey: queryKeys.planSubjects(group?.plan_version_id ?? ""),
-    queryFn: () =>
-      api<PlanSubject[]>(
-        `/catalog/plan-versions/${group!.plan_version_id}/subjects`,
-      ),
-    enabled: !!group,
-  });
-
-  const subjectName = (planSubjectId: string) => {
-    const s = planSubjects?.find((ps) => ps.id === planSubjectId);
-    return s ? `${s.code} — ${s.name}` : "Materia";
-  };
+  const { groupSubjectId, selector } = useAcademicSelector();
 
   return (
     <div className="space-y-6">
       <h1 className="text-3xl">Asistencias</h1>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          value={termId ?? ""}
-          onValueChange={(v) => {
-            setSelectedTerm(v);
-            setGroupId(null);
-            setGroupSubjectId(null);
-          }}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Ciclo" />
-          </SelectTrigger>
-          <SelectContent>
-            {terms?.map((t) => (
-              <SelectItem key={t.id} value={t.id}>
-                {t.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={groupId ?? ""}
-          onValueChange={(v) => {
-            setGroupId(v);
-            setGroupSubjectId(null);
-          }}
-          disabled={!termId}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Grupo" />
-          </SelectTrigger>
-          <SelectContent>
-            {groups?.map((g) => (
-              <SelectItem key={g.id} value={g.id}>
-                {g.code}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={groupSubjectId ?? ""}
-          onValueChange={setGroupSubjectId}
-          disabled={!groupId}
-        >
-          <SelectTrigger className="w-80">
-            <SelectValue placeholder="Materia" />
-          </SelectTrigger>
-          <SelectContent>
-            {groupSubjects?.map((gs) => (
-              <SelectItem key={gs.id} value={gs.id}>
-                {subjectName(gs.plan_subject_id)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <div className="flex flex-wrap items-center gap-3">{selector}</div>
 
       {!groupSubjectId ? (
         <EmptyState
