@@ -108,7 +108,14 @@ async def update_campus(
     campus = await session.get(Campus, campus_id)
     if campus is None:
         raise HTTPException(status_code=404, detail="Campus no encontrado")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    # reject a link to a campus that doesn't exist in the calendar registry
+    # (null clears the link and skips the check)
+    if data.get("calendar_campus_id") is not None:
+        valid = {c["id"] for c in await calendar.get_campuses()}
+        if str(data["calendar_campus_id"]) not in valid:
+            raise HTTPException(status_code=422, detail="Campus del calendario no encontrado")
+    for k, v in data.items():
         setattr(campus, k, v)
     session.add(campus)
     audit.record(session, actor=current_user.email, action="campus.updated",
