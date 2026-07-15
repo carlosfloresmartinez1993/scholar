@@ -24,9 +24,11 @@ import type {
   Charge,
   ChargeConcept,
   Expediente,
+  Institution,
   IssuedDocumentKind,
   Justification,
   Kardex,
+  Payment,
   PaymentMethod,
   PlanEnrollment,
   PlanVersion,
@@ -37,7 +39,9 @@ import type {
   Student,
   StudentStatus,
   Term,
+  UserPublic,
 } from "@/api/types";
+import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import {
   ADMISSION_TYPE_LABELS,
   CHARGE_STATUS_LABELS,
@@ -1270,6 +1274,25 @@ function CuentaTab({ student }: { student: Student }) {
     queryKey: queryKeys.concepts,
     queryFn: () => api<ChargeConcept[]>("/treasury/concepts"),
   });
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
+  const { data: me } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<UserPublic>("/auth/me"),
+  });
+  const reprint = (payment: Payment) => {
+    if (!institution) return;
+    printReceipt(
+      paymentToReceiptData(payment, {
+        institution,
+        student,
+        charges: statement?.charges ?? [],
+        cajero: me?.full_name ?? "",
+      }),
+    );
+  };
 
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [chargeOpen, setChargeOpen] = useState(false);
@@ -1476,14 +1499,23 @@ function CuentaTab({ student }: { student: Student }) {
                   </TableCell>
                   <TableCell>
                     {!p.cancelled && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() => setCancellingPayment(p.id)}
-                      >
-                        Cancelar
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => reprint(p)}
+                        >
+                          Recibo
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => setCancellingPayment(p.id)}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>
@@ -1698,10 +1730,19 @@ function PaymentDialog({
     bank_reference: "",
     notes: "",
   });
+  // for the printed receipt (parity with Caja)
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
+  const { data: me } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<UserPublic>("/auth/me"),
+  });
 
   const save = useMutation({
     mutationFn: () =>
-      api(`/treasury/payments`, {
+      api<Payment>(`/treasury/payments`, {
         method: "POST",
         body: JSON.stringify({
           student_id: student.id,
@@ -1712,9 +1753,19 @@ function PaymentDialog({
           notes: form.notes,
         }),
       }),
-    onSuccess: () => {
+    onSuccess: (payment) => {
       onDone();
       toast.success("Pago registrado");
+      if (institution) {
+        printReceipt(
+          paymentToReceiptData(payment, {
+            institution,
+            student,
+            charges,
+            cajero: me?.full_name ?? "",
+          }),
+        );
+      }
       onOpenChange(false);
       setForm({
         charge_id: NONE,
