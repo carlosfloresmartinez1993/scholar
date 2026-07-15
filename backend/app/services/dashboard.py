@@ -7,12 +7,16 @@ from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
+    AbsenceJustification,
     Charge,
     ChargeStatus,
     EducationLevel,
+    GradeActa,
     Group,
     GroupEnrollment,
     GroupEnrollmentStatus,
+    GroupSubject,
+    JustificationStatus,
     PlanVersion,
     Program,
     Rvoe,
@@ -98,6 +102,30 @@ async def _cartera_vencida(session: AsyncSession, term: Term, today: date) -> fl
     return round(total, 2)
 
 
+async def _pending_tasks(session: AsyncSession, open_term_id: uuid.UUID) -> dict:
+    """Actionable backlog for the work queue: what's waiting on staff right now."""
+    justifications = await session.scalar(
+        select(func.count())
+        .select_from(AbsenceJustification)
+        .where(AbsenceJustification.status == JustificationStatus.pendiente)
+    )
+    unsigned_actas = await session.scalar(
+        select(func.count()).select_from(GradeActa).where(GradeActa.signed_at.is_(None))  # type: ignore[union-attr]
+    )
+    # group-subjects of the open term with no teacher assigned
+    groups_without_teacher = await session.scalar(
+        select(func.count())
+        .select_from(GroupSubject)
+        .join(Group, Group.id == GroupSubject.group_id)
+        .where(Group.term_id == open_term_id, GroupSubject.teacher_user_id.is_(None))  # type: ignore[union-attr]
+    )
+    return {
+        "justifications_pending": justifications or 0,
+        "unsigned_actas": unsigned_actas or 0,
+        "groups_without_teacher": groups_without_teacher or 0,
+    }
+
+
 async def dashboard_stats(session: AsyncSession, today: date | None = None) -> dict:
     today = today or utcnow().date()
     terms = (
@@ -118,6 +146,8 @@ async def dashboard_stats(session: AsyncSession, today: date | None = None) -> d
             "term": None, "prev_term": None,
             "students": empty, "groups": empty, "scholars": empty,
             "cartera_vencida": {"current": 0.0, "previous": 0.0},
+            "pending": {"justifications_pending": 0, "unsigned_actas": 0,
+                        "groups_without_teacher": 0},
         }
 
     cur_students = await _students_by_level(session, open_term.id)
@@ -137,4 +167,5 @@ async def dashboard_stats(session: AsyncSession, today: date | None = None) -> d
             "current": await _cartera_vencida(session, open_term, today),
             "previous": await _cartera_vencida(session, prev_term, today) if prev_term else 0.0,
         },
+        "pending": await _pending_tasks(session, open_term.id),
     }

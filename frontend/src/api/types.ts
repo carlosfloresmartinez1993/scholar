@@ -537,6 +537,11 @@ export interface DashboardStats {
   groups: Record<EducationLevel, MetricDelta>;
   scholars: Record<EducationLevel, MetricDelta>;
   cartera_vencida: MetricDelta;
+  pending: {
+    justifications_pending: number;
+    unsigned_actas: number;
+    groups_without_teacher: number;
+  };
 }
 
 export interface CollectionReport {

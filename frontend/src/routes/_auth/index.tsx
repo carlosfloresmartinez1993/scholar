@@ -2,10 +2,13 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   Banknote,
+  FileClock,
+  FileSignature,
   GraduationCap,
   HandCoins,
   TrendingDown,
   TrendingUp,
+  UserRoundX,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -98,22 +101,46 @@ function InicioPage() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <QuickLink
-          to="/calificaciones"
-          title="Captura de calificaciones"
-          description="Registre parciales y ordinarios por grupo y materia, y genere actas con folio."
-        />
-        <QuickLink
-          to="/asistencias"
-          title="Pase de lista"
-          description="Registre la asistencia por sesión y revise el derecho a examen por materia."
-        />
-        <QuickLink
-          to="/tesoreria"
-          title="Caja y cobranza"
-          description="Cobre a los alumnos, imprima recibos, facture y revise la cartera vencida."
-        />
+      <div className="space-y-3">
+        <h2 className="text-lg font-bold">Pendientes</h2>
+        {isLoading ? (
+          <Skeleton className="h-20 w-full rounded-2xl" />
+        ) : (
+          (() => {
+            const p = stats?.pending;
+            const items = [
+              {
+                to: "/asistencias",
+                count: p?.justifications_pending ?? 0,
+                label: "Justificantes por revisar",
+                icon: FileClock,
+              },
+              {
+                to: "/calificaciones",
+                count: p?.unsigned_actas ?? 0,
+                label: "Actas sin firmar",
+                icon: FileSignature,
+              },
+              {
+                to: "/grupos",
+                count: p?.groups_without_teacher ?? 0,
+                label: "Materias sin docente asignado",
+                icon: UserRoundX,
+              },
+            ].filter((i) => i.count > 0);
+            return items.length === 0 ? (
+              <p className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground">
+                Todo al día — no hay pendientes.
+              </p>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-3">
+                {items.map((i) => (
+                  <WorkItem key={i.to} {...i} />
+                ))}
+              </div>
+            );
+          })()
+        )}
       </div>
     </div>
   );
@@ -233,22 +260,31 @@ function LevelStatCard({
   );
 }
 
-function QuickLink({
+function WorkItem({
   to,
-  title,
-  description,
+  count,
+  label,
+  icon: Icon,
 }: {
   to: string;
-  title: string;
-  description: string;
+  count: number;
+  label: string;
+  icon: LucideIcon;
 }) {
   return (
     <Link
       to={to}
-      className="rounded-2xl border bg-card p-5 transition-colors hover:bg-muted/50"
+      className="flex items-center gap-4 rounded-2xl border bg-card p-5 transition-colors hover:bg-muted/50"
     >
-      <h2 className="text-lg font-bold">{title}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      <div className="flex size-10 items-center justify-center rounded-xl bg-primary/15">
+        <Icon className="size-5 text-foreground/70" />
+      </div>
+      <div>
+        <p className="text-2xl font-bold" data-numeric>
+          {count}
+        </p>
+        <p className="text-sm text-muted-foreground">{label}</p>
+      </div>
     </Link>
   );
 }
