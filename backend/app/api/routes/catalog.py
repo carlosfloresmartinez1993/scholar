@@ -482,8 +482,22 @@ async def create_group(
     # campus is derived from the plan's RVOE, not supplied by the client
     group = Group(**body.model_dump(), campus_id=rvoe.campus_id)
     session.add(group)
+    await session.flush()
+    # seed the group with the plan subjects of its period (teacher unassigned);
+    # saves adding each materia by hand — remove any that don't apply.
+    period_subjects = (
+        await session.exec(
+            select(PlanSubject).where(
+                PlanSubject.plan_version_id == group.plan_version_id,
+                PlanSubject.period_number == group.period_number,
+            )
+        )
+    ).all()
+    for ps in period_subjects:
+        session.add(GroupSubject(group_id=group.id, plan_subject_id=ps.id))
     audit.record(session, actor=current_user.email, action="group.created",
-                 entity="group", entity_id=str(group.id), detail=group.code)
+                 entity="group", entity_id=str(group.id),
+                 detail=f"{group.code} · {len(period_subjects)} materias")
     await session.commit()
     await session.refresh(group)
     return group
@@ -553,7 +567,21 @@ async def create_group_subject(
     subject = await session.get(PlanSubject, body.plan_subject_id)
     if subject is None or subject.plan_version_id != group.plan_version_id:
         raise HTTPException(status_code=400, detail="La materia no pertenece al plan del grupo")
-    group_subject = GroupSubject(**body.model_dump())
+    # upsert: groups are seeded with their period's subjects on creation, so
+    # "add materia" (e.g. to assign a teacher) updates the existing row.
+    group_subject = (
+        await session.exec(
+            select(GroupSubject).where(
+                GroupSubject.group_id == body.group_id,
+                GroupSubject.plan_subject_id == body.plan_subject_id,
+            )
+        )
+    ).first()
+    if group_subject:
+        group_subject.teacher_user_id = body.teacher_user_id
+        group_subject.schedule_text = body.schedule_text
+    else:
+        group_subject = GroupSubject(**body.model_dump())
     session.add(group_subject)
     audit.record(session, actor=current_user.email, action="group_subject.created",
                  entity="group_subject", entity_id=str(group_subject.id))

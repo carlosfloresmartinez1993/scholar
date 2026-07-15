@@ -47,6 +47,18 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
             "subject_b": subject_b, "term": term, "group": group}
 
 
+async def test_group_seeded_with_period_subjects(client, seed):
+    """Creating a group auto-adds its period's plan subjects (no manual per-subject step)."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))  # LD-1A is period 1
+    subjects = (await client.get(
+        f"/api/v1/catalog/groups/{catalog['group']['id']}/subjects"
+    )).json()
+    ids = {gs["plan_subject_id"] for gs in subjects}
+    assert catalog["subject_a"]["id"] in ids  # period 1 → seeded
+    assert catalog["subject_b"]["id"] not in ids  # period 2 → not seeded
+
+
 async def test_group_enrollment_autocreates_plan_enrollment(client, seed):
     """Enrolling into a group creates the plan enrollment in one act (no separate step)."""
     await login(client)
