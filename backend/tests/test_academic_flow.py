@@ -201,11 +201,13 @@ async def test_full_academic_flow(client, seed):
     )
     assert open_window.status_code == 200
 
-    for component, value in zip(components, [8.0, 9.0, 10.0]):
-        response = await client.post("/api/v1/grades/capture", json={
-            "subject_enrollment_id": se_id, "component_id": component["id"], "value": value,
-        })
-        assert response.status_code == 200, response.text
+    # capture the whole row in one batch request (RF-C01)
+    batch = await client.post("/api/v1/grades/capture-batch", json=[
+        {"subject_enrollment_id": se_id, "component_id": c["id"], "value": v}
+        for c, v in zip(components, [8.0, 9.0, 10.0])
+    ])
+    assert batch.status_code == 200, batch.text
+    assert len(batch.json()) == 3
 
     # final = .3*8 + .3*9 + .4*10 = 9.1 → aprobada
     grid = (await client.get(f"/api/v1/grades/group-subjects/{gs_a['id']}/grid")).json()

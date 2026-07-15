@@ -151,10 +151,10 @@ async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -
         session.add(enrollment)
 
 
-@router.post("/capture")
-async def capture_grade(
-    session: SessionDep, current_user: TeacherOrAcademic, body: GradeCaptureIn
-) -> GradePublic:
+async def _apply_capture(
+    session: SessionDep, current_user: User, body: GradeCaptureIn
+) -> Grade:
+    """Validate and upsert one grade (no commit). Shared by single + batch."""
     enrollment = await session.get(SubjectEnrollment, body.subject_enrollment_id)
     if enrollment is None:
         raise HTTPException(status_code=404, detail="Inscripción de materia no encontrada")
@@ -206,9 +206,29 @@ async def capture_grade(
                      entity="grade", entity_id=str(grade.id),
                      detail=f"{component.label}: {body.value}")
     await _recompute_final(session, enrollment)
+    return grade
+
+
+@router.post("/capture")
+async def capture_grade(
+    session: SessionDep, current_user: TeacherOrAcademic, body: GradeCaptureIn
+) -> GradePublic:
+    grade = await _apply_capture(session, current_user, body)
     await session.commit()
     await session.refresh(grade)
     return grade
+
+
+@router.post("/capture-batch")
+async def capture_grades_batch(
+    session: SessionDep, current_user: TeacherOrAcademic, body: list[GradeCaptureIn]
+) -> list[GradePublic]:
+    """Save a whole grid in one request instead of one POST per cell."""
+    grades = [await _apply_capture(session, current_user, item) for item in body]
+    await session.commit()
+    for g in grades:
+        await session.refresh(g)
+    return grades
 
 
 # --- Actas (RF-C03) ----------------------------------------------------------------
