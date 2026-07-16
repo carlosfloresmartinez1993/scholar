@@ -101,14 +101,17 @@ async def create_student_core(
             if "curp" in msg:  # concurrent duplicate CURP slipped past the pre-check
                 raise HTTPException(
                     status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)"
-                )
-            if "matricula" not in msg and "enrollment_number" not in msg:
+                ) from e
+            # retryable first-use race: the matrícula itself OR its folio counter
+            # (uq_folio_series) — a concurrent first create seeded the counter first
+            retryable = any(k in msg for k in ("matricula", "enrollment_number", "folio"))
+            if not retryable:
                 raise  # unknown constraint (FK, etc.) — don't swallow as retryable
             if attempt == 1:
                 raise HTTPException(
                     status_code=409, detail="No se pudo asignar matrícula; reintente"
-                )
-            # else: matrícula-allocation race — loop retries
+                ) from e
+            # else: allocation race — loop retries
     assert student is not None
     audit.record(session, actor=actor, action="student.created",
                  entity="student", entity_id=str(student.id), detail=student.curp)
