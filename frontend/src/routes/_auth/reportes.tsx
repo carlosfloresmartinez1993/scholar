@@ -9,6 +9,7 @@ import type {
   TermSummaryRow,
 } from "@/api/types";
 import { CONCEPT_KIND_LABELS, formatMoney } from "@/lib/format";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
@@ -60,10 +61,24 @@ function StatCard({ label, value }: { label: string; value?: number | string }) 
 }
 
 function BecasSection() {
-  const { data: becas } = useQuery({
+  const { data: becas, isError, refetch } = useQuery({
     queryKey: queryKeys.scholarshipReport,
     queryFn: () => api<ScholarshipReport>("/treasury/reports/scholarships"),
   });
+
+  if (isError) {
+    return (
+      <section className="space-y-3">
+        <h2 className="text-xl font-bold">Becas</h2>
+        <div className="flex items-center gap-3 text-sm text-destructive">
+          No se pudo cargar el reporte de becas.
+          <Button size="sm" variant="outline" onClick={() => refetch()}>
+            Reintentar
+          </Button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-3">
@@ -92,7 +107,7 @@ function BecasSection() {
 }
 
 function TermSummarySection() {
-  const { data: rows, isLoading } = useQuery({
+  const { data: rows, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.termSummary,
     queryFn: () => api<TermSummaryRow[]>("/treasury/reports/term-summary"),
   });
@@ -100,7 +115,14 @@ function TermSummarySection() {
   return (
     <section className="space-y-3">
       <h2 className="text-xl font-bold">Resumen por cuatrimestre</h2>
-      {isLoading ? (
+      {isError ? (
+        <div className="flex items-center gap-3 text-sm text-destructive">
+          No se pudo cargar el resumen por cuatrimestre.
+          <Button size="sm" variant="outline" onClick={() => refetch()}>
+            Reintentar
+          </Button>
+        </div>
+      ) : isLoading ? (
         <Skeleton className="h-40 w-full rounded-2xl" />
       ) : rows && rows.length === 0 ? (
         <EmptyState
@@ -159,13 +181,15 @@ function TermSummarySection() {
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {Object.entries(r.by_concept).map(([kind, amount]) => (
+                      {Object.entries(r.by_concept).map(([kind, v]) => (
                         <span key={kind} className="mr-3 whitespace-nowrap">
                           {CONCEPT_KIND_LABELS[kind as ChargeConceptKind] ?? kind}
                           :{" "}
                           <span data-numeric className="font-semibold">
-                            {formatMoney(amount)}
-                          </span>
+                            {formatMoney(v.expected)}
+                          </span>{" "}
+                          (cobrado{" "}
+                          <span data-numeric>{formatMoney(v.collected)}</span>)
                         </span>
                       ))}
                     </TableCell>

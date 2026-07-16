@@ -245,5 +245,5 @@ async def test_term_billing_summary(client, seed):
     assert row["expected"] == 13000  # 3000 inscripción + 4×2500 colegiatura
     assert row["collected"] == 2500
     assert row["pending"] == 10500
-    assert row["by_concept"]["inscripcion"] == 3000
-    assert row["by_concept"]["colegiatura"] == 10000
+    assert row["by_concept"]["inscripcion"] == {"expected": 3000, "collected": 0}
+    assert row["by_concept"]["colegiatura"] == {"expected": 10000, "collected": 2500}

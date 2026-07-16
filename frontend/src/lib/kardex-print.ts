@@ -13,7 +13,12 @@ export interface KardexPrintData {
 }
 
 const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;") // also escape quotes — values land in attributes (alt="…")
+    .replace(/'/g, "&#39;");
 
 const STYLE = `
   @page { size: letter; margin: 14mm; }

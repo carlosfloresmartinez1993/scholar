@@ -431,10 +431,16 @@ async def term_billing_summary(session: AsyncSession) -> list[dict]:
         by_concept: dict = {}
         for c in charges:
             net = max(c.amount - c.scholarship_discount, 0.0)
+            paid = min(paid_map.get(c.id, 0.0), net)
             expected += net
-            collected += min(paid_map.get(c.id, 0.0), net)
+            collected += paid
             kind = kinds.get(c.concept_id, ChargeConceptKind.otro).value
-            by_concept[kind] = round(by_concept.get(kind, 0.0) + net, 2)
+            entry = by_concept.setdefault(kind, {"expected": 0.0, "collected": 0.0})
+            entry["expected"] += net
+            entry["collected"] += paid
+        for entry in by_concept.values():  # round once at the end
+            entry["expected"] = round(entry["expected"], 2)
+            entry["collected"] = round(entry["collected"], 2)
         out.append(
             {
                 "term_id": str(term.id),

@@ -530,7 +530,7 @@ export interface TermSummaryRow {
   collected: number;
   pending: number;
   collection_pct: number;
-  by_concept: Record<string, number>;
+  by_concept: Record<string, { expected: number; collected: number }>;
 }
 
 /** current vs previous-term value for one dashboard metric */
