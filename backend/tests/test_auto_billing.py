@@ -222,3 +222,22 @@ async def test_cohort_backfills_only_missing_slots(client, seed):
     charges = await _charges(client, student["id"])
     assert len([c for c in charges if c["description"].startswith("Inscripción")]) == 1
     assert len([c for c in charges if c["description"].startswith("Colegiatura")]) == 4
+
+
+async def test_group_billing_status(client, seed):
+    """Per-group roster shows who has been billed (RF-T08, collections ops)."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    group_id = catalog["group"]["id"]
+    await _tabulador(client)
+    student = await make_student(client, campus_id)
+    await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": group_id})
+
+    status = (await client.get(
+        f"/api/v1/treasury/groups/{group_id}/billing-status")).json()
+    assert len(status) == 1
+    assert status[0]["billed"] is True
+    assert status[0]["charges_count"] == 5  # 1 inscripción + 4 colegiaturas
+    assert status[0]["enrollment_number"] == student["enrollment_number"]

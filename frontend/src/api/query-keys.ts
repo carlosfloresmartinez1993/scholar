@@ -16,6 +16,8 @@ export const queryKeys = {
   terms: ["terms"] as const,
   groups: (termId?: string) => ["groups", termId ?? "all"] as const,
   groupSubjects: (groupId: string) => ["group-subjects", groupId] as const,
+  groupBillingStatus: (groupId: string) =>
+    ["group-billing-status", groupId] as const,
 
   students: (q?: string) => ["students", q ?? ""] as const,
   student: (id: string) => ["student", id] as const,
