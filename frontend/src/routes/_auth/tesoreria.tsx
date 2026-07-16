@@ -41,6 +41,7 @@ import {
   PAYMENT_METHOD_LABELS,
   SCHOLARSHIP_STATUS_LABELS,
 } from "@/lib/format";
+import { usePersistedState } from "@/lib/use-persisted-state";
 import {
   paymentToReceiptData,
   printComprobante,
@@ -983,7 +984,11 @@ function BecasTab() {
   const { data: me } = useMe();
   const canAuthorize =
     me?.is_superuser || me?.role === "admin_sistema" || me?.role === "direccion";
-  const [filter, setFilter] = useState<ScholarshipStatus | "all">("solicitada");
+  const [filter, setFilter] = usePersistedState<ScholarshipStatus | "all">(
+    "tesoreria-becas-status-v1",
+    "solicitada",
+    (v) => BECA_FILTERS.some((f) => f.value === v),
+  );
   const [students, setStudents] = useState<Record<string, Student>>({});
 
   const { data: scholarships, isLoading } = useQuery({
