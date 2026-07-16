@@ -175,16 +175,23 @@ async def attendance_summary(
     }
 
 
+async def _find_plan_enrollment(
+    session: AsyncSession, student_id: uuid.UUID, plan_version_id: uuid.UUID
+) -> StudentPlanEnrollment | None:
+    return (
+        await session.exec(
+            select(StudentPlanEnrollment).where(
+                StudentPlanEnrollment.student_id == student_id,
+                StudentPlanEnrollment.plan_version_id == plan_version_id,
+            )
+        )
+    ).first()
+
+
 async def active_plan_enrollment(
     session: AsyncSession, student: Student, plan_version_id: uuid.UUID
 ) -> StudentPlanEnrollment:
-    result = await session.exec(
-        select(StudentPlanEnrollment).where(
-            StudentPlanEnrollment.student_id == student.id,
-            StudentPlanEnrollment.plan_version_id == plan_version_id,
-        )
-    )
-    enrollment = result.first()
+    enrollment = await _find_plan_enrollment(session, student.id, plan_version_id)
     if enrollment is None:
         raise HTTPException(
             status_code=404, detail="El alumno no está inscrito en ese plan de estudios"
@@ -201,14 +208,7 @@ async def get_or_create_plan_enrollment(
     """Return the student's plan enrollment, creating it if absent (so enrolling
     into a group is a single act — no separate plan-enrollment step). The bool
     is True when a new enrollment was created."""
-    existing = (
-        await session.exec(
-            select(StudentPlanEnrollment).where(
-                StudentPlanEnrollment.student_id == student.id,
-                StudentPlanEnrollment.plan_version_id == plan_version_id,
-            )
-        )
-    ).first()
+    existing = await _find_plan_enrollment(session, student.id, plan_version_id)
     if existing:
         return existing, False
     enrollment = StudentPlanEnrollment(

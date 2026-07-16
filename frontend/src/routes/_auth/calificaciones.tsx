@@ -118,8 +118,12 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
 
   const save = () => {
     const items: { subject_enrollment_id: string; component_id: string; value: number }[] = [];
+    let hadEmpty = false;
     for (const [key, raw] of Object.entries(edits)) {
-      if (raw === "") continue;
+      if (raw === "") {
+        hadEmpty = true; // no delete-grade endpoint: an emptied cell can't be saved
+        continue;
+      }
       const value = Number(raw);
       if (Number.isNaN(value) || value < 0 || value > 10) {
         toast.error("Cada calificación debe estar entre 0 y 10");
@@ -128,7 +132,16 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
       const [subject_enrollment_id, component_id] = key.split(":");
       items.push({ subject_enrollment_id, component_id, value });
     }
-    if (items.length) saveBatch.mutate(items);
+    if (!items.length) {
+      toast.error("No hay calificaciones para guardar");
+      return;
+    }
+    if (hadEmpty) {
+      toast.warning(
+        "Las celdas vacías se ignoran: no es posible borrar una calificación ya guardada",
+      );
+    }
+    saveBatch.mutate(items);
   };
 
   if (isLoading || !grid) {
