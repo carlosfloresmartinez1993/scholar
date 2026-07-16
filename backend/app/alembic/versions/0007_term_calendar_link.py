@@ -22,7 +22,11 @@ def upgrade() -> None:
     """Link a scholar term to a calendar term (no FK: other database). When set,
     the calendar is the source of truth for the period's dates."""
     op.add_column('terms', sa.Column('calendar_term_id', sa.Uuid(), nullable=True))
+    op.create_unique_constraint(
+        'uq_term_calendar', 'terms', ['institution_id', 'calendar_term_id']
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint('uq_term_calendar', 'terms', type_='unique')
     op.drop_column('terms', 'calendar_term_id')

@@ -72,3 +72,15 @@ async def test_import_rejects_undated_calendar_term(client, seed, monkeypatch):
         "/api/v1/catalog/terms/import", json={"calendar_term_id": CAL_TERM["id"]}
     )
     assert res.status_code == 422  # can't build payment dates without term dates
+
+
+async def test_import_rejects_malformed_calendar_dates(client, seed, monkeypatch):
+    await login(client)
+
+    async def fake_get_terms():
+        return [{**CAL_TERM, "start_date": "not-a-date"}]
+    monkeypatch.setattr("app.services.calendar.get_terms", fake_get_terms)
+    res = await client.post(
+        "/api/v1/catalog/terms/import", json={"calendar_term_id": CAL_TERM["id"]}
+    )
+    assert res.status_code == 422  # malformed calendar date → controlled 422, not 500

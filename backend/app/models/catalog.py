@@ -260,7 +260,12 @@ class TermBase(SQLModel):
 
 class Term(TermBase, table=True):
     __tablename__ = "terms"
-    __table_args__ = (UniqueConstraint("institution_id", "name", "period_type", name="uq_term_name"),)
+    __table_args__ = (
+        UniqueConstraint("institution_id", "name", "period_type", name="uq_term_name"),
+        # one scholar term per calendar term (NULLs distinct, so unlinked terms are
+        # unconstrained). Backstops the import pre-check against concurrent imports.
+        UniqueConstraint("institution_id", "calendar_term_id", name="uq_term_calendar"),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     institution_id: uuid.UUID = Field(foreign_key="institutions.id", index=True)
     # link to the calendar system's term (no FK: other database). When set, the

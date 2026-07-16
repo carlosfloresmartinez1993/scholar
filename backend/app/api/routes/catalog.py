@@ -451,6 +451,19 @@ async def create_term(
     return term
 
 
+def _cal_date(value: object) -> date:
+    """Parse a date from the external calendar; a malformed value is the
+    calendar's fault, so surface a controlled 422 instead of a 500."""
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail="El ciclo del calendario tiene fechas inválidas")
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="El ciclo del calendario tiene fechas inválidas"
+        ) from exc
+
+
 @router.post("/terms/import", status_code=201)
 async def import_term_from_calendar(
     session: SessionDep, current_user: ServiciosEscolares, body: TermImport
@@ -478,8 +491,8 @@ async def import_term_from_calendar(
         )
     term = Term(
         name=str(cal.get("name") or cal.get("code"))[:64],
-        start_date=date.fromisoformat(cal["start_date"][:10]),
-        end_date=date.fromisoformat(cal["end_date"][:10]),
+        start_date=_cal_date(cal["start_date"]),
+        end_date=_cal_date(cal["end_date"]),
         institution_id=institution.id,
         calendar_term_id=body.calendar_term_id,
     )
@@ -514,8 +527,8 @@ async def sync_term_from_calendar(
         raise HTTPException(
             status_code=422, detail="El ciclo del calendario no tiene fechas definidas"
         )
-    term.start_date = date.fromisoformat(cal["start_date"][:10])
-    term.end_date = date.fromisoformat(cal["end_date"][:10])
+    term.start_date = _cal_date(cal["start_date"])
+    term.end_date = _cal_date(cal["end_date"])
     session.add(term)
     audit.record(session, actor=current_user.email, action="term.synced",
                  entity="term", entity_id=str(term.id), detail="fechas del calendario")
