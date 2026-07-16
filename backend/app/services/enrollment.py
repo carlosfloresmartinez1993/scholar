@@ -2,9 +2,11 @@
 reusable unit, shared by the single-student route (RT-09) and bulk cohort intake.
 Neither function commits — the caller owns the transaction boundary (one commit per
 request, or one per row for bulk so a bad row never rolls back the good ones)."""
+import re
+
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import func, select
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
@@ -64,16 +66,24 @@ async def create_student_core(
                     )
                 ).first()
                 if counter is None:
-                    last = (
+                    # Seed from the highest numeric suffix across existing matrículas
+                    # (parse the trailing digits, not a fixed 6-char slice, so 7+
+                    # digit or prefix-changed matrículas don't reuse a number).
+                    existing = (
                         await session.exec(
-                            select(func.max(Student.enrollment_number)).where(
+                            select(Student.enrollment_number).where(
                                 Student.institution_id == institution.id
                             )
                         )
-                    ).first()
-                    seed = int(last[-6:]) if last and last[-6:].isdigit() else 0
+                    ).all()
+                    numbers = [
+                        int(m.group(1))
+                        for n in existing
+                        if (m := re.search(r"(\d+)$", n or ""))
+                    ]
                     counter = FolioCounter(
-                        institution_id=institution.id, series="MAT", last_number=seed
+                        institution_id=institution.id, series="MAT",
+                        last_number=max(numbers, default=0),
                     )
                 counter.last_number += 1
                 session.add(counter)
@@ -84,11 +94,21 @@ async def create_student_core(
                 session.add(student)
                 await session.flush()
             break
-        except IntegrityError:
+        except IntegrityError as e:
+            # classify the violated constraint (portable across SQLite/Postgres:
+            # both name the column/constraint in the message)
+            msg = str(e.orig).lower()
+            if "curp" in msg:  # concurrent duplicate CURP slipped past the pre-check
+                raise HTTPException(
+                    status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)"
+                )
+            if "matricula" not in msg and "enrollment_number" not in msg:
+                raise  # unknown constraint (FK, etc.) — don't swallow as retryable
             if attempt == 1:
                 raise HTTPException(
-                    status_code=409, detail="No se pudo registrar al alumno; reintente"
+                    status_code=409, detail="No se pudo asignar matrícula; reintente"
                 )
+            # else: matrícula-allocation race — loop retries
     assert student is not None
     audit.record(session, actor=actor, action="student.created",
                  entity="student", entity_id=str(student.id), detail=student.curp)
