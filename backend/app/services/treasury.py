@@ -130,8 +130,9 @@ async def active_scholarship_discount(
     kind: ChargeConceptKind | None = None,
 ) -> float:
     """RF-T05: best active scholarship applied to one charge amount. Becas apply
-    to colegiatura only — a non-colegiatura charge (inscripción, etc.) gets none."""
-    if kind is not None and kind != ChargeConceptKind.colegiatura:
+    to colegiatura only — anything else (inscripción, a charge with no concept)
+    gets none."""
+    if kind != ChargeConceptKind.colegiatura:
         return 0.0
     scholarships = (
         await session.exec(
@@ -250,16 +251,19 @@ _SPANISH_MONTHS = [
 
 
 async def resolve_concept(
-    session: AsyncSession, kind: ChargeConceptKind, program_id, modality
+    session: AsyncSession, kind: ChargeConceptKind, program_id, modality,
+    institution_id: uuid.UUID,
 ) -> ChargeConcept | None:
-    """Most-specific active price in the tabulador: a row scoped to this
-    program+modality beats a program-only row, beats a modality-only row, beats a
-    global row. A row scoped to a *different* program or modality never matches."""
+    """Most-specific active price in the institution's tabulador: a row scoped to
+    this program+modality beats a program-only row, beats a modality-only row,
+    beats a global row. A row scoped to a *different* program or modality never
+    matches."""
     concepts = (
         await session.exec(
             select(ChargeConcept).where(
                 ChargeConcept.kind == kind,
                 ChargeConcept.is_active == True,  # noqa: E712
+                ChargeConcept.institution_id == institution_id,
             )
         )
     ).all()
@@ -287,14 +291,6 @@ async def generate_enrollment_charges(
     frozen onto colegiaturas only. Caller commits."""
     from app.models import GroupEnrollmentKind, PlanVersion, Rvoe, Term
 
-    already = (
-        await session.exec(
-            select(Charge.id).where(Charge.group_enrollment_id == enrollment.id)
-        )
-    ).first()
-    if already:
-        return []  # never double-bill the same enrollment
-
     term = await session.get(Term, group.term_id)
     if term is None:
         return []
@@ -302,6 +298,20 @@ async def generate_enrollment_charges(
     rvoe = await session.get(Rvoe, plan.rvoe_id) if plan else None
     program_id = rvoe.program_id if rvoe else None
     modality = rvoe.modality if rvoe else None
+    institution_id = student.institution_id
+
+    # Per-slot idempotency: which (concept, due date) slots already exist for this
+    # enrollment. Only missing slots are created — so a re-run (or a cohort backfill
+    # after the tabulador is completed) fills gaps instead of skipping wholesale.
+    existing = set(
+        (
+            await session.exec(
+                select(Charge.concept_id, Charge.due_date).where(
+                    Charge.group_enrollment_id == enrollment.id
+                )
+            )
+        ).all()
+    )
 
     created: list[Charge] = []
     if not waive_enrollment_fee:
@@ -310,8 +320,8 @@ async def generate_enrollment_charges(
             if kind == GroupEnrollmentKind.inscripcion
             else ChargeConceptKind.reinscripcion
         )
-        fee = await resolve_concept(session, fee_kind, program_id, modality)
-        if fee is not None:
+        fee = await resolve_concept(session, fee_kind, program_id, modality, institution_id)
+        if fee is not None and (fee.id, term.start_date) not in existing:
             charge = Charge(
                 student_id=student.id, concept_id=fee.id,
                 description=f"{fee.name} — {term.name}", amount=fee.amount,
@@ -323,10 +333,12 @@ async def generate_enrollment_charges(
             created.append(charge)
 
     colegiatura = await resolve_concept(
-        session, ChargeConceptKind.colegiatura, program_id, modality
+        session, ChargeConceptKind.colegiatura, program_id, modality, institution_id
     )
     if colegiatura is not None:
         for due in _month_firsts(term.start_date, term.end_date):
+            if (colegiatura.id, due) in existing:
+                continue
             discount = await active_scholarship_discount(
                 session, student.id, colegiatura.amount, due,
                 kind=ChargeConceptKind.colegiatura,

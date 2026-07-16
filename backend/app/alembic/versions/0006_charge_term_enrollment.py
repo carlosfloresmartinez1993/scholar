@@ -32,9 +32,15 @@ def upgrade() -> None:
     )
     op.create_index('ix_charges_term_id', 'charges', ['term_id'])
     op.create_index('ix_charges_group_enrollment_id', 'charges', ['group_enrollment_id'])
+    # Hard guard against double-billing (one charge per enrollment/concept/due date).
+    op.create_unique_constraint(
+        'uq_charges_enrollment_slot', 'charges',
+        ['group_enrollment_id', 'concept_id', 'due_date'],
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint('uq_charges_enrollment_slot', 'charges', type_='unique')
     op.drop_index('ix_charges_group_enrollment_id', table_name='charges')
     op.drop_index('ix_charges_term_id', table_name='charges')
     op.drop_constraint('fk_charges_group_enrollment_id', 'charges', type_='foreignkey')

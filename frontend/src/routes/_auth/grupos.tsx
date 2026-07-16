@@ -508,7 +508,7 @@ function GroupDetail({ group }: { group: Group }) {
       ),
     onSuccess: (r) => {
       if (r.students_billed === 0 && r.charges_created === 0) {
-        toast.info("El grupo ya tenía sus cargos generados");
+        toast.info("No se generaron cargos nuevos");
       } else {
         toast.success(
           `Cargos generados: ${r.students_billed} alumnos, ${r.charges_created} cargos`,
@@ -850,7 +850,7 @@ function EnrollDialog({
       }),
     onSuccess: () => {
       onDone();
-      toast.success("Alumno inscrito — cargos del cuatrimestre generados");
+      toast.success("Alumno inscrito. Verifica los cargos en su estado de cuenta");
       onOpenChange(false);
       setStudentId("");
       setSubjectIds([]);

@@ -51,7 +51,7 @@ async def test_enrollment_generates_fee_and_monthly_colegiaturas(client, seed):
     assert fee[0]["due_date"] == "2026-09-01"  # term start
     assert fee[0]["scholarship_discount"] == 0
 
-    assert len(cole) == 4  # one per month Sep–Dec
+    assert len(cole) == 4  # one per month Sep-Dec
     assert {c["due_date"] for c in cole} == SEP_DEC
     assert all(c["amount"] == 2500 for c in cole)
 
@@ -139,12 +139,18 @@ async def test_cohort_backfill_idempotent_and_requires_price(client, seed):
     })
     assert await _charges(client, student["id"]) == []
 
-    # Cohort billing without a colegiatura price fails loudly.
+    # Seed everything EXCEPT colegiatura, so the 409 is specifically about the
+    # missing colegiatura price (not the fee concepts).
+    await client.post("/api/v1/treasury/concepts", json={
+        "name": "Inscripción", "kind": "inscripcion", "amount": 3000})
+    await client.post("/api/v1/treasury/concepts", json={
+        "name": "Reinscripción", "kind": "reinscripcion", "amount": 2800})
     missing = await client.post(f"/api/v1/treasury/groups/{group_id}/generate-charges")
     assert missing.status_code == 409
 
-    # Configure prices, then backfill the whole group.
-    await _tabulador(client)
+    # Add the colegiatura price, then backfill the whole group.
+    await client.post("/api/v1/treasury/concepts", json={
+        "name": "Colegiatura", "kind": "colegiatura", "amount": 2500})
     res = (await client.post(f"/api/v1/treasury/groups/{group_id}/generate-charges")).json()
     assert res["students_billed"] == 1
     assert res["charges_created"] == 5  # 1 inscripción + 4 colegiaturas
@@ -187,5 +193,31 @@ async def test_reinscripcion_repeats_billing_next_term(client, seed):
     charges = await _charges(client, student["id"])
     assert len([c for c in charges if c["description"].startswith("Inscripción")]) == 1
     assert len([c for c in charges if c["description"].startswith("Reinscripción")]) == 1
-    # 4 colegiaturas per term × 2 terms
+    # 4 colegiaturas per term x 2 terms
     assert len([c for c in charges if c["description"].startswith("Colegiatura")]) == 8
+
+
+async def test_cohort_backfills_only_missing_slots(client, seed):
+    """Per-slot idempotency: if only colegiatura was priced at enroll time, a later
+    cohort run with the fee configured adds ONLY the missing enrollment fee."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    group_id = catalog["group"]["id"]
+    await client.post("/api/v1/treasury/concepts", json={
+        "name": "Colegiatura", "kind": "colegiatura", "amount": 2500})
+    student = await make_student(client, campus_id)
+
+    await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": group_id,
+    })
+    assert len(await _charges(client, student["id"])) == 4  # colegiaturas only, no fee
+
+    # price the fee, then backfill → exactly the one missing inscripción slot is added
+    await client.post("/api/v1/treasury/concepts", json={
+        "name": "Inscripción", "kind": "inscripcion", "amount": 3000})
+    res = (await client.post(f"/api/v1/treasury/groups/{group_id}/generate-charges")).json()
+    assert res["charges_created"] == 1
+    charges = await _charges(client, student["id"])
+    assert len([c for c in charges if c["description"].startswith("Inscripción")]) == 1
+    assert len([c for c in charges if c["description"].startswith("Colegiatura")]) == 4

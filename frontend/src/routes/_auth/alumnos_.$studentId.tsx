@@ -2032,7 +2032,8 @@ function ScholarshipDialog({
         <DialogHeader>
           <DialogTitle>Solicitar beca</DialogTitle>
           <DialogDescription>
-            La beca aplica a colegiatura durante toda la carrera. Queda como{" "}
+            La beca aplica a colegiatura desde la fecha indicada, sin fecha final.
+            Queda como{" "}
             <b>solicitada</b> y no aplica descuentos hasta que un administrador la
             autorice.
           </DialogDescription>
@@ -2068,7 +2069,7 @@ function ScholarshipDialog({
                 onChange={(e) => setForm({ ...form, pct: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                La beca aplica a colegiatura durante toda la carrera.
+                Aplica a colegiatura desde la fecha indicada, sin fecha final.
               </p>
             </div>
             <div className="grid gap-2">

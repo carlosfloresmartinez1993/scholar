@@ -90,6 +90,12 @@ async def create_charge(
     if student is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
     concept = await session.get(ChargeConcept, body.concept_id) if body.concept_id else None
+    if body.concept_id and (
+        concept is None
+        or not concept.is_active
+        or concept.institution_id != student.institution_id
+    ):
+        raise HTTPException(status_code=404, detail="Concepto no encontrado")
     discount = await active_scholarship_discount(
         session, student.id, body.amount, body.due_date,
         kind=concept.kind if concept else None,
@@ -167,11 +173,14 @@ async def generate_group_charges(
     group = await session.get(Group, group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    institution = await get_default_institution(session)
     plan = await session.get(PlanVersion, group.plan_version_id)
     rvoe = await session.get(Rvoe, plan.rvoe_id) if plan else None
     program_id = rvoe.program_id if rvoe else None
     modality = rvoe.modality if rvoe else None
-    if await resolve_concept(session, ChargeConceptKind.colegiatura, program_id, modality) is None:
+    if await resolve_concept(
+        session, ChargeConceptKind.colegiatura, program_id, modality, institution.id
+    ) is None:
         raise HTTPException(
             status_code=409,
             detail="Configura el concepto de colegiatura (tabulador) de este programa/modalidad",
@@ -349,10 +358,12 @@ async def create_scholarship(
     # Becas are percentage-only now (applied to colegiatura for the whole career).
     if body.pct is None:
         raise HTTPException(status_code=400, detail="Indica el porcentaje de la beca")
-    data = body.model_dump()
-    data["fixed_amount"] = None  # ignore any monto fijo — pct-only policy
+    if body.fixed_amount is not None:
+        raise HTTPException(
+            status_code=400, detail="Las becas son solo por porcentaje (sin monto fijo)"
+        )
     scholarship = Scholarship(
-        **data, status=ScholarshipStatus.solicitada, requested_by=current_user.id
+        **body.model_dump(), status=ScholarshipStatus.solicitada, requested_by=current_user.id
     )
     session.add(scholarship)
     audit.record(session, actor=current_user.email, action="scholarship.requested",

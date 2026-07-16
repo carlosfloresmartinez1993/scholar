@@ -36,12 +36,17 @@ async def test_treasury_flow(client, seed):
     })
     assert scholarship.status_code == 201
     assert scholarship.json()["status"] == "solicitada"
-    # becas are percentage-only now — a monto-fijo-only request is rejected
+    # becas are percentage-only now — fixed-amount-only AND mixed are both rejected
     no_pct = await client.post("/api/v1/treasury/scholarships", json={
         "student_id": student["id"], "name": "Inválida", "fixed_amount": 100,
         "valid_from": TODAY.isoformat(),
     })
     assert no_pct.status_code == 400
+    mixed = await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Inválida", "pct": 50, "fixed_amount": 100,
+        "valid_from": TODAY.isoformat(),
+    })
+    assert mixed.status_code == 400
 
     # admin authorization activates it (superuser passes the Authorizer role check)
     authorized = await client.post(
@@ -165,7 +170,7 @@ async def test_scholarship_tolerance_and_reports(client, seed):
         "due_date": (TODAY - timedelta(days=20)).isoformat(),
     })
     run2 = (await client.post("/api/v1/treasury/late-fees/run")).json()
-    assert run2["created"] >= 1
+    assert run2["created"] == 1  # only the out-of-tolerance charge earns a recargo
     still_active = (await client.get(
         f"/api/v1/treasury/scholarships?student_id={student['id']}"
     )).json()
