@@ -141,10 +141,11 @@ async def test_cohort_backfill_idempotent_and_requires_price(client, seed):
 
     # Seed everything EXCEPT colegiatura, so the 409 is specifically about the
     # missing colegiatura price (not the fee concepts).
-    await client.post("/api/v1/treasury/concepts", json={
+    r1 = await client.post("/api/v1/treasury/concepts", json={
         "name": "Inscripción", "kind": "inscripcion", "amount": 3000})
-    await client.post("/api/v1/treasury/concepts", json={
+    r2 = await client.post("/api/v1/treasury/concepts", json={
         "name": "Reinscripción", "kind": "reinscripcion", "amount": 2800})
+    assert r1.status_code == 201 and r2.status_code == 201
     missing = await client.post(f"/api/v1/treasury/groups/{group_id}/generate-charges")
     assert missing.status_code == 409
 

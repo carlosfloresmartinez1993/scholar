@@ -4,6 +4,7 @@ allocation (RF-T03)."""
 import uuid
 from datetime import date, timedelta
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -322,15 +323,13 @@ async def generate_enrollment_charges(
         )
         fee = await resolve_concept(session, fee_kind, program_id, modality, institution_id)
         if fee is not None and (fee.id, term.start_date) not in existing:
-            charge = Charge(
+            created.append(Charge(
                 student_id=student.id, concept_id=fee.id,
                 description=f"{fee.name} — {term.name}", amount=fee.amount,
                 scholarship_discount=0.0,  # becas never apply to the enrollment fee
                 due_date=term.start_date, term_id=term.id,
                 group_enrollment_id=enrollment.id, created_by=created_by,
-            )
-            session.add(charge)
-            created.append(charge)
+            ))
 
     colegiatura = await resolve_concept(
         session, ChargeConceptKind.colegiatura, program_id, modality, institution_id
@@ -343,18 +342,26 @@ async def generate_enrollment_charges(
                 session, student.id, colegiatura.amount, due,
                 kind=ChargeConceptKind.colegiatura,
             )
-            charge = Charge(
+            created.append(Charge(
                 student_id=student.id, concept_id=colegiatura.id,
                 description=f"{colegiatura.name} {_SPANISH_MONTHS[due.month - 1]} {due.year}",
                 amount=colegiatura.amount, scholarship_discount=discount,
                 due_date=due, term_id=term.id,
                 group_enrollment_id=enrollment.id, created_by=created_by,
-            )
-            session.add(charge)
-            created.append(charge)
+            ))
 
-    if created:
-        await session.flush()
+    if not created:
+        return []
+    # A concurrent run (e.g. two cohort clicks) can pass the slot check above and
+    # race to insert the same slot. Flush inside a SAVEPOINT: if the unique
+    # constraint fires, roll back just this attempt and report nothing billed —
+    # the winner's charges stand, nothing is double-billed, the outer txn survives.
+    try:
+        async with session.begin_nested():
+            session.add_all(created)
+            await session.flush()
+    except IntegrityError:
+        return []
     return created
 
 
