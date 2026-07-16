@@ -45,6 +45,12 @@ async def get_programs() -> list[dict]:
     return await _get("/programs")
 
 
+async def get_terms() -> list[dict]:
+    """Academic terms (cuatrimestres) with start/end dates — the calendar is the
+    source of truth for periods (used to build payment dates)."""
+    return await _get("/terms")
+
+
 async def get_groups(
     term_id: uuid.UUID | None = None, program_id: uuid.UUID | None = None
 ) -> list[dict]:

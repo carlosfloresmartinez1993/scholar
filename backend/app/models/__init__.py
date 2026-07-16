@@ -38,6 +38,7 @@ from app.models.catalog import (
     SubjectPrerequisite,
     Term,
     TermCreate,
+    TermImport,
     TermPublic,
     TermUpdate,
 )

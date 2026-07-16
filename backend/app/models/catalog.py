@@ -263,11 +263,19 @@ class Term(TermBase, table=True):
     __table_args__ = (UniqueConstraint("institution_id", "name", "period_type", name="uq_term_name"),)
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     institution_id: uuid.UUID = Field(foreign_key="institutions.id", index=True)
+    # link to the calendar system's term (no FK: other database). When set, the
+    # dates come from the calendar — the source of truth for periods.
+    calendar_term_id: uuid.UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
 
 
 class TermCreate(TermBase):
     pass
+
+
+class TermImport(SQLModel):
+    """Create a Scholar term from a calendar term (dates pulled from the calendar)."""
+    calendar_term_id: uuid.UUID
 
 
 class TermUpdate(SQLModel):
@@ -281,6 +289,7 @@ class TermUpdate(SQLModel):
 class TermPublic(TermBase):
     id: uuid.UUID
     institution_id: uuid.UUID
+    calendar_term_id: uuid.UUID | None = None
 
 
 # --- Groups (RT-03) -----------------------------------------------------------
