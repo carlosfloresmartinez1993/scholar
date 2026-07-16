@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -86,6 +86,7 @@ function ProgramasPage() {
   const [programId, setProgramId] = useState<string | null>(null);
   const [rvoeId, setRvoeId] = useState<string | null>(null);
   const [planVersionId, setPlanVersionId] = useState<string | null>(null);
+  const [wizardStep, setWizardStep] = useState<null | "rvoe" | "plan">(null);
 
   const { data: programs, isLoading } = useQuery({
     queryKey: queryKeys.programs,
@@ -98,7 +99,14 @@ function ProgramasPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl">Programas académicos</h1>
-        <ProgramDialogButton />
+        <ProgramDialogButton
+          onCreated={(p) => {
+            setProgramId(p.id);
+            setRvoeId(null);
+            setPlanVersionId(null);
+            setWizardStep("rvoe");
+          }}
+        />
       </div>
 
       <div className="rounded-2xl border bg-card">
@@ -170,6 +178,13 @@ function ProgramasPage() {
             setRvoeId(id);
             setPlanVersionId(null);
           }}
+          autoOpen={wizardStep === "rvoe"}
+          onCreated={(r) => {
+            setRvoeId(r.id);
+            setPlanVersionId(null);
+            setWizardStep("plan");
+          }}
+          onDismiss={() => setWizardStep((s) => (s === "rvoe" ? null : s))}
         />
       )}
       {program && rvoeId && (
@@ -177,6 +192,12 @@ function ProgramasPage() {
           rvoeId={rvoeId}
           planVersionId={planVersionId}
           onSelectPlan={setPlanVersionId}
+          autoOpen={wizardStep === "plan"}
+          onCreated={(pv) => {
+            setPlanVersionId(pv.id);
+            setWizardStep(null);
+          }}
+          onDismiss={() => setWizardStep((s) => (s === "plan" ? null : s))}
         />
       )}
       {planVersionId && <SubjectsSection planVersionId={planVersionId} />}
@@ -256,7 +277,11 @@ function ProgramCalendarLink({ program }: { program: Program }) {
 
 // --- Programs -----------------------------------------------------------------
 
-function ProgramDialogButton() {
+function ProgramDialogButton({
+  onCreated,
+}: {
+  onCreated?: (program: Program) => void;
+}) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
@@ -271,10 +296,11 @@ function ProgramDialogButton() {
         method: "POST",
         body: JSON.stringify(form),
       }),
-    onSuccess: () => {
+    onSuccess: (program) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.programs });
       toast.success("Programa creado");
       setOpen(false);
+      onCreated?.(program);
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -387,10 +413,16 @@ function RvoeSection({
   program,
   rvoeId,
   onSelectRvoe,
+  autoOpen,
+  onCreated,
+  onDismiss,
 }: {
   program: Program;
   rvoeId: string | null;
   onSelectRvoe: (id: string | null) => void;
+  autoOpen?: boolean;
+  onCreated?: (rvoe: Rvoe) => void;
+  onDismiss?: () => void;
 }) {
   const queryClient = useQueryClient();
   const { data: rvoes, isLoading } = useQuery({
@@ -405,6 +437,15 @@ function RvoeSection({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Rvoe | null>(null);
   const [form, setForm] = useState<RvoeForm>(emptyRvoeForm);
+
+  useEffect(() => {
+    if (autoOpen && !open) {
+      setEditing(null);
+      setForm({ ...emptyRvoeForm, campus_id: campuses?.[0]?.id ?? "" });
+      setOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -436,10 +477,11 @@ function RvoeSection({
         }),
       });
     },
-    onSuccess: () => {
+    onSuccess: (rvoe) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.rvoes(program.id) });
       toast.success(editing ? "RVOE actualizado" : "RVOE registrado");
       setOpen(false);
+      if (!editing) onCreated?.(rvoe);
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -551,7 +593,13 @@ function RvoeSection({
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) onDismiss?.();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? "Editar RVOE" : "Nuevo RVOE"}</DialogTitle>
@@ -712,10 +760,16 @@ function PlanVersionSection({
   rvoeId,
   planVersionId,
   onSelectPlan,
+  autoOpen,
+  onCreated,
+  onDismiss,
 }: {
   rvoeId: string;
   planVersionId: string | null;
   onSelectPlan: (id: string | null) => void;
+  autoOpen?: boolean;
+  onCreated?: (plan: PlanVersion) => void;
+  onDismiss?: () => void;
 }) {
   const queryClient = useQueryClient();
   const { data: plans, isLoading } = useQuery({
@@ -731,16 +785,30 @@ function PlanVersionSection({
     min_attendance_pct: 80,
   });
 
+  useEffect(() => {
+    if (autoOpen && !open) {
+      setForm({
+        version_label: "",
+        period_type: "cuatrimestral",
+        periods_count: 9,
+        min_attendance_pct: 80,
+      });
+      setOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
+
   const save = useMutation({
     mutationFn: () =>
       api<PlanVersion>("/catalog/plan-versions", {
         method: "POST",
         body: JSON.stringify({ ...form, rvoe_id: rvoeId }),
       }),
-    onSuccess: () => {
+    onSuccess: (plan) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.planVersions(rvoeId) });
       toast.success("Versión de plan creada");
       setOpen(false);
+      onCreated?.(plan);
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -821,7 +889,13 @@ function PlanVersionSection({
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) onDismiss?.();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nueva versión de plan</DialogTitle>
