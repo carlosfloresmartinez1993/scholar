@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -437,11 +437,13 @@ function RvoeSection({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Rvoe | null>(null);
   const [form, setForm] = useState<RvoeForm>(emptyRvoeForm);
+  const openedByWizardRef = useRef(false);
 
   useEffect(() => {
     if (autoOpen && !open) {
       setEditing(null);
       setForm({ ...emptyRvoeForm, campus_id: campuses?.[0]?.id ?? "" });
+      openedByWizardRef.current = true;
       setOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,7 +483,8 @@ function RvoeSection({
       queryClient.invalidateQueries({ queryKey: queryKeys.rvoes(program.id) });
       toast.success(editing ? "RVOE actualizado" : "RVOE registrado");
       setOpen(false);
-      if (!editing) onCreated?.(rvoe);
+      if (!editing && openedByWizardRef.current) onCreated?.(rvoe);
+      openedByWizardRef.current = false;
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -597,7 +600,10 @@ function RvoeSection({
         open={open}
         onOpenChange={(v) => {
           setOpen(v);
-          if (!v) onDismiss?.();
+          if (!v) {
+            onDismiss?.();
+            openedByWizardRef.current = false;
+          }
         }}
       >
         <DialogContent>
@@ -784,6 +790,7 @@ function PlanVersionSection({
     periods_count: 9,
     min_attendance_pct: 80,
   });
+  const openedByWizardRef = useRef(false);
 
   useEffect(() => {
     if (autoOpen && !open) {
@@ -793,6 +800,7 @@ function PlanVersionSection({
         periods_count: 9,
         min_attendance_pct: 80,
       });
+      openedByWizardRef.current = true;
       setOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -808,7 +816,8 @@ function PlanVersionSection({
       queryClient.invalidateQueries({ queryKey: queryKeys.planVersions(rvoeId) });
       toast.success("Versión de plan creada");
       setOpen(false);
-      onCreated?.(plan);
+      if (openedByWizardRef.current) onCreated?.(plan);
+      openedByWizardRef.current = false;
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
@@ -893,7 +902,10 @@ function PlanVersionSection({
         open={open}
         onOpenChange={(v) => {
           setOpen(v);
-          if (!v) onDismiss?.();
+          if (!v) {
+            onDismiss?.();
+            openedByWizardRef.current = false;
+          }
         }}
       >
         <DialogContent>
