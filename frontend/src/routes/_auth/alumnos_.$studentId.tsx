@@ -29,7 +29,6 @@ import type {
   Justification,
   Kardex,
   Payment,
-  PaymentMethod,
   PlanEnrollment,
   PlanVersion,
   Program,
@@ -66,6 +65,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
+import { PaymentDialog } from "@/components/payment-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import {
   Tabs,
@@ -1603,7 +1603,21 @@ function CuentaTab({ student }: { student: Student }) {
         onOpenChange={setPaymentOpen}
         student={student}
         charges={statement.charges}
-        onDone={invalidate}
+        onPaid={(payment) => {
+          invalidate();
+          if (institution && me) {
+            printReceipt(
+              paymentToReceiptData(payment, {
+                institution,
+                student,
+                charges: statement.charges,
+                cajero: me.full_name,
+              }),
+            );
+          } else {
+            toast.warning("Pago guardado; el recibo no está disponible aún");
+          }
+        }}
       />
       <ChargeDialog
         open={chargeOpen}
@@ -1708,200 +1722,6 @@ function SummaryChip({
         {value}
       </p>
     </div>
-  );
-}
-
-function PaymentDialog({
-  open,
-  onOpenChange,
-  student,
-  charges,
-  onDone,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  student: Student;
-  charges: Charge[];
-  onDone: () => void;
-}) {
-  const [form, setForm] = useState({
-    charge_id: NONE,
-    amount: "",
-    method: "efectivo" as PaymentMethod,
-    bank_reference: "",
-    notes: "",
-  });
-  // for the printed receipt (parity with Caja)
-  const { data: institution } = useQuery({
-    queryKey: queryKeys.institution,
-    queryFn: () => api<Institution>("/catalog/institution"),
-  });
-  const { data: me } = useQuery({
-    queryKey: queryKeys.me,
-    queryFn: () => api<UserPublic>("/auth/me"),
-  });
-
-  const save = useMutation({
-    mutationFn: () =>
-      api<Payment>(`/treasury/payments`, {
-        method: "POST",
-        body: JSON.stringify({
-          student_id: student.id,
-          charge_id: form.charge_id === NONE ? null : form.charge_id,
-          amount: Number(form.amount),
-          method: form.method,
-          bank_reference: form.bank_reference,
-          notes: form.notes,
-        }),
-      }),
-    onSuccess: (payment) => {
-      onDone();
-      toast.success("Pago registrado");
-      if (institution && me) {
-        printReceipt(
-          paymentToReceiptData(payment, {
-            institution,
-            student,
-            charges,
-            cajero: me.full_name,
-          }),
-        );
-      } else {
-        toast.warning("Pago guardado; el recibo no está disponible aún");
-      }
-      onOpenChange(false);
-      setForm({
-        charge_id: NONE,
-        amount: "",
-        method: "efectivo",
-        bank_reference: "",
-        notes: "",
-      });
-    },
-    onError: (e) =>
-      toast.error(e instanceof ApiError ? e.message : "Error al registrar"),
-  });
-
-  const openCharges = charges.filter(
-    (c) => c.status === "pendiente" || c.status === "parcial",
-  );
-  const oldestOpen = openCharges.length
-    ? [...openCharges].sort((a, b) => a.due_date.localeCompare(b.due_date))[0]
-    : null;
-  // default to settling the oldest open charge instead of "sin cargo"
-  useEffect(() => {
-    if (open && oldestOpen && form.charge_id === NONE && form.amount === "") {
-      setForm((f) => ({
-        ...f,
-        charge_id: oldestOpen.id,
-        amount: String(oldestOpen.balance),
-      }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, oldestOpen?.id]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Registrar pago</DialogTitle>
-        </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            save.mutate();
-          }}
-        >
-          <div className="grid gap-2">
-            <Label>Cargo (opcional)</Label>
-            <Select
-              value={form.charge_id}
-              onValueChange={(v) => {
-                const charge = openCharges.find((c) => c.id === v);
-                setForm({
-                  ...form,
-                  charge_id: v,
-                  amount:
-                    v !== NONE && charge ? String(charge.balance) : form.amount,
-                });
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>Pago a cuenta (sin cargo)</SelectItem>
-                {openCharges.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.description} · saldo {formatMoney(c.balance)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="pay-amount">Importe</Label>
-              <Input
-                id="pay-amount"
-                type="number"
-                min="0.01"
-                step="0.01"
-                required
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Método</Label>
-              <Select
-                value={form.method}
-                onValueChange={(v) =>
-                  setForm({ ...form, method: v as PaymentMethod })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]
-                  ).map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {PAYMENT_METHOD_LABELS[m]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="pay-ref">Referencia bancaria</Label>
-            <Input
-              id="pay-ref"
-              value={form.bank_reference}
-              onChange={(e) =>
-                setForm({ ...form, bank_reference: e.target.value })
-              }
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="pay-notes">Notas</Label>
-            <Input
-              id="pay-notes"
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="submit" className="font-bold" disabled={save.isPending}>
-              {save.isPending ? "Registrando…" : "Registrar"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
 

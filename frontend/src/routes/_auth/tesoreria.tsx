@@ -25,7 +25,6 @@ import type {
   Institution,
   Modality,
   Payment,
-  PaymentMethod,
   Program,
   Scholarship,
   ScholarshipReport,
@@ -53,6 +52,7 @@ import {
   presetRange,
   type DateRange,
 } from "@/components/date-range-filter";
+import { PaymentDialog } from "@/components/payment-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -357,13 +357,13 @@ function CajaTab() {
       )}
 
       {student && cobrarCharge !== undefined && (
-        <CobrarDialog
+        <PaymentDialog
           student={student}
           charge={cobrarCharge}
-          onClose={() => setCobrarCharge(undefined)}
+          open
+          onOpenChange={(o) => !o && setCobrarCharge(undefined)}
           onPaid={(payment) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.statement(student.id) });
-            setCobrarCharge(undefined);
             printPaymentReceipt(payment);
           }}
         />
@@ -449,120 +449,6 @@ function InstitucionReciboCard() {
         </form>
       </CardContent>
     </Card>
-  );
-}
-
-function CobrarDialog({
-  student,
-  charge,
-  onClose,
-  onPaid,
-}: {
-  student: Student;
-  charge: Charge | null;
-  onClose: () => void;
-  onPaid: (payment: Payment) => void;
-}) {
-  const [form, setForm] = useState({
-    amount: charge ? String(charge.balance) : "",
-    method: "efectivo" as PaymentMethod,
-    bank_reference: "",
-    notes: "",
-  });
-
-  const pay = useMutation({
-    mutationFn: () =>
-      api<Payment>("/treasury/payments", {
-        method: "POST",
-        body: JSON.stringify({
-          student_id: student.id,
-          charge_id: charge?.id ?? null,
-          amount: Number(form.amount),
-          method: form.method,
-          bank_reference: form.bank_reference,
-          notes: form.notes,
-        }),
-      }),
-    onSuccess: (payment) => {
-      toast.success(`Pago registrado · ${payment.receipt_folio}`);
-      onPaid(payment);
-    },
-    onError: (e) =>
-      toast.error(e instanceof ApiError ? e.message : "Error al registrar el pago"),
-  });
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {charge ? `Cobrar: ${charge.description}` : "Cobro libre"}
-          </DialogTitle>
-        </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            pay.mutate();
-          }}
-        >
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="p-amount">Importe</Label>
-              <Input
-                id="p-amount"
-                type="number"
-                min={0.01}
-                step="0.01"
-                required
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Método</Label>
-              <Select
-                value={form.method}
-                onValueChange={(v) => setForm({ ...form, method: v as PaymentMethod })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {PAYMENT_METHOD_LABELS[m]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="p-ref">Referencia bancaria (opcional)</Label>
-            <Input
-              id="p-ref"
-              value={form.bank_reference}
-              onChange={(e) => setForm({ ...form, bank_reference: e.target.value })}
-              placeholder="SPEI / folio de transferencia"
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="p-notes">Observaciones (opcional)</Label>
-            <Textarea
-              id="p-notes"
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="submit" className="font-bold" disabled={pay.isPending}>
-              {pay.isPending ? "Registrando…" : "Registrar pago e imprimir"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
 
