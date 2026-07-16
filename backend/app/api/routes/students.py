@@ -43,6 +43,7 @@ from app.services.academics import (
     get_or_create_plan_enrollment,
     require_operable_rvoe,
 )
+from app.services.treasury import generate_enrollment_charges
 
 router = APIRouter(prefix="/students", tags=["students"])
 
@@ -312,6 +313,18 @@ async def enroll_in_group(
         detail=f"grupo {group.code}, {len(group_subjects)} materias"
         + (" (seriación omitida)" if body.override_prerequisites else ""),
     )
+    # Single "Inscribir" also bills the cuatrimestre (RF-T02): enrollment fee +
+    # monthly colegiaturas. Best-effort — skipped if the tabulador isn't set up.
+    generated = await generate_enrollment_charges(
+        session, student=student, group=group, enrollment=enrollment, kind=kind,
+        created_by=current_user.id, waive_enrollment_fee=body.waive_enrollment_fee,
+    )
+    if generated:
+        audit.record(
+            session, actor=current_user.email, action="charges.generated",
+            entity="group_enrollment", entity_id=str(enrollment.id),
+            detail=f"{len(generated)} cargos del cuatrimestre",
+        )
     await session.commit()
     await session.refresh(enrollment)
     return enrollment

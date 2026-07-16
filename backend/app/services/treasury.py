@@ -4,11 +4,14 @@ allocation (RF-T03)."""
 import uuid
 from datetime import date, timedelta
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
     Charge,
+    ChargeConcept,
+    ChargeConceptKind,
     ChargePublic,
     ChargeStatus,
     Institution,
@@ -121,9 +124,17 @@ async def has_blocking_debt(session: AsyncSession, student: Student) -> bool:
 
 
 async def active_scholarship_discount(
-    session: AsyncSession, student_id: uuid.UUID, amount: float, on: date
+    session: AsyncSession,
+    student_id: uuid.UUID,
+    amount: float,
+    on: date,
+    kind: ChargeConceptKind | None = None,
 ) -> float:
-    """RF-T05: best active scholarship applied to one charge amount."""
+    """RF-T05: best active scholarship applied to one charge amount. Becas apply
+    to colegiatura only — anything else (inscripción, a charge with no concept)
+    gets none."""
+    if kind != ChargeConceptKind.colegiatura:
+        return 0.0
     scholarships = (
         await session.exec(
             select(Scholarship).where(
@@ -160,47 +171,6 @@ async def scholarship_tolerance_days(
             continue
         best = max(best, s.tolerance_days)
     return best
-
-
-async def enforce_scholarship_tolerance(
-    session: AsyncSession, institution: Institution, today: date | None = None
-) -> int:
-    """RF-T05: an active scholarship is suspended once the student leaves a
-    beca charge unpaid past its due date + the scholarship tolerance window.
-    Returns how many scholarships were suspended. Caller commits."""
-    today = today or utcnow().date()
-    scholarships = (
-        await session.exec(
-            select(Scholarship)
-            .join(Student, Student.id == Scholarship.student_id)
-            .where(
-                Student.institution_id == institution.id,
-                Scholarship.status == ScholarshipStatus.activa,
-            )
-        )
-    ).all()
-    suspended = 0
-    for s in scholarships:
-        charges = (
-            await session.exec(
-                select(Charge).where(
-                    Charge.student_id == s.student_id,
-                    Charge.scholarship_discount > 0,
-                    Charge.due_date < today - timedelta(days=s.tolerance_days),
-                    Charge.status.in_([ChargeStatus.pendiente, ChargeStatus.parcial]),  # type: ignore[attr-defined]
-                )
-            )
-        ).all()
-        overdue_unpaid = False
-        for c in charges:
-            if _net(c) - await charge_paid_amount(session, c.id) > 0:
-                overdue_unpaid = True
-                break
-        if overdue_unpaid:
-            s.status = ScholarshipStatus.suspendida
-            session.add(s)
-            suspended += 1
-    return suspended
 
 
 async def apply_late_fees(
@@ -257,6 +227,173 @@ async def apply_late_fees(
         )
         created += 1
     return created
+
+
+# --- Auto-billing (RF-T02): charges generated from a group enrollment ----------
+
+def _month_firsts(start: date, end: date) -> list[date]:
+    """1st of every month the [start, end] span touches. A SEP–DIC term → the 1st
+    of Sep, Oct, Nov, Dec. ponytail: due dates land on the 1st even if the term
+    starts mid-month (the first colegiatura is then simply due at enrollment)."""
+    firsts: list[date] = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        firsts.append(date(year, month, 1))
+        month += 1
+        if month > 12:
+            month, year = 1, year + 1
+    return firsts
+
+
+_SPANISH_MONTHS = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+async def resolve_concept(
+    session: AsyncSession, kind: ChargeConceptKind, program_id, modality,
+    institution_id: uuid.UUID,
+) -> ChargeConcept | None:
+    """Most-specific active price in the institution's tabulador: a row scoped to
+    this program+modality beats a program-only row, beats a modality-only row,
+    beats a global row. A row scoped to a *different* program or modality never
+    matches."""
+    concepts = (
+        await session.exec(
+            select(ChargeConcept).where(
+                ChargeConcept.kind == kind,
+                ChargeConcept.is_active == True,  # noqa: E712
+                ChargeConcept.institution_id == institution_id,
+            )
+        )
+    ).all()
+    best, best_score = None, -1
+    for c in concepts:
+        if c.program_id is not None and c.program_id != program_id:
+            continue
+        if c.modality is not None and c.modality != modality:
+            continue
+        score = (2 if c.program_id is not None else 0) + (1 if c.modality is not None else 0)
+        if score > best_score:
+            best, best_score = c, score
+    return best
+
+
+async def generate_enrollment_charges(
+    session: AsyncSession, *, student: Student, group, enrollment, kind,
+    created_by: uuid.UUID, waive_enrollment_fee: bool = False,
+) -> list[Charge]:
+    """Auto-bill a group enrollment (RF-T02): the enrollment fee
+    (inscripción/reinscripción, unless waived) + one colegiatura per month the
+    term spans, due the 1st. Idempotent per enrollment. Best-effort — if the
+    tabulador has no matching price the charge is skipped so enrollment is never
+    blocked (a strict cohort run resolves prices up front). The scholarship pct is
+    frozen onto colegiaturas only. Caller commits."""
+    from app.models import GroupEnrollmentKind, PlanVersion, Rvoe, Term
+
+    term = await session.get(Term, group.term_id)
+    if term is None:
+        return []
+    plan = await session.get(PlanVersion, group.plan_version_id)
+    rvoe = await session.get(Rvoe, plan.rvoe_id) if plan else None
+    program_id = rvoe.program_id if rvoe else None
+    modality = rvoe.modality if rvoe else None
+    institution_id = student.institution_id
+
+    # Per-slot idempotency: which (concept, due date) slots already exist for this
+    # enrollment. Only missing slots are created — so a re-run (or a cohort backfill
+    # after the tabulador is completed) fills gaps instead of skipping wholesale.
+    existing = set(
+        (
+            await session.exec(
+                select(Charge.concept_id, Charge.due_date).where(
+                    Charge.group_enrollment_id == enrollment.id
+                )
+            )
+        ).all()
+    )
+
+    created: list[Charge] = []
+    if not waive_enrollment_fee:
+        fee_kind = (
+            ChargeConceptKind.inscripcion
+            if kind == GroupEnrollmentKind.inscripcion
+            else ChargeConceptKind.reinscripcion
+        )
+        fee = await resolve_concept(session, fee_kind, program_id, modality, institution_id)
+        if fee is not None and (fee.id, term.start_date) not in existing:
+            created.append(Charge(
+                student_id=student.id, concept_id=fee.id,
+                description=f"{fee.name} — {term.name}", amount=fee.amount,
+                scholarship_discount=0.0,  # becas never apply to the enrollment fee
+                due_date=term.start_date, term_id=term.id,
+                group_enrollment_id=enrollment.id, created_by=created_by,
+            ))
+
+    colegiatura = await resolve_concept(
+        session, ChargeConceptKind.colegiatura, program_id, modality, institution_id
+    )
+    if colegiatura is not None:
+        for due in _month_firsts(term.start_date, term.end_date):
+            if (colegiatura.id, due) in existing:
+                continue
+            discount = await active_scholarship_discount(
+                session, student.id, colegiatura.amount, due,
+                kind=ChargeConceptKind.colegiatura,
+            )
+            created.append(Charge(
+                student_id=student.id, concept_id=colegiatura.id,
+                description=f"{colegiatura.name} {_SPANISH_MONTHS[due.month - 1]} {due.year}",
+                amount=colegiatura.amount, scholarship_discount=discount,
+                due_date=due, term_id=term.id,
+                group_enrollment_id=enrollment.id, created_by=created_by,
+            ))
+
+    if not created:
+        return []
+    # A concurrent run (e.g. two cohort clicks) can pass the slot check above and
+    # race to insert the same slot. Flush inside a SAVEPOINT: if the unique
+    # constraint fires, roll back just this attempt and report nothing billed —
+    # the winner's charges stand, nothing is double-billed, the outer txn survives.
+    try:
+        async with session.begin_nested():
+            session.add_all(created)
+            await session.flush()
+    except IntegrityError:
+        return []
+    return created
+
+
+async def apply_scholarship_to_pending(
+    session: AsyncSession, scholarship: Scholarship
+) -> int:
+    """When a beca is authorized after charges already exist, freeze its discount
+    onto the student's still-open colegiatura charges (RF-T05). Returns how many
+    charges changed. Caller commits."""
+    charges = (
+        await session.exec(
+            select(Charge)
+            .join(ChargeConcept, ChargeConcept.id == Charge.concept_id)
+            .where(
+                Charge.student_id == scholarship.student_id,
+                ChargeConcept.kind == ChargeConceptKind.colegiatura,
+                Charge.status.in_([ChargeStatus.pendiente, ChargeStatus.parcial]),  # type: ignore[attr-defined]
+                Charge.due_date >= scholarship.valid_from,
+            )
+        )
+    ).all()
+    changed = 0
+    for c in charges:
+        discount = await active_scholarship_discount(
+            session, c.student_id, c.amount, c.due_date, kind=ChargeConceptKind.colegiatura
+        )
+        if abs(discount - c.scholarship_discount) > 0.005:
+            c.scholarship_discount = discount
+            session.add(c)
+            await refresh_charge_status(session, c)
+            changed += 1
+    return changed
 
 
 async def scholarship_metrics(session: AsyncSession, today: date | None = None) -> dict:

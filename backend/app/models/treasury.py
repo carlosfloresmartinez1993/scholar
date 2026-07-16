@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.models.common import utcnow
 from app.models.catalog import Modality
@@ -57,6 +57,15 @@ class Charge(SQLModel, table=True):
     """One receivable on a student's account (a payment-plan installment,
     a one-off fee, or an auto-generated late fee)."""
     __tablename__ = "charges"
+    # One auto-generated charge per (enrollment, concept, due date): a hard guard
+    # against double-billing under concurrent generation. NULLs are distinct, so
+    # manual/legacy charges (no enrollment) are unconstrained.
+    __table_args__ = (
+        UniqueConstraint(
+            "group_enrollment_id", "concept_id", "due_date",
+            name="uq_charges_enrollment_slot",
+        ),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     student_id: uuid.UUID = Field(foreign_key="students.id", index=True)
     concept_id: uuid.UUID | None = Field(default=None, foreign_key="charge_concepts.id")
@@ -67,6 +76,13 @@ class Charge(SQLModel, table=True):
     status: ChargeStatus = ChargeStatus.pendiente
     is_late_fee: bool = False
     source_charge_id: uuid.UUID | None = Field(default=None, foreign_key="charges.id")
+    # Auto-billing (RF-T02): ties a charge to the term/enrollment it was generated
+    # for, so a repeated cuatrimestre gets its own fresh charges. Nullable: manual
+    # and legacy charges have neither.
+    term_id: uuid.UUID | None = Field(default=None, foreign_key="terms.id", index=True)
+    group_enrollment_id: uuid.UUID | None = Field(
+        default=None, foreign_key="group_enrollments.id", index=True
+    )
     created_by: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow)
 

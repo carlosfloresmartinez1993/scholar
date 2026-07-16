@@ -148,6 +148,8 @@ class GroupEnrollmentCreate(SQLModel):
     plan_subject_ids: list[uuid.UUID] = []
     # skip seriación validation (requires servicios_escolares role; audited)
     override_prerequisites: bool = False
+    # some new students don't pay inscripción — skip the enrollment-fee charge
+    waive_enrollment_fee: bool = False
 
 
 class GroupEnrollmentPublic(SQLModel):
