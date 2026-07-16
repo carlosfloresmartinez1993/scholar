@@ -8,7 +8,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlmodel import select
+from sqlmodel import func, select
 
 from app.api.deps import AnyStaff, Authorizer, SessionDep, TreasuryStaff
 from app.api.routes.catalog import get_default_institution
@@ -211,6 +211,49 @@ async def generate_group_charges(
                  detail=f"{students_billed} alumnos, {charges_created} cargos")
     await session.commit()
     return {"students_billed": students_billed, "charges_created": charges_created}
+
+
+@router.get("/groups/{group_id}/billing-status")
+async def group_billing_status(
+    session: SessionDep, _: TreasuryStaff, group_id: uuid.UUID
+) -> list[dict]:
+    """Roster of a group's active enrollments with whether each has been billed —
+    so staff see who's missing charges and can back-bill the gaps."""
+    if await session.get(Group, group_id) is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    enrollments = (
+        await session.exec(
+            select(GroupEnrollment, Student)
+            .join(Student, Student.id == GroupEnrollment.student_id)
+            .where(
+                GroupEnrollment.group_id == group_id,
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            )
+            .order_by(Student.full_name)
+        )
+    ).all()
+    enrollment_ids = [en.id for en, _ in enrollments]
+    counts: dict = {}
+    if enrollment_ids:
+        counts = dict(
+            (
+                await session.exec(
+                    select(Charge.group_enrollment_id, func.count(Charge.id))
+                    .where(Charge.group_enrollment_id.in_(enrollment_ids))  # type: ignore[attr-defined]
+                    .group_by(Charge.group_enrollment_id)
+                )
+            ).all()
+        )
+    return [
+        {
+            "student_id": str(student.id),
+            "student_name": student.full_name,
+            "enrollment_number": student.enrollment_number,
+            "charges_count": int(counts.get(en.id, 0)),
+            "billed": counts.get(en.id, 0) > 0,
+        }
+        for en, student in enrollments
+    ]
 
 
 @router.post("/charges/{charge_id}/cancel")
