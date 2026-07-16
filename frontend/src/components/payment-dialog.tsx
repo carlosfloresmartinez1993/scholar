@@ -74,18 +74,26 @@ export function PaymentDialog({
     onSuccess: (payment) => {
       toast.success(`Pago registrado · ${payment.receipt_folio}`);
       onPaid?.(payment);
-      onOpenChange(false);
-      setForm({
-        charge_id: NONE,
-        amount: "",
-        method: "efectivo",
-        bank_reference: "",
-        notes: "",
-      });
+      onOpenChange(false); // closing resets the form (effect below)
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al registrar el pago"),
   });
+
+  // reset when the dialog closes so a dismissed dialog reopens clean (it stays
+  // mounted at the alumnos call site; Caja remounts it, so this is harmless there)
+  useEffect(() => {
+    if (!open) {
+      setForm({
+        charge_id: NONE,
+        amount: charge ? String(charge.balance) : "",
+        method: "efectivo",
+        bank_reference: "",
+        notes: "",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const openCharges = (charges ?? []).filter(
     (c) => c.status === "pendiente" || c.status === "parcial",
