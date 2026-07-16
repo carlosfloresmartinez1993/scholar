@@ -11,6 +11,7 @@ import {
   Home,
   GraduationCap,
   Users,
+  ClipboardList,
   Landmark,
   CalendarRange,
   ClipboardCheck,
@@ -73,6 +74,7 @@ const NAV_GROUPS = [
     items: [
       { to: "/", label: "Inicio", icon: Home },
       { to: "/alumnos", label: "Alumnos", icon: GraduationCap },
+      { to: "/inscripciones", label: "Inscripciones", icon: ClipboardList },
       { to: "/programas", label: "Programas", icon: Landmark },
       { to: "/grupos", label: "Grupos", icon: Users },
     ],

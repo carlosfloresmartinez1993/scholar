@@ -246,6 +246,23 @@ export interface Student {
   created_at: string;
 }
 
+export interface BulkIntakeRow {
+  curp: string;
+  full_name: string;
+  email: string;
+}
+
+export interface BulkIntakeError {
+  row: number;
+  curp: string;
+  detail: string;
+}
+
+export interface BulkIntakeResult {
+  enrolled: number;
+  errors: BulkIntakeError[];
+}
+
 export interface PlanEnrollment {
   id: string;
   student_id: string;

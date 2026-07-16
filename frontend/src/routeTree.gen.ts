@@ -16,6 +16,7 @@ import { Route as AuthUsuariosRouteImport } from './routes/_auth/usuarios'
 import { Route as AuthTesoreriaRouteImport } from './routes/_auth/tesoreria'
 import { Route as AuthProgramasRouteImport } from './routes/_auth/programas'
 import { Route as AuthPeriodosRouteImport } from './routes/_auth/periodos'
+import { Route as AuthInscripcionesRouteImport } from './routes/_auth/inscripciones'
 import { Route as AuthGruposRouteImport } from './routes/_auth/grupos'
 import { Route as AuthCalificacionesRouteImport } from './routes/_auth/calificaciones'
 import { Route as AuthAuditoriaRouteImport } from './routes/_auth/auditoria'
@@ -57,6 +58,11 @@ const AuthPeriodosRoute = AuthPeriodosRouteImport.update({
   path: '/periodos',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthInscripcionesRoute = AuthInscripcionesRouteImport.update({
+  id: '/inscripciones',
+  path: '/inscripciones',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthGruposRoute = AuthGruposRouteImport.update({
   id: '/grupos',
   path: '/grupos',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/auditoria': typeof AuthAuditoriaRoute
   '/calificaciones': typeof AuthCalificacionesRoute
   '/grupos': typeof AuthGruposRoute
+  '/inscripciones': typeof AuthInscripcionesRoute
   '/periodos': typeof AuthPeriodosRoute
   '/programas': typeof AuthProgramasRoute
   '/tesoreria': typeof AuthTesoreriaRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/auditoria': typeof AuthAuditoriaRoute
   '/calificaciones': typeof AuthCalificacionesRoute
   '/grupos': typeof AuthGruposRoute
+  '/inscripciones': typeof AuthInscripcionesRoute
   '/periodos': typeof AuthPeriodosRoute
   '/programas': typeof AuthProgramasRoute
   '/tesoreria': typeof AuthTesoreriaRoute
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/_auth/auditoria': typeof AuthAuditoriaRoute
   '/_auth/calificaciones': typeof AuthCalificacionesRoute
   '/_auth/grupos': typeof AuthGruposRoute
+  '/_auth/inscripciones': typeof AuthInscripcionesRoute
   '/_auth/periodos': typeof AuthPeriodosRoute
   '/_auth/programas': typeof AuthProgramasRoute
   '/_auth/tesoreria': typeof AuthTesoreriaRoute
@@ -142,6 +151,7 @@ export interface FileRouteTypes {
     | '/auditoria'
     | '/calificaciones'
     | '/grupos'
+    | '/inscripciones'
     | '/periodos'
     | '/programas'
     | '/tesoreria'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
     | '/auditoria'
     | '/calificaciones'
     | '/grupos'
+    | '/inscripciones'
     | '/periodos'
     | '/programas'
     | '/tesoreria'
@@ -170,6 +181,7 @@ export interface FileRouteTypes {
     | '/_auth/auditoria'
     | '/_auth/calificaciones'
     | '/_auth/grupos'
+    | '/_auth/inscripciones'
     | '/_auth/periodos'
     | '/_auth/programas'
     | '/_auth/tesoreria'
@@ -234,6 +246,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthPeriodosRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/inscripciones': {
+      id: '/_auth/inscripciones'
+      path: '/inscripciones'
+      fullPath: '/inscripciones'
+      preLoaderRoute: typeof AuthInscripcionesRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/grupos': {
       id: '/_auth/grupos'
       path: '/grupos'
@@ -285,6 +304,7 @@ interface AuthRouteChildren {
   AuthAuditoriaRoute: typeof AuthAuditoriaRoute
   AuthCalificacionesRoute: typeof AuthCalificacionesRoute
   AuthGruposRoute: typeof AuthGruposRoute
+  AuthInscripcionesRoute: typeof AuthInscripcionesRoute
   AuthPeriodosRoute: typeof AuthPeriodosRoute
   AuthProgramasRoute: typeof AuthProgramasRoute
   AuthTesoreriaRoute: typeof AuthTesoreriaRoute
@@ -299,6 +319,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthAuditoriaRoute: AuthAuditoriaRoute,
   AuthCalificacionesRoute: AuthCalificacionesRoute,
   AuthGruposRoute: AuthGruposRoute,
+  AuthInscripcionesRoute: AuthInscripcionesRoute,
   AuthPeriodosRoute: AuthPeriodosRoute,
   AuthProgramasRoute: AuthProgramasRoute,
   AuthTesoreriaRoute: AuthTesoreriaRoute,
