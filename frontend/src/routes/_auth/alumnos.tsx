@@ -15,6 +15,7 @@ import {
   ADMISSION_TYPE_LABELS,
   STUDENT_STATUS_LABELS,
 } from "@/lib/format";
+import { usePersistedState } from "@/lib/use-persisted-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -101,6 +102,30 @@ function AlumnosPage() {
     queryKey: queryKeys.campuses,
     queryFn: () => api<Campus[]>("/catalog/campuses"),
   });
+
+  // Sticky table filters (persisted, restored on mount). "all" = no filter.
+  const [campusFilter, setCampusFilter] = usePersistedState<string>(
+    "alumnos-filters-v1:campus",
+    "all",
+    (v) => typeof v === "string", // stale campus ids are dropped below
+  );
+  const [statusFilter, setStatusFilter] = usePersistedState<string>(
+    "alumnos-filters-v1:status",
+    "all",
+    (v) => v === "all" || (typeof v === "string" && v in STUDENT_STATUS_LABELS),
+  );
+  // Drop a stored campus id that no longer exists in the loaded options.
+  const effectiveCampus =
+    campusFilter === "all" || !campuses
+      ? campusFilter
+      : campuses.some((c) => c.id === campusFilter)
+        ? campusFilter
+        : "all";
+  const filteredStudents = students?.filter(
+    (s) =>
+      (effectiveCampus === "all" || s.campus_id === effectiveCampus) &&
+      (statusFilter === "all" || s.status === statusFilter),
+  );
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
@@ -192,6 +217,36 @@ function AlumnosPage() {
         <Button type="submit" variant="outline">
           Buscar
         </Button>
+
+        {campuses && campuses.length > 1 && (
+          <Select value={effectiveCampus} onValueChange={setCampusFilter}>
+            <SelectTrigger className="w-48" aria-label="Filtrar por campus">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los campus</SelectItem>
+              {campuses.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-44" aria-label="Filtrar por estatus">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estatus</SelectItem>
+            {(Object.keys(STUDENT_STATUS_LABELS) as StudentStatus[]).map((s) => (
+              <SelectItem key={s} value={s}>
+                {STUDENT_STATUS_LABELS[s]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </form>
 
       <div className="rounded-2xl border bg-card">
@@ -215,7 +270,7 @@ function AlumnosPage() {
                   </TableCell>
                 </TableRow>
               ))}
-            {students?.map((s) => (
+            {filteredStudents?.map((s) => (
               <TableRow
                 key={s.id}
                 className="cursor-pointer"
@@ -246,14 +301,14 @@ function AlumnosPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {students && students.length === 0 && (
+            {filteredStudents && filteredStudents.length === 0 && (
               <TableRow>
                 <TableCell
                   colSpan={6}
                   className="py-10 text-center text-muted-foreground"
                 >
-                  {search
-                    ? `Sin resultados para «${search}»`
+                  {search || effectiveCampus !== "all" || statusFilter !== "all"
+                    ? "Sin resultados"
                     : "Sin alumnos registrados"}
                 </TableCell>
               </TableRow>
