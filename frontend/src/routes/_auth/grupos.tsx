@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, Pencil, Plus, UserPlus, Users } from "lucide-react";
+import { CalendarDays, Plus, UserPlus, Users } from "lucide-react";
 import {
   api,
   ApiError,
@@ -461,10 +461,6 @@ function GroupDetail({ group }: { group: Group }) {
     const s = planSubjects?.find((ps) => ps.id === planSubjectId);
     return s ? `${s.code} — ${s.name}` : "—";
   };
-  const teacherName = (userId?: string | null) =>
-    userId
-      ? (teachers?.find((t) => t.id === userId)?.full_name ?? "—")
-      : "Sin asignar";
 
   // Enrolled students = union of the grade grids of every materia in the group.
   const gridQueries = useQueries({
@@ -522,53 +518,31 @@ function GroupDetail({ group }: { group: Group }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Materia</TableHead>
-                <TableHead>Docente</TableHead>
-                <TableHead>Horario</TableHead>
-                <TableHead className="w-16" />
+                <TableHead className="w-56">Docente</TableHead>
+                <TableHead className="w-72">Horario</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={3}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               )}
               {groupSubjects?.map((gs) => (
-                <TableRow key={gs.id}>
-                  <TableCell className="font-semibold">
-                    {subjectName(gs.plan_subject_id)}
-                  </TableCell>
-                  <TableCell
-                    className={
-                      gs.teacher_user_id ? "" : "text-muted-foreground"
-                    }
-                  >
-                    {teacherName(gs.teacher_user_id)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {gs.schedule_text || "—"}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Editar"
-                      onClick={() => {
-                        setEditingSubject(gs);
-                        setSubjectDialogOpen(true);
-                      }}
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
+                <GroupSubjectRow
+                  key={gs.id}
+                  gs={gs}
+                  group={group}
+                  teachers={teachers ?? []}
+                  subjectLabel={subjectName(gs.plan_subject_id)}
+                />
               ))}
               {groupSubjects && groupSubjects.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={4}
+                    colSpan={3}
                     className="py-8 text-center text-muted-foreground"
                   >
                     Este grupo aún no tiene materias asignadas
@@ -652,6 +626,94 @@ function GroupDetail({ group }: { group: Group }) {
         onDone={invalidateGrids}
       />
     </div>
+  );
+}
+
+// Inline row: teacher (Select, saves on change) and schedule (Input, saves on
+// blur/Enter). Both persist via the group-subjects upsert (POST is idempotent by
+// group_id + plan_subject_id) — no dialog, no extra backend endpoint.
+function GroupSubjectRow({
+  gs,
+  group,
+  teachers,
+  subjectLabel,
+}: {
+  gs: GroupSubject;
+  group: Group;
+  teachers: UserPublic[];
+  subjectLabel: string;
+}) {
+  const queryClient = useQueryClient();
+  const [schedule, setSchedule] = useState(gs.schedule_text ?? "");
+
+  const save = useMutation({
+    mutationFn: (patch: {
+      teacher_user_id?: string | null;
+      schedule_text?: string;
+    }) =>
+      api<GroupSubject>("/catalog/group-subjects", {
+        method: "POST",
+        body: JSON.stringify({
+          group_id: group.id,
+          plan_subject_id: gs.plan_subject_id,
+          teacher_user_id: gs.teacher_user_id,
+          schedule_text: gs.schedule_text,
+          ...patch,
+        }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSubjects(group.id),
+      }),
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
+  });
+
+  function commitSchedule() {
+    const next = schedule.trim();
+    if (next !== (gs.schedule_text ?? "")) save.mutate({ schedule_text: next });
+  }
+
+  return (
+    <TableRow>
+      <TableCell className="font-semibold">{subjectLabel}</TableCell>
+      <TableCell>
+        <Select
+          value={gs.teacher_user_id ?? NONE}
+          onValueChange={(v) =>
+            save.mutate({ teacher_user_id: v === NONE ? null : v })
+          }
+          disabled={save.isPending}
+        >
+          <SelectTrigger className="w-full" aria-label="Docente">
+            <SelectValue placeholder="Sin asignar" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE}>Sin asignar</SelectItem>
+            {teachers.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.full_name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell>
+        <Input
+          value={schedule}
+          onChange={(e) => setSchedule(e.target.value)}
+          onBlur={commitSchedule}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              e.currentTarget.blur();
+            }
+          }}
+          placeholder="Lun y Mié 18:00–20:00"
+          aria-label="Horario"
+        />
+      </TableCell>
+    </TableRow>
   );
 }
 

@@ -1,0 +1,200 @@
+// Global quick-nav + quick-action palette (⌘K / Ctrl+K). Built on the existing
+// shadcn Dialog + Input (no cmdk dependency): a single filtered, keyboard-driven
+// list that jumps to a student (deep-link), a program, or any screen.
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { Search } from "lucide-react";
+import { api } from "@/api/client";
+import { queryKeys } from "@/api/query-keys";
+import type { Program, Student } from "@/api/types";
+import { cn } from "@/lib/utils";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+
+// Static navigation / quick actions. `to` values are real routes from _auth.
+const ACTIONS = [
+  { label: "Inicio", to: "/" },
+  { label: "Alumnos", to: "/alumnos" },
+  { label: "Programas", to: "/programas" },
+  { label: "Grupos", to: "/grupos" },
+  { label: "Capturar calificaciones", to: "/calificaciones" },
+  { label: "Asistencias", to: "/asistencias" },
+  { label: "Cobrar / Caja", to: "/tesoreria" },
+  { label: "Inscribir alumno", to: "/grupos" },
+  { label: "Periodos", to: "/periodos" },
+] as const;
+
+interface Item {
+  key: string;
+  label: string;
+  hint?: string;
+  run: () => void;
+}
+
+export function CommandPalette() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [active, setActive] = useState(0);
+
+  // Global ⌘K / Ctrl+K toggle.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Reset input whenever the palette opens.
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setDebounced("");
+      setActive(0);
+    }
+  }, [open]);
+
+  // Debounce the student search term.
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 200);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const { data: students } = useQuery({
+    queryKey: queryKeys.students(debounced),
+    queryFn: () =>
+      api<Student[]>(`/students?limit=8&q=${encodeURIComponent(debounced)}`),
+    enabled: open && debounced.length >= 2,
+  });
+  const { data: programs } = useQuery({
+    queryKey: queryKeys.programs,
+    queryFn: () => api<Program[]>("/catalog/programs"),
+    enabled: open,
+  });
+
+  const close = () => setOpen(false);
+
+  const items = useMemo<Item[]>(() => {
+    const q = query.trim().toLowerCase();
+    const list: Item[] = [];
+
+    for (const a of ACTIONS) {
+      if (!q || a.label.toLowerCase().includes(q)) {
+        list.push({
+          key: `action:${a.label}`,
+          label: a.label,
+          hint: "Ir a",
+          run: () => {
+            close();
+            navigate({ to: a.to });
+          },
+        });
+      }
+    }
+
+    for (const s of students ?? []) {
+      list.push({
+        key: `student:${s.id}`,
+        label: s.full_name,
+        hint: `Alumno · ${s.enrollment_number}`,
+        run: () => {
+          close();
+          navigate({
+            to: "/alumnos/$studentId",
+            params: { studentId: s.id },
+          });
+        },
+      });
+    }
+
+    for (const p of programs ?? []) {
+      if (!q || `${p.code} ${p.name}`.toLowerCase().includes(q)) {
+        list.push({
+          key: `program:${p.id}`,
+          label: p.name,
+          hint: `Programa · ${p.code}`,
+          run: () => {
+            close();
+            navigate({ to: "/programas" });
+          },
+        });
+      }
+    }
+
+    return list;
+  }, [query, students, programs, navigate]);
+
+  // Keep the highlighted index within bounds as the list changes.
+  useEffect(() => {
+    setActive((i) => Math.min(i, Math.max(0, items.length - 1)));
+  }, [items.length]);
+
+  function onInputKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((i) => Math.min(i + 1, items.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      items[active]?.run();
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
+        showCloseButton={false}
+        className="top-[20%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+        aria-label="Paleta de comandos"
+      >
+        <div className="flex items-center gap-2 border-b px-3">
+          <Search className="size-4 shrink-0 text-muted-foreground" />
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onInputKeyDown}
+            placeholder="Buscar alumno, programa o pantalla…"
+            aria-label="Buscar"
+            className="border-0 px-0 shadow-none focus-visible:ring-0"
+          />
+        </div>
+        <ul className="max-h-80 overflow-y-auto p-1">
+          {items.map((item, i) => (
+            <li key={item.key}>
+              <button
+                type="button"
+                onMouseMove={() => setActive(i)}
+                onClick={item.run}
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm",
+                  i === active ? "bg-muted" : "hover:bg-muted/50",
+                )}
+              >
+                <span className="truncate font-medium">{item.label}</span>
+                {item.hint && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {item.hint}
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+          {items.length === 0 && (
+            <li className="px-3 py-6 text-center text-sm text-muted-foreground">
+              Sin resultados
+            </li>
+          )}
+        </ul>
+      </DialogContent>
+    </Dialog>
+  );
+}
