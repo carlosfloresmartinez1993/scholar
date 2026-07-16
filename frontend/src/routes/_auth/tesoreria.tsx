@@ -685,7 +685,7 @@ type AgingBucket = AgingRow["bucket"];
 
 function CarteraVencidaTab() {
   const navigate = useNavigate();
-  const { data: aging, isLoading } = useQuery({
+  const { data: aging, isLoading, isError } = useQuery({
     queryKey: queryKeys.aging,
     queryFn: () => api<AgingRow[]>("/treasury/reports/aging"),
   });
@@ -730,7 +730,17 @@ function CarteraVencidaTab() {
 
   const total = rows.reduce((sum, r) => sum + r.total, 0);
 
-  if (!isLoading && rows.length === 0) {
+  if (isError) {
+    return (
+      <EmptyState
+        icon={Check}
+        title="No se pudo cargar la cartera vencida"
+        description="Ocurrió un error al consultar los cargos. Intente de nuevo."
+      />
+    );
+  }
+  // empty state only for a SUCCESSFUL empty response (not a failed/loading one)
+  if (!isLoading && !isError && rows.length === 0) {
     return (
       <EmptyState
         icon={Check}

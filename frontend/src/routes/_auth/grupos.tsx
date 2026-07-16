@@ -709,7 +709,13 @@ function GroupDetail({ group }: { group: Group }) {
         group={group}
         groupSubjects={groupSubjects ?? []}
         subjectName={subjectName}
-        onDone={invalidateGrids}
+        onDone={() => {
+          invalidateGrids();
+          // the new student + its auto-generated charges change the billing roster
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.groupBillingStatus(group.id),
+          });
+        }}
       />
     </div>
   );
