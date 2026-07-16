@@ -479,6 +479,10 @@ async def create_group(
     rvoe = await require_operable_rvoe(session, body.plan_version_id)  # RT-03
     if await session.get(Term, body.term_id) is None:
         raise HTTPException(status_code=404, detail="Ciclo no encontrado")
+    if body.promotes_from_group_id is not None and (
+        await session.get(Group, body.promotes_from_group_id) is None
+    ):
+        raise HTTPException(status_code=404, detail="Grupo de origen no encontrado")
     # campus is derived from the plan's RVOE, not supplied by the client
     group = Group(**body.model_dump(), campus_id=rvoe.campus_id)
     session.add(group)

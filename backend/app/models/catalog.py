@@ -301,17 +301,22 @@ class Group(GroupBase, table=True):
     campus_id: uuid.UUID = Field(foreign_key="campuses.id", index=True)
     # id of the matching group in the calendar system (no FK: other database)
     calendar_group_id: uuid.UUID | None = Field(default=None)
+    # the previous-term group whose passing students promote INTO this one — the
+    # explicit link the cycle-promotion cron follows (RF-C: reinscripción).
+    promotes_from_group_id: uuid.UUID | None = Field(default=None, foreign_key="groups.id")
     created_at: datetime = Field(default_factory=utcnow)
 
 
 class GroupCreate(GroupBase):
     plan_version_id: uuid.UUID
     term_id: uuid.UUID
+    promotes_from_group_id: uuid.UUID | None = None
     # campus is derived from the plan version's RVOE (RVOE = program + campus)
 
 
 class GroupUpdate(SQLModel):
     calendar_group_id: uuid.UUID | None = None
+    promotes_from_group_id: uuid.UUID | None = None
 
 
 class GroupPublic(GroupBase):
@@ -320,6 +325,7 @@ class GroupPublic(GroupBase):
     term_id: uuid.UUID
     campus_id: uuid.UUID
     calendar_group_id: uuid.UUID | None = None
+    promotes_from_group_id: uuid.UUID | None = None
 
 
 class GroupSubjectBase(SQLModel):
