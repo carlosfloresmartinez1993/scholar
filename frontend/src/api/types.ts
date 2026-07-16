@@ -246,6 +246,23 @@ export interface Student {
   created_at: string;
 }
 
+export interface BulkIntakeRow {
+  curp: string;
+  full_name: string;
+  email: string;
+}
+
+export interface BulkIntakeError {
+  row: number;
+  curp: string;
+  detail: string;
+}
+
+export interface BulkIntakeResult {
+  enrolled: number;
+  errors: BulkIntakeError[];
+}
+
 export interface PlanEnrollment {
   id: string;
   student_id: string;
@@ -613,4 +630,12 @@ export interface AgingRow {
   days_overdue: number;
   bucket: "1-30" | "31-60" | "61-90" | "90+";
   balance: number;
+}
+
+export interface GroupBillingStatus {
+  student_id: string;
+  student_name: string;
+  enrollment_number: string;
+  charges_count: number;
+  billed: boolean;
 }

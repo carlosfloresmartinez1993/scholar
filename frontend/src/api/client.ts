@@ -1,4 +1,6 @@
 import type {
+  BulkIntakeResult,
+  BulkIntakeRow,
   CalendarGroup,
   CalendarProgram,
   Group,
@@ -152,3 +154,16 @@ export const linkGroupToCalendar = (
 
 export const getStudentCalendar = (studentId: string) =>
   api<StudentCalendar>(`/students/${studentId}/calendar`);
+
+// --- Onboarding (Inscripciones) ---------------------------------------------
+
+export const bulkIntake = (body: {
+  group_id: string;
+  rows: BulkIntakeRow[];
+  override_prerequisites?: boolean;
+  waive_enrollment_fee?: boolean;
+}) =>
+  api<BulkIntakeResult>("/students/bulk-intake", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });

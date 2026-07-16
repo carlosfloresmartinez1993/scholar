@@ -43,6 +43,10 @@ from app.models.catalog import (
 )
 from app.models.student import (
     AdmissionType,
+    BulkIntakeError,
+    BulkIntakeIn,
+    BulkIntakeResult,
+    BulkIntakeRow,
     GroupEnrollment,
     GroupEnrollmentCreate,
     GroupEnrollmentKind,
