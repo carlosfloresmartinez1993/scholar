@@ -220,6 +220,23 @@ export interface Group {
   period_number: number;
   is_active: boolean;
   calendar_group_id?: string | null;
+  promotes_from_group_id?: string | null;
+}
+
+export interface PromoteCycleEntry {
+  student: string;
+  matricula: string;
+  target_group: string;
+  term?: string;
+  reason?: string;
+}
+
+export interface PromoteCycleResult {
+  dry_run: boolean;
+  promoted_count: number;
+  skipped_count: number;
+  promoted: PromoteCycleEntry[];
+  skipped: PromoteCycleEntry[];
 }
 
 export interface GroupSubject {
