@@ -500,6 +500,27 @@ function GroupDetail({ group }: { group: Group }) {
     }
   }
 
+  const generateCharges = useMutation({
+    mutationFn: () =>
+      api<{ students_billed: number; charges_created: number }>(
+        `/treasury/groups/${group.id}/generate-charges`,
+        { method: "POST" },
+      ),
+    onSuccess: (r) => {
+      if (r.students_billed === 0 && r.charges_created === 0) {
+        toast.info("El grupo ya tenía sus cargos generados");
+      } else {
+        toast.success(
+          `Cargos generados: ${r.students_billed} alumnos, ${r.charges_created} cargos`,
+        );
+      }
+    },
+    onError: (e) =>
+      toast.error(
+        e instanceof ApiError ? e.message : "Error al generar cargos",
+      ),
+  });
+
   return (
     <div className="space-y-6">
       <GroupCalendarLink group={group} />
@@ -583,18 +604,29 @@ function GroupDetail({ group }: { group: Group }) {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">Alumnos inscritos</h2>
-          <Button
-            className="font-bold"
-            disabled={(groupSubjects ?? []).length === 0}
-            title={
-              (groupSubjects ?? []).length === 0
-                ? "Agregue materias al grupo antes de inscribir alumnos"
-                : undefined
-            }
-            onClick={() => setEnrollOpen(true)}
-          >
-            <UserPlus className="size-4" /> Inscribir alumno
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={generateCharges.isPending}
+              onClick={() => generateCharges.mutate()}
+            >
+              {generateCharges.isPending
+                ? "Generando…"
+                : "Generar cargos del grupo"}
+            </Button>
+            <Button
+              className="font-bold"
+              disabled={(groupSubjects ?? []).length === 0}
+              title={
+                (groupSubjects ?? []).length === 0
+                  ? "Agregue materias al grupo antes de inscribir alumnos"
+                  : undefined
+              }
+              onClick={() => setEnrollOpen(true)}
+            >
+              <UserPlus className="size-4" /> Inscribir alumno
+            </Button>
+          </div>
         </div>
         <div className="rounded-2xl border bg-card">
           <Table>
@@ -794,6 +826,7 @@ function EnrollDialog({
   const [studentId, setStudentId] = useState("");
   const [subjectIds, setSubjectIds] = useState<string[]>([]);
   const [override, setOverride] = useState(false);
+  const [waiveEnrollmentFee, setWaiveEnrollmentFee] = useState(false);
 
   // only students of the group's campus can enroll (Servo Plantel key)
   const { data: students } = useQuery({
@@ -812,15 +845,17 @@ function EnrollDialog({
           group_id: group.id,
           plan_subject_ids: subjectIds,
           override_prerequisites: override,
+          waive_enrollment_fee: waiveEnrollmentFee,
         }),
       }),
     onSuccess: () => {
       onDone();
-      toast.success("Alumno inscrito al grupo");
+      toast.success("Alumno inscrito — cargos del cuatrimestre generados");
       onOpenChange(false);
       setStudentId("");
       setSubjectIds([]);
       setOverride(false);
+      setWaiveEnrollmentFee(false);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
@@ -891,6 +926,13 @@ function EnrollDialog({
               ))}
             </div>
           </div>
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <Checkbox
+              checked={waiveEnrollmentFee}
+              onCheckedChange={(v) => setWaiveEnrollmentFee(v === true)}
+            />
+            Condonar inscripción (no cobrar)
+          </label>
           <details className="text-sm">
             <summary className="cursor-pointer text-muted-foreground">
               Opciones avanzadas

@@ -2001,9 +2001,7 @@ function ScholarshipDialog({
   const [form, setForm] = useState({
     name: "",
     pct: "",
-    fixed_amount: "",
     valid_from: todayISO(),
-    valid_to: "",
     tolerance_days: "0",
   });
 
@@ -2014,10 +2012,8 @@ function ScholarshipDialog({
         body: JSON.stringify({
           student_id: student.id,
           name: form.name,
-          pct: form.pct ? Number(form.pct) : null,
-          fixed_amount: form.fixed_amount ? Number(form.fixed_amount) : null,
+          pct: Number(form.pct),
           valid_from: form.valid_from,
-          valid_to: form.valid_to || null,
           tolerance_days: Number(form.tolerance_days) || 0,
         }),
       }),
@@ -2036,7 +2032,7 @@ function ScholarshipDialog({
         <DialogHeader>
           <DialogTitle>Solicitar beca</DialogTitle>
           <DialogDescription>
-            Indique porcentaje o monto fijo (uno de los dos). La beca queda como{" "}
+            La beca aplica a colegiatura durante toda la carrera. Queda como{" "}
             <b>solicitada</b> y no aplica descuentos hasta que un administrador la
             autorice.
           </DialogDescription>
@@ -2045,10 +2041,6 @@ function ScholarshipDialog({
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!form.pct && !form.fixed_amount) {
-              toast.error("Indique porcentaje o monto fijo");
-              return;
-            }
             save.mutate();
           }}
         >
@@ -2068,30 +2060,17 @@ function ScholarshipDialog({
               <Input
                 id="b-pct"
                 type="number"
+                required
                 min={0}
                 max={100}
                 step="0.1"
                 value={form.pct}
-                onChange={(e) =>
-                  setForm({ ...form, pct: e.target.value, fixed_amount: "" })
-                }
+                onChange={(e) => setForm({ ...form, pct: e.target.value })}
               />
+              <p className="text-xs text-muted-foreground">
+                La beca aplica a colegiatura durante toda la carrera.
+              </p>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="b-fixed">Monto fijo</Label>
-              <Input
-                id="b-fixed"
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.fixed_amount}
-                onChange={(e) =>
-                  setForm({ ...form, fixed_amount: e.target.value, pct: "" })
-                }
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label htmlFor="b-from">Vigente desde</Label>
               <Input
@@ -2102,15 +2081,6 @@ function ScholarshipDialog({
                 onChange={(e) =>
                   setForm({ ...form, valid_from: e.target.value })
                 }
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="b-to">Vigente hasta (opcional)</Label>
-              <Input
-                id="b-to"
-                type="date"
-                value={form.valid_to}
-                onChange={(e) => setForm({ ...form, valid_to: e.target.value })}
               />
             </div>
           </div>
