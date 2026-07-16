@@ -3,6 +3,7 @@ reusable unit, shared by the single-student route (RT-09) and bulk cohort intake
 Neither function commits — the caller owns the transaction boundary (one commit per
 request, or one per row for bulk so a bad row never rolls back the good ones)."""
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -42,33 +43,53 @@ async def create_student_core(
     ).first()
     if dup:
         raise HTTPException(status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)")
-    # matrícula: institution prefix + per-institution sequence (row-locked counter,
-    # like folios RF-D05, so concurrent creates and deletions never collide)
+    # matrícula: institution prefix + per-institution sequence. The counter is
+    # row-locked once it exists; the FIRST-ever create has no row to lock, so two
+    # concurrent first creates can both seed it and collide on the unique
+    # constraint. Do the allocation in a SAVEPOINT and retry once: the loser's
+    # savepoint rolls back and the retry finds + locks the winner's counter.
     prefix = institution.short_name[:4].upper()
-    counter = (
-        await session.exec(
-            select(FolioCounter)
-            .where(FolioCounter.institution_id == institution.id, FolioCounter.series == "MAT")
-            .with_for_update()
-        )
-    ).first()
-    if counter is None:
-        last = (
-            await session.exec(
-                select(func.max(Student.enrollment_number)).where(
-                    Student.institution_id == institution.id
+    student: Student | None = None
+    for attempt in range(2):
+        try:
+            async with session.begin_nested():
+                counter = (
+                    await session.exec(
+                        select(FolioCounter)
+                        .where(
+                            FolioCounter.institution_id == institution.id,
+                            FolioCounter.series == "MAT",
+                        )
+                        .with_for_update()
+                    )
+                ).first()
+                if counter is None:
+                    last = (
+                        await session.exec(
+                            select(func.max(Student.enrollment_number)).where(
+                                Student.institution_id == institution.id
+                            )
+                        )
+                    ).first()
+                    seed = int(last[-6:]) if last and last[-6:].isdigit() else 0
+                    counter = FolioCounter(
+                        institution_id=institution.id, series="MAT", last_number=seed
+                    )
+                counter.last_number += 1
+                session.add(counter)
+                student = Student(
+                    **body.model_dump(), institution_id=institution.id,
+                    enrollment_number=f"{prefix}{counter.last_number:06d}",
                 )
-            )
-        ).first()
-        seed = int(last[-6:]) if last and last[-6:].isdigit() else 0
-        counter = FolioCounter(institution_id=institution.id, series="MAT", last_number=seed)
-    counter.last_number += 1
-    session.add(counter)
-    enrollment_number = f"{prefix}{counter.last_number:06d}"
-    student = Student(
-        **body.model_dump(), institution_id=institution.id, enrollment_number=enrollment_number
-    )
-    session.add(student)
+                session.add(student)
+                await session.flush()
+            break
+        except IntegrityError:
+            if attempt == 1:
+                raise HTTPException(
+                    status_code=409, detail="No se pudo registrar al alumno; reintente"
+                )
+    assert student is not None
     audit.record(session, actor=actor, action="student.created",
                  entity="student", entity_id=str(student.id), detail=student.curp)
     await session.flush()
