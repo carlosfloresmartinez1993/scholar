@@ -161,7 +161,17 @@ function ProgramasPage() {
                   colSpan={4}
                   className="py-10 text-center text-muted-foreground"
                 >
-                  Sin programas registrados
+                  <div className="flex flex-col items-center gap-3">
+                    <span>Sin programas registrados</span>
+                    <ProgramDialogButton
+                      onCreated={(p) => {
+                        setProgramId(p.id);
+                        setRvoeId(null);
+                        setPlanVersionId(null);
+                        setWizardStep("rvoe");
+                      }}
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             )}

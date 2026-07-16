@@ -356,16 +356,36 @@ function JustificationsSection() {
         method: "POST",
         body: JSON.stringify({ status, review_notes: reviewNotes ?? "" }),
       }),
+    // Reviewing removes the item from the "pendiente" list; drop it from the
+    // cache immediately so the row disappears without waiting for the refetch.
+    onMutate: async ({ id }) => {
+      const queryKey = queryKeys.justifications("pendiente");
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<Justification[]>(queryKey);
+      queryClient.setQueryData<Justification[]>(queryKey, (old) =>
+        old?.filter((j) => j.id !== id),
+      );
+      return { previous };
+    },
     onSuccess: (_, { status }) => {
-      queryClient.invalidateQueries({ queryKey: ["justifications"] });
       toast.success(
         status === "aprobado" ? "Justificante aprobado" : "Justificante rechazado",
       );
       setRejecting(null);
       setNotes("");
     },
-    onError: (e) =>
-      toast.error(e instanceof ApiError ? e.message : "Error al revisar"),
+    onError: (e, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(
+          queryKeys.justifications("pendiente"),
+          context.previous,
+        );
+      }
+      toast.error(e instanceof ApiError ? e.message : "Error al revisar");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["justifications"] });
+    },
   });
 
   const studentName = (id: string) =>

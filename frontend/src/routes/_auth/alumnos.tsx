@@ -180,18 +180,17 @@ function AlumnosPage() {
   const campusName = (id: string) =>
     campuses?.find((c) => c.id === id)?.name ?? "—";
 
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ ...emptyForm, campus_id: campuses?.[0]?.id ?? "" });
+    setOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl">Alumnos</h1>
-        <Button
-          className="font-bold"
-          onClick={() => {
-            setEditing(null);
-            setForm({ ...emptyForm, campus_id: campuses?.[0]?.id ?? "" });
-            setOpen(true);
-          }}
-        >
+        <Button className="font-bold" onClick={openCreate}>
           <Plus className="size-4" /> Nuevo alumno
         </Button>
       </div>
@@ -307,9 +306,16 @@ function AlumnosPage() {
                   colSpan={6}
                   className="py-10 text-center text-muted-foreground"
                 >
-                  {search || effectiveCampus !== "all" || statusFilter !== "all"
-                    ? "Sin resultados"
-                    : "Sin alumnos registrados"}
+                  {search || effectiveCampus !== "all" || statusFilter !== "all" ? (
+                    "Sin resultados"
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      <span>Sin alumnos registrados</span>
+                      <Button className="font-bold" onClick={openCreate}>
+                        <Plus className="size-4" /> Nuevo alumno
+                      </Button>
+                    </div>
+                  )}
                 </TableCell>
               </TableRow>
             )}
