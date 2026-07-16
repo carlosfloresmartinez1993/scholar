@@ -222,3 +222,28 @@ async def test_cohort_backfills_only_missing_slots(client, seed):
     charges = await _charges(client, student["id"])
     assert len([c for c in charges if c["description"].startswith("Inscripción")]) == 1
     assert len([c for c in charges if c["description"].startswith("Colegiatura")]) == 4
+
+
+async def test_term_billing_summary(client, seed):
+    """RF-T08: per-term expected vs collected + concept split."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    await _tabulador(client)
+    student = await make_student(client, campus_id)
+    await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": catalog["group"]["id"]})
+    charges = await _charges(client, student["id"])
+    cole = next(c for c in charges if c["description"].startswith("Colegiatura"))
+    await client.post("/api/v1/treasury/payments", json={
+        "student_id": student["id"], "charge_id": cole["id"],
+        "amount": 2500, "method": "efectivo"})
+
+    summary = (await client.get("/api/v1/treasury/reports/term-summary")).json()
+    assert len(summary) == 1
+    row = summary[0]
+    assert row["expected"] == 13000  # 3000 inscripción + 4×2500 colegiatura
+    assert row["collected"] == 2500
+    assert row["pending"] == 10500
+    assert row["by_concept"]["inscripcion"] == 3000
+    assert row["by_concept"]["colegiatura"] == 10000

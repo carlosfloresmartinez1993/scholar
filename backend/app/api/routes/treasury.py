@@ -54,6 +54,7 @@ from app.services.treasury import (
     resolve_concept,
     scholarship_metrics,
     student_charges_public,
+    term_billing_summary,
 )
 
 router = APIRouter(prefix="/treasury", tags=["treasury"])
@@ -475,6 +476,12 @@ async def run_late_fees(session: SessionDep, current_user: TreasuryStaff) -> dic
 async def scholarship_report(session: SessionDep, _: TreasuryStaff) -> dict:
     """RF-T reports: becados, % becados y beca aplicada acumulada al día."""
     return await scholarship_metrics(session)
+
+
+@router.get("/reports/term-summary")
+async def term_summary_report(session: SessionDep, _: TreasuryStaff) -> list[dict]:
+    """RF-T08: expected vs collected per cuatrimestre, with the concept split."""
+    return await term_billing_summary(session)
 
 
 # --- Reports & export (RF-T08, RF-T10) ----------------------------------------------------------
