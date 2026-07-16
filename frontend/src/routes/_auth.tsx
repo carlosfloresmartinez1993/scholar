@@ -11,6 +11,7 @@ import {
   Home,
   GraduationCap,
   Users,
+  ClipboardList,
   Landmark,
   CalendarRange,
   ClipboardCheck,
@@ -73,6 +74,10 @@ const NAV_GROUPS = [
     items: [
       { to: "/", label: "Inicio", icon: Home },
       { to: "/alumnos", label: "Alumnos", icon: GraduationCap },
+      {
+        to: "/inscripciones", label: "Inscripciones", icon: ClipboardList,
+        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+      },
       { to: "/programas", label: "Programas", icon: Landmark },
       { to: "/grupos", label: "Grupos", icon: Users },
     ],
@@ -144,7 +149,14 @@ function AppShell() {
                   {group.label}
                 </p>
               )}
-              {group.items.map(({ to, label, icon: Icon }) => (
+              {group.items
+                .filter((item) =>
+                  !("roles" in item) ||
+                  me?.is_superuser ||
+                  (me?.role !== undefined &&
+                    (item.roles as readonly string[]).includes(me.role)),
+                )
+                .map(({ to, label, icon: Icon }) => (
                 <Link
                   key={to}
                   to={to}
