@@ -2,12 +2,19 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Pencil } from "lucide-react";
-import { api, ApiError } from "@/api/client";
+import { Plus, Pencil, CalendarDays, RefreshCw } from "lucide-react";
+import {
+  api,
+  ApiError,
+  getCalendarTerms,
+  importCalendarTerm,
+  syncTermCalendar,
+} from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
-import type { PeriodType, Term } from "@/api/types";
+import type { CalendarTerm, PeriodType, Term } from "@/api/types";
 import { formatDate, PERIOD_TYPE_LABELS } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,6 +29,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -114,6 +122,16 @@ function PeriodosPage() {
       toast.error(e instanceof ApiError ? e.message : "Error al actualizar"),
   });
 
+  const sync = useMutation({
+    mutationFn: (term: Term) => syncTermCalendar(term.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.terms });
+      toast.success("Fechas sincronizadas con el calendario");
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al sincronizar"),
+  });
+
   function openCreate() {
     setEditing(null);
     setForm(emptyForm);
@@ -137,9 +155,12 @@ function PeriodosPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl">Periodos</h1>
-        <Button onClick={openCreate} className="font-bold">
-          <Plus className="size-4" /> Nuevo ciclo
-        </Button>
+        <div className="flex items-center gap-2">
+          <ImportTermsButton />
+          <Button onClick={openCreate} className="font-bold">
+            <Plus className="size-4" /> Nuevo ciclo
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-2xl border bg-card">
@@ -152,7 +173,7 @@ function PeriodosPage() {
               <TableHead>Fin</TableHead>
               <TableHead>Abierto</TableHead>
               <TableHead>Captura de calificaciones</TableHead>
-              <TableHead className="w-16" />
+              <TableHead className="w-24" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -166,7 +187,16 @@ function PeriodosPage() {
               ))}
             {terms?.map((t) => (
               <TableRow key={t.id}>
-                <TableCell className="font-semibold">{t.name}</TableCell>
+                <TableCell className="font-semibold">
+                  <span className="flex items-center gap-2">
+                    {t.name}
+                    {t.calendar_term_id && (
+                      <Badge variant="secondary" className="gap-1">
+                        <CalendarDays className="size-3" /> Calendario
+                      </Badge>
+                    )}
+                  </span>
+                </TableCell>
                 <TableCell className="text-muted-foreground">
                   {PERIOD_TYPE_LABELS[t.period_type]}
                 </TableCell>
@@ -204,7 +234,19 @@ function PeriodosPage() {
                     {t.grade_capture_open ? "Abierta" : "Cerrada"}
                   </label>
                 </TableCell>
-                <TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {t.calendar_term_id && (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => sync.mutate(t)}
+                      disabled={sync.isPending}
+                      aria-label="Sincronizar fechas"
+                      title="Sincronizar fechas con el calendario"
+                    >
+                      <RefreshCw className="size-4" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -336,5 +378,103 @@ function PeriodosPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// --- Import terms from the calendar (calendar.inue.online) -------------------
+
+function ImportTermsButton() {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const {
+    data: calendarTerms,
+    isError,
+    isLoading,
+  } = useQuery({
+    queryKey: queryKeys.calendarTerms,
+    queryFn: getCalendarTerms,
+    retry: false,
+    enabled: open,
+  });
+
+  const importTerm = useMutation({
+    mutationFn: (ct: CalendarTerm) => importCalendarTerm(ct.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.terms });
+      queryClient.invalidateQueries({ queryKey: queryKeys.calendarTerms });
+      toast.success("Periodo importado del calendario");
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al importar"),
+  });
+
+  return (
+    <>
+      <Button variant="outline" onClick={() => setOpen(true)}>
+        <CalendarDays className="size-4" /> Importar del calendario
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Importar del calendario</DialogTitle>
+            <DialogDescription>
+              El calendario es la fuente de las fechas del periodo; de ellas se
+              calculan las fechas de colegiatura.
+            </DialogDescription>
+          </DialogHeader>
+          {isError ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Integración con el calendario no disponible
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {isLoading && <Skeleton className="h-16 w-full" />}
+              {calendarTerms?.map((ct) => {
+                const undated = !ct.start_date || !ct.end_date;
+                return (
+                  <div
+                    key={ct.id}
+                    className="flex items-center gap-3 rounded-xl border px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 font-semibold">
+                        {ct.name}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {ct.code}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {undated
+                          ? "sin fechas en el calendario"
+                          : `${formatDate(ct.start_date)} – ${formatDate(ct.end_date)}`}
+                      </div>
+                    </div>
+                    <div className="ml-auto">
+                      {ct.imported ? (
+                        <Badge variant="secondary">Ya importado</Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={undated || importTerm.isPending}
+                          onClick={() => importTerm.mutate(ct)}
+                        >
+                          Importar
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {calendarTerms && calendarTerms.length === 0 && (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  El calendario no tiene periodos disponibles
+                </p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

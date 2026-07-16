@@ -209,6 +209,7 @@ export interface Term {
   end_date: string;
   is_open: boolean;
   grade_capture_open: boolean;
+  calendar_term_id?: string | null;
 }
 
 export interface Group {
@@ -587,6 +588,17 @@ export interface CalendarProgram {
   rvoe?: string | null;
   campus: "instituto_siscom" | "inue_presencial" | "inue_online";
   level: "maestria" | "licenciatura" | "bachillerato";
+}
+
+export interface CalendarTerm {
+  id: string;
+  code: string;
+  name: string;
+  year: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_active: boolean;
+  imported: boolean;
 }
 
 export interface CalendarGroup {

@@ -47,6 +47,7 @@ export const queryKeys = {
     ["issued-documents", studentId ?? "all"] as const,
 
   calendarPrograms: ["calendar-programs"] as const,
+  calendarTerms: ["calendar-terms"] as const,
   calendarGroups: (programId?: string) =>
     ["calendar-groups", programId ?? "all"] as const,
   studentCalendar: (studentId: string) =>
