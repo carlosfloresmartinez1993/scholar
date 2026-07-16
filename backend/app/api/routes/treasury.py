@@ -17,12 +17,18 @@ from app.models import (
     Charge,
     ChargeConcept,
     ChargeConceptCreate,
+    ChargeConceptKind,
     ChargeConceptPublic,
     ChargeCreate,
     ChargePublic,
     ChargeStatus,
     FiscalProfileBase,
     FiscalProfilePublic,
+    Group,
+    GroupEnrollment,
+    GroupEnrollmentStatus,
+    PlanVersion,
+    Rvoe,
     Payment,
     PaymentCreate,
     PaymentPlanGenerateIn,
@@ -40,10 +46,12 @@ from app.services.folios import next_folio
 from app.services.treasury import (
     active_scholarship_discount,
     apply_late_fees,
+    apply_scholarship_to_pending,
     charge_paid_amount,
-    enforce_scholarship_tolerance,
+    generate_enrollment_charges,
     overdue_balance,
     refresh_charge_status,
+    resolve_concept,
     scholarship_metrics,
     student_charges_public,
 )
@@ -81,7 +89,11 @@ async def create_charge(
     student = await session.get(Student, body.student_id)
     if student is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
-    discount = await active_scholarship_discount(session, student.id, body.amount, body.due_date)
+    concept = await session.get(ChargeConcept, body.concept_id) if body.concept_id else None
+    discount = await active_scholarship_discount(
+        session, student.id, body.amount, body.due_date,
+        kind=concept.kind if concept else None,
+    )
     charge = Charge(
         **body.model_dump(), scholarship_discount=discount, created_by=current_user.id
     )
@@ -121,7 +133,9 @@ async def generate_payment_plan(
             month = month_index % 12 + 1
             day = min(body.first_due_date.day, 28)
             due = date(year, month, day)
-        discount = await active_scholarship_discount(session, student.id, concept.amount, due)
+        discount = await active_scholarship_discount(
+            session, student.id, concept.amount, due, kind=concept.kind
+        )
         charge = Charge(
             student_id=student.id,
             concept_id=concept.id,
@@ -140,6 +154,54 @@ async def generate_payment_plan(
     await session.commit()
     charges = await student_charges_public(session, student.id)
     return [c for c in charges if c.id in set(created_ids)]
+
+
+@router.post("/groups/{group_id}/generate-charges")
+async def generate_group_charges(
+    session: SessionDep, current_user: TreasuryStaff, group_id: uuid.UUID,
+    waive_enrollment_fee: bool = False,
+) -> dict:
+    """Cohort billing (Servo's AsignaciónCobranza): bill every active enrollment in
+    a group that isn't billed yet — inscripción/reinscripción + monthly colegiaturas.
+    Idempotent. Fails if the group's program has no colegiatura price in the tabulador."""
+    group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    plan = await session.get(PlanVersion, group.plan_version_id)
+    rvoe = await session.get(Rvoe, plan.rvoe_id) if plan else None
+    program_id = rvoe.program_id if rvoe else None
+    modality = rvoe.modality if rvoe else None
+    if await resolve_concept(session, ChargeConceptKind.colegiatura, program_id, modality) is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Configura el concepto de colegiatura (tabulador) de este programa/modalidad",
+        )
+    enrollments = (
+        await session.exec(
+            select(GroupEnrollment).where(
+                GroupEnrollment.group_id == group_id,
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            )
+        )
+    ).all()
+    students_billed = 0
+    charges_created = 0
+    for en in enrollments:
+        student = await session.get(Student, en.student_id)
+        if student is None:
+            continue
+        created = await generate_enrollment_charges(
+            session, student=student, group=group, enrollment=en, kind=en.kind,
+            created_by=current_user.id, waive_enrollment_fee=waive_enrollment_fee,
+        )
+        if created:
+            students_billed += 1
+            charges_created += len(created)
+    audit.record(session, actor=current_user.email, action="group_charges.generated",
+                 entity="group", entity_id=str(group_id),
+                 detail=f"{students_billed} alumnos, {charges_created} cargos")
+    await session.commit()
+    return {"students_billed": students_billed, "charges_created": charges_created}
 
 
 @router.post("/charges/{charge_id}/cancel")
@@ -284,10 +346,13 @@ async def create_scholarship(
     discount) until an admin authorizes it."""
     if await session.get(Student, body.student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
-    if (body.pct is None) == (body.fixed_amount is None):
-        raise HTTPException(status_code=400, detail="Indica porcentaje o monto fijo (solo uno)")
+    # Becas are percentage-only now (applied to colegiatura for the whole career).
+    if body.pct is None:
+        raise HTTPException(status_code=400, detail="Indica el porcentaje de la beca")
+    data = body.model_dump()
+    data["fixed_amount"] = None  # ignore any monto fijo — pct-only policy
     scholarship = Scholarship(
-        **body.model_dump(), status=ScholarshipStatus.solicitada, requested_by=current_user.id
+        **data, status=ScholarshipStatus.solicitada, requested_by=current_user.id
     )
     session.add(scholarship)
     audit.record(session, actor=current_user.email, action="scholarship.requested",
@@ -312,8 +377,12 @@ async def authorize_scholarship(
     scholarship.approved_by = current_user.id
     scholarship.authorized_at = utcnow()
     session.add(scholarship)
+    # Beca granted after the student was already billed → apply it retroactively
+    # to their still-open colegiatura charges (RF-T05).
+    updated = await apply_scholarship_to_pending(session, scholarship)
     audit.record(session, actor=current_user.email, action="scholarship.authorized",
-                 entity="scholarship", entity_id=str(scholarship.id), detail=scholarship.name)
+                 entity="scholarship", entity_id=str(scholarship.id),
+                 detail=f"{scholarship.name} — {updated} cargos actualizados")
     await session.commit()
     await session.refresh(scholarship)
     return scholarship
@@ -380,15 +449,15 @@ async def upsert_fiscal_profile(
 @router.post("/late-fees/run")
 async def run_late_fees(session: SessionDep, current_user: TreasuryStaff) -> dict:
     institution = await get_default_institution(session)
-    # First revoke scholarships whose tolerance lapsed, so their charges become
-    # eligible for a recargo in the same run (RF-T05/T06).
-    suspended = await enforce_scholarship_tolerance(session, institution)
+    # Becas are never auto-suspended — a scholarship is kept for the whole career
+    # even if a colegiatura goes unpaid (policy). Late fees still accrue after the
+    # scholarship tolerance window (handled inside apply_late_fees).
     created = await apply_late_fees(session, institution, current_user.id)
     audit.record(session, actor=current_user.email, action="late_fees.applied",
                  entity="institution", entity_id=str(institution.id),
-                 detail=f"recargos={created} becas_suspendidas={suspended}")
+                 detail=f"recargos={created}")
     await session.commit()
-    return {"created": created, "scholarships_suspended": suspended}
+    return {"created": created}
 
 
 @router.get("/reports/scholarships")

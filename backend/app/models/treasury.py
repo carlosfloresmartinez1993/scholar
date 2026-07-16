@@ -67,6 +67,13 @@ class Charge(SQLModel, table=True):
     status: ChargeStatus = ChargeStatus.pendiente
     is_late_fee: bool = False
     source_charge_id: uuid.UUID | None = Field(default=None, foreign_key="charges.id")
+    # Auto-billing (RF-T02): ties a charge to the term/enrollment it was generated
+    # for, so a repeated cuatrimestre gets its own fresh charges. Nullable: manual
+    # and legacy charges have neither.
+    term_id: uuid.UUID | None = Field(default=None, foreign_key="terms.id", index=True)
+    group_enrollment_id: uuid.UUID | None = Field(
+        default=None, foreign_key="group_enrollments.id", index=True
+    )
     created_by: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow)
 

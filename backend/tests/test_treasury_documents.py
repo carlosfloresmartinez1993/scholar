@@ -36,11 +36,12 @@ async def test_treasury_flow(client, seed):
     })
     assert scholarship.status_code == 201
     assert scholarship.json()["status"] == "solicitada"
-    both = await client.post("/api/v1/treasury/scholarships", json={
-        "student_id": student["id"], "name": "Inválida", "pct": 50, "fixed_amount": 100,
+    # becas are percentage-only now — a monto-fijo-only request is rejected
+    no_pct = await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Inválida", "fixed_amount": 100,
         "valid_from": TODAY.isoformat(),
     })
-    assert both.status_code == 400
+    assert no_pct.status_code == 400
 
     # admin authorization activates it (superuser passes the Authorizer role check)
     authorized = await client.post(
@@ -127,8 +128,8 @@ async def test_treasury_flow(client, seed):
 
 
 async def test_scholarship_tolerance_and_reports(client, seed):
-    """RF-T05: within the tolerance window a beca charge earns no recargo and the
-    scholarship stays active; past it, the scholarship is suspended."""
+    """RF-T05: within the tolerance window a beca charge earns no recargo; past it a
+    recargo accrues but the scholarship is NEVER suspended (kept the whole career)."""
     await login(client)
     campus_id = str(seed["campus"].id)
     student = await make_student(client, campus_id, curp="GOMA020202MBCXNS08")
@@ -151,21 +152,24 @@ async def test_scholarship_tolerance_and_reports(client, seed):
     assert c1["scholarship_discount"] == 1000.0
 
     run = (await client.post("/api/v1/treasury/late-fees/run")).json()
-    assert run["created"] == 0 and run["scholarships_suspended"] == 0
+    assert run["created"] == 0  # within tolerance, no recargo
     active = (await client.get(
         f"/api/v1/treasury/scholarships?student_id={student['id']}"
     )).json()
     assert active[0]["status"] == "activa"
 
-    # A second charge past the tolerance window → scholarship suspended + recargos.
+    # A second charge past the tolerance window → recargo accrues, but the beca stays.
     await client.post("/api/v1/treasury/charges", json={
         "student_id": student["id"], "concept_id": concept["id"],
         "description": "Colegiatura vieja", "amount": 2000,
         "due_date": (TODAY - timedelta(days=20)).isoformat(),
     })
     run2 = (await client.post("/api/v1/treasury/late-fees/run")).json()
-    assert run2["scholarships_suspended"] == 1
     assert run2["created"] >= 1
+    still_active = (await client.get(
+        f"/api/v1/treasury/scholarships?student_id={student['id']}"
+    )).json()
+    assert still_active[0]["status"] == "activa"  # never suspended (whole-career policy)
 
     report = (await client.get("/api/v1/treasury/reports/scholarships")).json()
     assert set(report) >= {"active_students", "students_with_scholarship",
