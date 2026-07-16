@@ -396,6 +396,65 @@ async def apply_scholarship_to_pending(
     return changed
 
 
+async def term_billing_summary(session: AsyncSession) -> list[dict]:
+    """RF-T08: per-cuatrimestre expected vs collected + concept split, from the
+    auto-generated charges (which carry term_id). Terms with no billing are skipped."""
+    from app.models import Term
+
+    terms = (await session.exec(select(Term).order_by(Term.start_date))).all()
+    out = []
+    for term in terms:
+        charges = (
+            await session.exec(
+                select(Charge).where(
+                    Charge.term_id == term.id,
+                    Charge.status != ChargeStatus.cancelado,
+                )
+            )
+        ).all()
+        if not charges:
+            continue
+        paid_map = await charges_paid_map(session, [c.id for c in charges])
+        concept_ids = {c.concept_id for c in charges if c.concept_id}
+        kinds: dict = {}
+        if concept_ids:
+            kinds = dict(
+                (
+                    await session.exec(
+                        select(ChargeConcept.id, ChargeConcept.kind).where(
+                            ChargeConcept.id.in_(concept_ids)  # type: ignore[attr-defined]
+                        )
+                    )
+                ).all()
+            )
+        expected = collected = 0.0
+        by_concept: dict = {}
+        for c in charges:
+            net = max(c.amount - c.scholarship_discount, 0.0)
+            paid = min(paid_map.get(c.id, 0.0), net)
+            expected += net
+            collected += paid
+            kind = kinds.get(c.concept_id, ChargeConceptKind.otro).value
+            entry = by_concept.setdefault(kind, {"expected": 0.0, "collected": 0.0})
+            entry["expected"] += net
+            entry["collected"] += paid
+        for entry in by_concept.values():  # round once at the end
+            entry["expected"] = round(entry["expected"], 2)
+            entry["collected"] = round(entry["collected"], 2)
+        out.append(
+            {
+                "term_id": str(term.id),
+                "term_name": term.name,
+                "expected": round(expected, 2),
+                "collected": round(collected, 2),
+                "pending": round(expected - collected, 2),
+                "collection_pct": round(100 * collected / expected, 1) if expected else 0.0,
+                "by_concept": by_concept,
+            }
+        )
+    return out
+
+
 async def scholarship_metrics(session: AsyncSession, today: date | None = None) -> dict:
     """RF-T reports: #/‰ becados and beca aplicada acumulada al día (mes/cuatrimestre)."""
     today = today or utcnow().date()

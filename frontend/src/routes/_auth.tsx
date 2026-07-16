@@ -9,6 +9,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Home,
+  BarChart3,
   GraduationCap,
   Users,
   ClipboardList,
@@ -93,6 +94,12 @@ const NAV_GROUPS = [
     label: "Gestión",
     items: [
       { to: "/tesoreria", label: "Tesorería", icon: Banknote },
+      {
+        to: "/reportes",
+        label: "Reportes",
+        icon: BarChart3,
+        roles: ["admin_sistema", "direccion", "tesoreria"],
+      },
       { to: "/periodos", label: "Periodos", icon: CalendarRange },
     ],
   },
