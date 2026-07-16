@@ -8,22 +8,23 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlmodel import func, select
+from sqlmodel import select
 
 from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
 from app.api.routes.catalog import get_default_institution
+from pydantic import ValidationError
+
 from app.models import (
-    FolioCounter,
+    BulkIntakeError,
+    BulkIntakeIn,
+    BulkIntakeResult,
     Group,
     GroupEnrollment,
     GroupEnrollmentCreate,
-    GroupEnrollmentKind,
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,
-    GroupSubject,
     PlanEnrollmentCreate,
     PlanEnrollmentPublic,
-    PlanSubject,
     PlanVersion,
     Program,
     Rvoe,
@@ -35,15 +36,10 @@ from app.models import (
     SubjectEnrollment,
     SubjectEnrollmentPublic,
     Term,
-    UserRole,
 )
 from app.services import audit, calendar
-from app.services.academics import (
-    check_prerequisites,
-    get_or_create_plan_enrollment,
-    require_operable_rvoe,
-)
-from app.services.treasury import generate_enrollment_charges
+from app.services.academics import require_operable_rvoe
+from app.services.enrollment import create_student_core, enroll_student_core
 
 router = APIRouter(prefix="/students", tags=["students"])
 
@@ -78,45 +74,7 @@ async def create_student(
     session: SessionDep, current_user: ServiciosEscolares, body: StudentCreate
 ) -> StudentPublic:
     institution = await get_default_institution(session)
-    dup = (
-        await session.exec(
-            select(Student).where(
-                Student.institution_id == institution.id, Student.curp == body.curp
-            )
-        )
-    ).first()
-    if dup:
-        raise HTTPException(status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)")
-    # matrícula: institution prefix + per-institution sequence (row-locked counter,
-    # like folios RF-D05, so concurrent creates and deletions never collide)
-    prefix = institution.short_name[:4].upper()
-    counter = (
-        await session.exec(
-            select(FolioCounter)
-            .where(FolioCounter.institution_id == institution.id, FolioCounter.series == "MAT")
-            .with_for_update()
-        )
-    ).first()
-    if counter is None:
-        # seed from existing matrículas (zero-padded, so max() is the highest number)
-        last = (
-            await session.exec(
-                select(func.max(Student.enrollment_number)).where(
-                    Student.institution_id == institution.id
-                )
-            )
-        ).first()
-        seed = int(last[-6:]) if last and last[-6:].isdigit() else 0
-        counter = FolioCounter(institution_id=institution.id, series="MAT", last_number=seed)
-    counter.last_number += 1
-    session.add(counter)
-    enrollment_number = f"{prefix}{counter.last_number:06d}"
-    student = Student(
-        **body.model_dump(), institution_id=institution.id, enrollment_number=enrollment_number
-    )
-    session.add(student)
-    audit.record(session, actor=current_user.email, action="student.created",
-                 entity="student", entity_id=str(student.id), detail=student.curp)
+    student = await create_student_core(session, institution, body, current_user.email)
     await session.commit()
     await session.refresh(student)
     return student
@@ -218,116 +176,66 @@ async def enroll_in_group(
     group = await session.get(Group, body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
-    # Servo keys inscripciones by (Ciclo, Plantel, ...): a student can only enroll
-    # in a group of their own campus.
-    if student.campus_id != group.campus_id:
-        raise HTTPException(
-            status_code=409, detail="El alumno y el grupo pertenecen a planteles distintos"
-        )
-    await require_operable_rvoe(session, group.plan_version_id)  # RT-03
-    # single "Inscribir": auto-enroll into the plan if not already (start term = group's)
-    plan_enrollment, plan_created = await get_or_create_plan_enrollment(
-        session, student, group.plan_version_id, group.term_id
+    enrollment = await enroll_student_core(
+        session, current_user, student, group,
+        plan_subject_ids=body.plan_subject_ids,
+        override_prerequisites=body.override_prerequisites,
+        waive_enrollment_fee=body.waive_enrollment_fee,
     )
-    if plan_created:
-        audit.record(
-            session, actor=current_user.email, action="plan_enrollment.created",
-            entity="plan_enrollment", entity_id=str(plan_enrollment.id),
-            detail="auto (inscripción a grupo)",
-        )
-
-    dup = (
-        await session.exec(
-            select(GroupEnrollment).where(
-                GroupEnrollment.student_id == body.student_id,
-                GroupEnrollment.group_id == body.group_id,
-            )
-        )
-    ).first()
-    if dup:
-        raise HTTPException(status_code=409, detail="El alumno ya está inscrito en ese grupo")
-
-    # subjects: all of the group's, or the requested subset
-    group_subjects = (
-        await session.exec(select(GroupSubject).where(GroupSubject.group_id == group.id))
-    ).all()
-    if body.plan_subject_ids:
-        wanted = set(body.plan_subject_ids)
-        group_subjects = [gs for gs in group_subjects if gs.plan_subject_id in wanted]
-        if len(group_subjects) != len(wanted):
-            raise HTTPException(status_code=400, detail="Alguna materia no se imparte en el grupo")
-
-    # RF-C07: seriación
-    if not body.override_prerequisites:
-        for gs in group_subjects:
-            missing = await check_prerequisites(session, student.id, gs.plan_subject_id)
-            if missing:
-                subject = await session.get(PlanSubject, gs.plan_subject_id)
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Seriación no cumplida para {subject.name if subject else gs.plan_subject_id}",
-                )
-    elif current_user.role not in (UserRole.servicios_escolares, UserRole.admin_sistema) and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Solo Servicios Escolares puede omitir seriación")
-
-    # kind: reinscripción if the student already had a group enrollment in this plan
-    previous = (
-        await session.exec(
-            select(GroupEnrollment).where(
-                GroupEnrollment.plan_enrollment_id == plan_enrollment.id
-            )
-        )
-    ).first()
-    kind = GroupEnrollmentKind.reinscripcion if previous else GroupEnrollmentKind.inscripcion
-
-    enrollment = GroupEnrollment(
-        student_id=student.id,
-        group_id=group.id,
-        plan_enrollment_id=plan_enrollment.id,
-        kind=kind,
-    )
-    session.add(enrollment)
-    await session.flush()
-    for gs in group_subjects:
-        attempts = (
-            await session.exec(
-                select(SubjectEnrollment)
-                .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
-                .where(
-                    SubjectEnrollment.student_id == student.id,
-                    GroupSubject.plan_subject_id == gs.plan_subject_id,
-                )
-            )
-        ).all()
-        session.add(
-            SubjectEnrollment(
-                group_enrollment_id=enrollment.id,
-                group_subject_id=gs.id,
-                student_id=student.id,
-                attempt_number=len(attempts) + 1,
-            )
-        )
-    audit.record(
-        session, actor=current_user.email, action="group_enrollment.created",
-        entity="group_enrollment", entity_id=str(enrollment.id),
-        detail=f"grupo {group.code}, {len(group_subjects)} materias"
-        + (" (seriación omitida)" if body.override_prerequisites else ""),
-    )
-    # Single "Inscribir" also bills the cuatrimestre (RF-T02): enrollment fee +
-    # monthly colegiaturas. Best-effort — skipped if the tabulador isn't set up.
-    generated = await generate_enrollment_charges(
-        session, student=student, group=group, enrollment=enrollment, kind=kind,
-        created_by=current_user.id, waive_enrollment_fee=body.waive_enrollment_fee,
-    )
-    if generated:
-        audit.record(
-            session, actor=current_user.email, action="charges.generated",
-            entity="group_enrollment", entity_id=str(enrollment.id),
-            detail=f"{len(generated)} cargos del cuatrimestre",
-        )
     await session.commit()
     await session.refresh(enrollment)
     return enrollment
+
+
+@router.post("/bulk-intake", status_code=201)
+async def bulk_intake(
+    session: SessionDep, current_user: ServiciosEscolares, body: BulkIntakeIn
+) -> BulkIntakeResult:
+    """Onboard a whole cohort of NEW students into one group: create + enroll +
+    auto-bill each row. Existing CURPs are rejected (enroll them via the group
+    flow). Each row commits on its own, so a bad row never rolls back the good
+    ones; failures come back with a reason."""
+    institution = await get_default_institution(session)
+    group = await session.get(Group, body.group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    enrolled = 0
+    errors: list[BulkIntakeError] = []
+    seen: set[str] = set()
+    for i, row in enumerate(body.rows, start=1):
+        curp = row.curp.strip().upper()
+        if curp in seen:
+            errors.append(BulkIntakeError(row=i, curp=curp, detail="CURP duplicada en el archivo"))
+            continue
+        seen.add(curp)
+        try:
+            # SAVEPOINT per row: a bad row rolls back only its own work, and the
+            # shared objects (institution/group) stay live — no per-row commit that
+            # would expire them mid-loop. One commit at the end persists the good rows.
+            async with session.begin_nested():
+                student_in = StudentCreate(
+                    curp=curp, full_name=row.full_name.strip(),
+                    email=row.email.strip(), campus_id=group.campus_id,
+                )
+                student = await create_student_core(
+                    session, institution, student_in, current_user.email
+                )
+                await enroll_student_core(
+                    session, current_user, student, group,
+                    override_prerequisites=body.override_prerequisites,
+                    waive_enrollment_fee=body.waive_enrollment_fee,
+                )
+            enrolled += 1
+        except (HTTPException, ValidationError, ValueError) as e:
+            detail = e.detail if isinstance(e, HTTPException) else str(e)
+            errors.append(BulkIntakeError(row=i, curp=curp, detail=detail))
+    audit.record(
+        session, actor=current_user.email, action="bulk_intake.completed",
+        entity="group", entity_id=str(group.id),
+        detail=f"{enrolled} inscritos, {len(errors)} errores",
+    )
+    await session.commit()
+    return BulkIntakeResult(enrolled=enrolled, errors=errors)
 
 
 @router.get("/{student_id}/subject-enrollments")

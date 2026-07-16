@@ -79,6 +79,34 @@ class StudentPublic(StudentBase):
     created_at: datetime
 
 
+# --- Bulk cohort intake: create + enroll many new students into one group -------
+
+class BulkIntakeRow(SQLModel):
+    # plain str (validated when built into a StudentCreate, so bad rows are reported
+    # instead of failing the whole request)
+    curp: str
+    full_name: str
+    email: str = ""
+
+
+class BulkIntakeIn(SQLModel):
+    group_id: uuid.UUID
+    rows: list[BulkIntakeRow]
+    override_prerequisites: bool = False
+    waive_enrollment_fee: bool = False
+
+
+class BulkIntakeError(SQLModel):
+    row: int  # 1-based row number in the submitted roster
+    curp: str
+    detail: str
+
+
+class BulkIntakeResult(SQLModel):
+    enrolled: int
+    errors: list[BulkIntakeError]
+
+
 class PlanEnrollmentStatus(str, Enum):
     inscrito = "inscrito"
     baja = "baja"
