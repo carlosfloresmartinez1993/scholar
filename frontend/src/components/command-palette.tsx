@@ -1,7 +1,7 @@
 // Global quick-nav + quick-action palette (⌘K / Ctrl+K). Built on the existing
 // shadcn Dialog + Input (no cmdk dependency): a single filtered, keyboard-driven
 // list that jumps to a student (deep-link), a program, or any screen.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
@@ -38,6 +38,12 @@ export function CommandPalette() {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [active, setActive] = useState(0);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Keep the keyboard-highlighted result visible as it moves past the viewport.
+  useEffect(() => {
+    itemRefs.current[active]?.scrollIntoView({ block: "nearest" });
+  }, [active]);
 
   // Global ⌘K / Ctrl+K toggle.
   useEffect(() => {
@@ -171,6 +177,9 @@ export function CommandPalette() {
           {items.map((item, i) => (
             <li key={item.key}>
               <button
+                ref={(node) => {
+                  itemRefs.current[i] = node;
+                }}
                 type="button"
                 onMouseMove={() => setActive(i)}
                 onClick={item.run}

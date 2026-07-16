@@ -670,6 +670,7 @@ function GroupSubjectRow({
   });
 
   function commitSchedule() {
+    if (save.isPending) return; // don't overlap with an in-flight teacher save
     const next = schedule.trim();
     if (next !== (gs.schedule_text ?? "")) save.mutate({ schedule_text: next });
   }
@@ -701,6 +702,7 @@ function GroupSubjectRow({
       <TableCell>
         <Input
           value={schedule}
+          disabled={save.isPending}
           onChange={(e) => setSchedule(e.target.value)}
           onBlur={commitSchedule}
           onKeyDown={(e) => {

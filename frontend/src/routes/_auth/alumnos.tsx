@@ -107,10 +107,12 @@ function AlumnosPage() {
   const [campusFilter, setCampusFilter] = usePersistedState<string>(
     "alumnos-filters-v1:campus",
     "all",
+    (v) => typeof v === "string", // stale campus ids are dropped below
   );
   const [statusFilter, setStatusFilter] = usePersistedState<string>(
     "alumnos-filters-v1:status",
     "all",
+    (v) => v === "all" || (typeof v === "string" && v in STUDENT_STATUS_LABELS),
   );
   // Drop a stored campus id that no longer exists in the loaded options.
   const effectiveCampus =

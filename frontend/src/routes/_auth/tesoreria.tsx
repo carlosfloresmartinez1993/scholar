@@ -987,6 +987,7 @@ function BecasTab() {
   const [filter, setFilter] = usePersistedState<ScholarshipStatus | "all">(
     "tesoreria-becas-status-v1",
     "solicitada",
+    (v) => BECA_FILTERS.some((f) => f.value === v),
   );
   const [students, setStudents] = useState<Record<string, Student>>({});
 

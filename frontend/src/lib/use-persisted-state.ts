@@ -6,11 +6,17 @@ import { useState } from "react";
 export function usePersistedState<T>(
   key: string,
   initial: T,
+  // Runtime guard: a stale/malformed stored value that fails it falls back to
+  // `initial` (JSON.parse's `as T` is compile-time only).
+  isValid?: (value: unknown) => boolean,
 ): [T, (value: T) => void] {
   const [value, setValue] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(key);
-      return raw !== null ? (JSON.parse(raw) as T) : initial;
+      if (raw === null) return initial;
+      const parsed = JSON.parse(raw);
+      if (isValid && !isValid(parsed)) return initial;
+      return parsed as T;
     } catch {
       return initial;
     }
