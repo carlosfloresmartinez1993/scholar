@@ -19,6 +19,7 @@ import type {
   Campus,
   GradeGrid,
   Group,
+  GroupBillingStatus,
   GroupSubject,
   PlanSubject,
   PlanVersion,
@@ -450,6 +451,15 @@ function GroupDetail({ group }: { group: Group }) {
     queryKey: queryKeys.users("docente"),
     queryFn: () => api<UserPublic[]>("/users?role=docente"),
   });
+  const { data: billing } = useQuery({
+    queryKey: queryKeys.groupBillingStatus(group.id),
+    queryFn: () =>
+      api<GroupBillingStatus[]>(
+        `/treasury/groups/${group.id}/billing-status`,
+      ),
+    enabled: !!group,
+  });
+  const billedCount = (billing ?? []).filter((b) => b.billed).length;
 
   const [subjectDialogOpen, setSubjectDialogOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<GroupSubject | null>(
@@ -503,6 +513,9 @@ function GroupDetail({ group }: { group: Group }) {
         { method: "POST" },
       ),
     onSuccess: (r) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupBillingStatus(group.id),
+      });
       if (r.students_billed === 0 && r.charges_created === 0) {
         toast.info("No se generaron cargos nuevos");
       } else {
@@ -636,6 +649,47 @@ function GroupDetail({ group }: { group: Group }) {
             </TableBody>
           </Table>
         </div>
+
+        {billing && billing.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Facturación:{" "}
+              <span className="font-semibold text-foreground" data-numeric>
+                {billedCount} de {billing.length}
+              </span>{" "}
+              alumnos facturados. Usa «Generar cargos del grupo» para completar
+              los faltantes.
+            </p>
+            <div className="rounded-2xl border bg-card">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Alumno</TableHead>
+                    <TableHead>Matrícula</TableHead>
+                    <TableHead>Cargos</TableHead>
+                    <TableHead>Facturación</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {billing.map((b) => (
+                    <TableRow key={b.student_id}>
+                      <TableCell className="font-semibold">
+                        {b.student_name}
+                      </TableCell>
+                      <TableCell data-numeric>{b.enrollment_number}</TableCell>
+                      <TableCell data-numeric>{b.charges_count}</TableCell>
+                      <TableCell>
+                        <Badge variant={b.billed ? "outline" : "destructive"}>
+                          {b.billed ? "Facturado" : "Sin cargos"}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
       </section>
 
       <GroupSubjectDialog

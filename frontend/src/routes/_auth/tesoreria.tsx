@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -54,6 +54,7 @@ import {
   type DateRange,
 } from "@/components/date-range-filter";
 import { PaymentDialog } from "@/components/payment-dialog";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -111,11 +112,15 @@ function TesoreriaPage() {
         <TabsList>
           <TabsTrigger value="caja">Caja</TabsTrigger>
           <TabsTrigger value="conceptos">Conceptos</TabsTrigger>
+          <TabsTrigger value="cartera">Cartera vencida</TabsTrigger>
           <TabsTrigger value="becas">Becas</TabsTrigger>
           <TabsTrigger value="reportes">Reportes</TabsTrigger>
         </TabsList>
         <TabsContent value="caja" className="mt-4">
           <CajaTab />
+        </TabsContent>
+        <TabsContent value="cartera" className="mt-4">
+          <CarteraVencidaTab />
         </TabsContent>
         <TabsContent value="conceptos" className="mt-4">
           <ConceptosTab />
@@ -671,6 +676,138 @@ function FacturarDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// --- Cartera vencida (cobranza) -------------------------------------------------------
+
+type AgingBucket = AgingRow["bucket"];
+
+function CarteraVencidaTab() {
+  const navigate = useNavigate();
+  const { data: aging, isLoading } = useQuery({
+    queryKey: queryKeys.aging,
+    queryFn: () => api<AgingRow[]>("/treasury/reports/aging"),
+  });
+
+  // Aggregate one row per student across all their overdue charges.
+  const rows = useMemo(() => {
+    const byStudent = new Map<
+      string,
+      {
+        student_id: string;
+        student_name: string;
+        enrollment_number: string;
+        total: number;
+        max_days: number;
+        bucket: AgingBucket;
+        count: number;
+      }
+    >();
+    for (const r of aging ?? []) {
+      const cur = byStudent.get(r.student_id);
+      if (cur) {
+        cur.total += r.balance;
+        cur.count += 1;
+        if (r.days_overdue > cur.max_days) {
+          cur.max_days = r.days_overdue;
+          cur.bucket = r.bucket;
+        }
+      } else {
+        byStudent.set(r.student_id, {
+          student_id: r.student_id,
+          student_name: r.student_name,
+          enrollment_number: r.enrollment_number,
+          total: r.balance,
+          max_days: r.days_overdue,
+          bucket: r.bucket,
+          count: 1,
+        });
+      }
+    }
+    return [...byStudent.values()].sort((a, b) => b.total - a.total);
+  }, [aging]);
+
+  const total = rows.reduce((sum, r) => sum + r.total, 0);
+
+  if (!isLoading && rows.length === 0) {
+    return (
+      <EmptyState
+        icon={Check}
+        title="Sin cartera vencida"
+        description="Ningún alumno tiene cargos vencidos por cobrar."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold">
+        Cartera vencida{" "}
+        <span className="text-muted-foreground" data-numeric>
+          · {formatMoney(total)}
+        </span>
+      </h2>
+      <div className="rounded-2xl border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Matrícula</TableHead>
+              <TableHead>Alumno</TableHead>
+              <TableHead># cargos</TableHead>
+              <TableHead>Días</TableHead>
+              <TableHead>Total vencido</TableHead>
+              <TableHead className="text-right">Acción</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading && (
+              <TableRow>
+                <TableCell colSpan={6}>
+                  <Skeleton className="h-6 w-full" />
+                </TableCell>
+              </TableRow>
+            )}
+            {rows.map((r) => (
+              <TableRow key={r.student_id}>
+                <TableCell data-numeric>{r.enrollment_number}</TableCell>
+                <TableCell className="font-semibold">{r.student_name}</TableCell>
+                <TableCell data-numeric>{r.count}</TableCell>
+                <TableCell>
+                  <Badge
+                    variant={
+                      r.bucket === "1-30"
+                        ? "outline"
+                        : r.bucket === "31-60"
+                          ? "secondary"
+                          : "destructive"
+                    }
+                  >
+                    {r.max_days} días
+                  </Badge>
+                </TableCell>
+                <TableCell data-numeric className="font-semibold">
+                  {formatMoney(r.total)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      navigate({
+                        to: "/alumnos/$studentId",
+                        params: { studentId: r.student_id },
+                      })
+                    }
+                  >
+                    Cobrar
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
   );
 }
 

@@ -604,3 +604,11 @@ export interface AgingRow {
   bucket: "1-30" | "31-60" | "61-90" | "90+";
   balance: number;
 }
+
+export interface GroupBillingStatus {
+  student_id: string;
+  student_name: string;
+  enrollment_number: string;
+  charges_count: number;
+  billed: boolean;
+}
