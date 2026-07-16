@@ -101,15 +101,43 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
         method: "POST",
         body: JSON.stringify(items),
       }),
+    // Optimistically write the saved values into the grid cache so clearing the
+    // local `edits` doesn't flash the old server values before the refetch lands.
+    onMutate: async (items) => {
+      const queryKey = queryKeys.gradeGrid(groupSubjectId);
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<GradeGrid>(queryKey);
+      if (previous) {
+        const byRow = new Map<string, Record<string, number>>();
+        for (const it of items) {
+          const updates = byRow.get(it.subject_enrollment_id) ?? {};
+          updates[it.component_id] = it.value;
+          byRow.set(it.subject_enrollment_id, updates);
+        }
+        queryClient.setQueryData<GradeGrid>(queryKey, {
+          ...previous,
+          rows: previous.rows.map((r) => {
+            const updates = byRow.get(r.subject_enrollment_id);
+            return updates ? { ...r, grades: { ...r.grades, ...updates } } : r;
+          }),
+        });
+      }
+      return { previous };
+    },
     onSuccess: (_data, items) => {
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.gradeGrid(groupSubjectId),
-      });
       setEdits({});
       toast.success(`${items.length} calificaciones guardadas`);
     },
-    onError: (e) => {
+    onError: (e, _items, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(
+          queryKeys.gradeGrid(groupSubjectId),
+          context.previous,
+        );
+      }
       toast.error(e instanceof ApiError ? e.message : "Error al capturar");
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.gradeGrid(groupSubjectId),
       });

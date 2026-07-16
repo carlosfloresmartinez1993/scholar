@@ -222,7 +222,12 @@ function PeriodosPage() {
                   colSpan={7}
                   className="py-10 text-center text-muted-foreground"
                 >
-                  Sin ciclos registrados
+                  <div className="flex flex-col items-center gap-3">
+                    <span>Sin ciclos registrados</span>
+                    <Button onClick={openCreate} className="font-bold">
+                      <Plus className="size-4" /> Nuevo ciclo
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             )}
