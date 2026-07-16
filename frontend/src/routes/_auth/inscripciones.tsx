@@ -41,10 +41,7 @@ export const Route = createFileRoute("/_auth/inscripciones")({
 });
 
 const PREVIEW_CAP = 50;
-
-function isPlausibleCurp(s: string): boolean {
-  return /^[A-Z0-9]{18}$/i.test(s.trim());
-}
+const MAX_ROWS = 1000; // mirrors the backend cap on bulk-intake rows
 
 // ponytail: names containing a comma break comma-separated parsing
 // (curp,nombre,email). Paste from Excel (tab-separated) to avoid it.
@@ -58,8 +55,9 @@ function parseRows(text: string): BulkIntakeRow[] {
     const cells = (line.includes("\t") ? line.split("\t") : line.split(",")).map(
       (c) => c.trim(),
     );
-    // skip an optional header line (first line whose first cell isn't a CURP)
-    if (i === 0 && !isPlausibleCurp(cells[0])) return;
+    // only skip an EXPLICIT header row — a real (even invalid) CURP is kept and
+    // reported by the backend, never silently dropped
+    if (i === 0 && cells[0].toUpperCase() === "CURP") return;
     rows.push({
       curp: cells[0] ?? "",
       full_name: cells[1] ?? "",
@@ -206,7 +204,7 @@ function SingleIntake({
       bulkIntake({ group_id: group.id, rows: [form], ...options }),
     onSuccess: (r: BulkIntakeResult) => {
       if (r.enrolled === 1) {
-        toast.success("Alumno inscrito y facturado");
+        toast.success("Alumno inscrito");
         setForm({ curp: "", full_name: "", email: "" });
       } else {
         toast.error(r.errors[0]?.detail ?? "No se pudo inscribir al alumno");
@@ -220,8 +218,8 @@ function SingleIntake({
       <CardHeader>
         <CardTitle>Alumno nuevo</CardTitle>
         <CardDescription>
-          Se creará el alumno, se inscribirá al grupo {group.code} y se generará
-          el cargo del cuatrimestre.
+          Se creará el alumno y se inscribirá al grupo {group.code}. Si el
+          tabulador está configurado, se generan los cargos del cuatrimestre.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -297,11 +295,17 @@ function BulkIntake({
     onSuccess: (r: BulkIntakeResult) => {
       setResult(r);
       if (r.errors.length === 0) {
-        toast.success(`${r.enrolled} alumnos inscritos y facturados`);
+        toast.success(`${r.enrolled} alumnos inscritos`);
+        setRaw(""); // all done — clear the editor
       } else {
-        toast.warning(
-          `${r.enrolled} inscritos · ${r.errors.length} con error`,
-        );
+        toast.warning(`${r.enrolled} inscritos · ${r.errors.length} con error`);
+        // keep ONLY the failed rows so a resubmit doesn't re-send the ones that
+        // already succeeded (which would come back as "ya existe")
+        const failed = r.errors
+          .map((e) => rows[e.row - 1])
+          .filter((row): row is BulkIntakeRow => Boolean(row))
+          .map((row) => [row.curp, row.full_name, row.email].join("\t"));
+        setRaw(failed.join("\n"));
       }
     },
     onError: () => toast.error("Error en la carga masiva"),
@@ -328,7 +332,7 @@ function BulkIntake({
         <CardDescription>
           Un alumno por línea: <code>CURP, Nombre, Email</code> (email opcional).
           Acepta separación por tabulador o coma. Pegue desde Excel o cargue un
-          archivo .csv. Se omiten líneas vacías y una posible fila de encabezado.
+          archivo .csv. Se omiten líneas vacías y una fila de encabezado «CURP».
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -357,6 +361,11 @@ function BulkIntake({
               {rows.length} alumnos a inscribir
               {truncated ? ` (mostrando los primeros ${PREVIEW_CAP})` : ""}
             </p>
+            {rows.length > MAX_ROWS && (
+              <p className="text-sm font-semibold text-destructive">
+                Máximo {MAX_ROWS} alumnos por carga. Divida el archivo.
+              </p>
+            )}
             <div className="rounded-2xl border bg-card">
               <Table>
                 <TableHeader>
@@ -387,7 +396,9 @@ function BulkIntake({
         <div>
           <Button
             className="font-bold"
-            disabled={submit.isPending || rows.length === 0}
+            disabled={
+              submit.isPending || rows.length === 0 || rows.length > MAX_ROWS
+            }
             onClick={() => submit.mutate()}
           >
             {submit.isPending

@@ -13,6 +13,7 @@ from sqlmodel import select
 from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
 from app.api.routes.catalog import get_default_institution
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from app.models import (
     BulkIntakeError,
@@ -226,6 +227,13 @@ async def bulk_intake(
                     waive_enrollment_fee=body.waive_enrollment_fee,
                 )
             enrolled += 1
+        except IntegrityError:
+            # concurrent request won a uq_student_curp / uq_student_matricula race;
+            # the SAVEPOINT rolled this row back, so the good rows are untouched
+            errors.append(BulkIntakeError(
+                row=i, curp=curp,
+                detail="Conflicto de integridad (CURP o matrícula duplicada)",
+            ))
         except (HTTPException, ValidationError, ValueError) as e:
             detail = e.detail if isinstance(e, HTTPException) else str(e)
             errors.append(BulkIntakeError(row=i, curp=curp, detail=detail))

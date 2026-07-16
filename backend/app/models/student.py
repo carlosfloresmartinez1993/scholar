@@ -91,7 +91,8 @@ class BulkIntakeRow(SQLModel):
 
 class BulkIntakeIn(SQLModel):
     group_id: uuid.UUID
-    rows: list[BulkIntakeRow]
+    # non-empty, capped: each row runs queries + billing writes in one request
+    rows: list[BulkIntakeRow] = Field(min_length=1, max_length=1000)
     override_prerequisites: bool = False
     waive_enrollment_fee: bool = False
 
