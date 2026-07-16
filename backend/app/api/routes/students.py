@@ -39,8 +39,8 @@ from app.models import (
 )
 from app.services import audit, calendar
 from app.services.academics import (
-    active_plan_enrollment,
     check_prerequisites,
+    get_or_create_plan_enrollment,
     require_operable_rvoe,
 )
 
@@ -224,7 +224,16 @@ async def enroll_in_group(
             status_code=409, detail="El alumno y el grupo pertenecen a planteles distintos"
         )
     await require_operable_rvoe(session, group.plan_version_id)  # RT-03
-    plan_enrollment = await active_plan_enrollment(session, student, group.plan_version_id)
+    # single "Inscribir": auto-enroll into the plan if not already (start term = group's)
+    plan_enrollment, plan_created = await get_or_create_plan_enrollment(
+        session, student, group.plan_version_id, group.term_id
+    )
+    if plan_created:
+        audit.record(
+            session, actor=current_user.email, action="plan_enrollment.created",
+            entity="plan_enrollment", entity_id=str(plan_enrollment.id),
+            detail="auto (inscripción a grupo)",
+        )
 
     dup = (
         await session.exec(

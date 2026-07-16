@@ -47,6 +47,41 @@ async def build_catalog(client: AsyncClient, campus_id: str) -> dict:
             "subject_b": subject_b, "term": term, "group": group}
 
 
+async def test_group_seeded_with_period_subjects(client, seed):
+    """Creating a group auto-adds its period's plan subjects (no manual per-subject step)."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))  # LD-1A is period 1
+    subjects = (await client.get(
+        f"/api/v1/catalog/groups/{catalog['group']['id']}/subjects"
+    )).json()
+    ids = {gs["plan_subject_id"] for gs in subjects}
+    assert catalog["subject_a"]["id"] in ids  # period 1 → seeded
+    assert catalog["subject_b"]["id"] not in ids  # period 2 → not seeded
+
+
+async def test_group_enrollment_autocreates_plan_enrollment(client, seed):
+    """Enrolling into a group creates the plan enrollment in one act (no separate step)."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    await client.post("/api/v1/catalog/group-subjects", json={
+        "group_id": catalog["group"]["id"],
+        "plan_subject_id": catalog["subject_a"]["id"],
+    })
+    student = (await client.post("/api/v1/students", json={
+        "curp": CURP_A, "full_name": "Sin Plan", "campus_id": str(seed["campus"].id),
+    })).json()
+    # no explicit plan-enrollment call
+    enrollment = await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": catalog["group"]["id"],
+    })
+    assert enrollment.status_code == 201, enrollment.text
+    plans = (await client.get(
+        f"/api/v1/students/{student['id']}/plan-enrollments"
+    )).json()
+    assert len(plans) == 1
+    assert plans[0]["plan_version_id"] == catalog["plan"]["id"]
+
+
 async def test_dashboard_pending_tasks(client, seed):
     """The work queue surfaces group-subjects with no teacher assigned."""
     await login(client)
@@ -166,11 +201,13 @@ async def test_full_academic_flow(client, seed):
     )
     assert open_window.status_code == 200
 
-    for component, value in zip(components, [8.0, 9.0, 10.0]):
-        response = await client.post("/api/v1/grades/capture", json={
-            "subject_enrollment_id": se_id, "component_id": component["id"], "value": value,
-        })
-        assert response.status_code == 200, response.text
+    # capture the whole row in one batch request (RF-C01)
+    batch = await client.post("/api/v1/grades/capture-batch", json=[
+        {"subject_enrollment_id": se_id, "component_id": c["id"], "value": v}
+        for c, v in zip(components, [8.0, 9.0, 10.0])
+    ])
+    assert batch.status_code == 200, batch.text
+    assert len(batch.json()) == 3
 
     # final = .3*8 + .3*9 + .4*10 = 9.1 → aprobada
     grid = (await client.get(f"/api/v1/grades/group-subjects/{gs_a['id']}/grid")).json()

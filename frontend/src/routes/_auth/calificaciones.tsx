@@ -89,29 +89,24 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
     queryFn: () => api<GradeGrid>(`/grades/group-subjects/${groupSubjectId}/grid`),
   });
 
-  const capture = useMutation({
-    mutationFn: ({
-      subjectEnrollmentId,
-      componentId,
-      value,
-    }: {
-      subjectEnrollmentId: string;
-      componentId: string;
-      value: number;
-    }) =>
-      api(`/grades/capture`, {
+  // edited-but-unsaved cells, keyed `${subjectEnrollmentId}:${componentId}`
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const editCount = Object.keys(edits).length;
+
+  const saveBatch = useMutation({
+    mutationFn: (
+      items: { subject_enrollment_id: string; component_id: string; value: number }[],
+    ) =>
+      api(`/grades/capture-batch`, {
         method: "POST",
-        body: JSON.stringify({
-          subject_enrollment_id: subjectEnrollmentId,
-          component_id: componentId,
-          value,
-        }),
+        body: JSON.stringify(items),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, items) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.gradeGrid(groupSubjectId),
       });
-      toast.success("Calificación guardada");
+      setEdits({});
+      toast.success(`${items.length} calificaciones guardadas`);
     },
     onError: (e) => {
       toast.error(e instanceof ApiError ? e.message : "Error al capturar");
@@ -120,6 +115,34 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
       });
     },
   });
+
+  const save = () => {
+    const items: { subject_enrollment_id: string; component_id: string; value: number }[] = [];
+    let hadEmpty = false;
+    for (const [key, raw] of Object.entries(edits)) {
+      if (raw === "") {
+        hadEmpty = true; // no delete-grade endpoint: an emptied cell can't be saved
+        continue;
+      }
+      const value = Number(raw);
+      if (Number.isNaN(value) || value < 0 || value > 10) {
+        toast.error("Cada calificación debe estar entre 0 y 10");
+        return;
+      }
+      const [subject_enrollment_id, component_id] = key.split(":");
+      items.push({ subject_enrollment_id, component_id, value });
+    }
+    if (!items.length) {
+      toast.error("No hay calificaciones para guardar");
+      return;
+    }
+    if (hadEmpty) {
+      toast.warning(
+        "Las celdas vacías se ignoran: no es posible borrar una calificación ya guardada",
+      );
+    }
+    saveBatch.mutate(items);
+  };
 
   if (isLoading || !grid) {
     return <Skeleton className="h-64 w-full rounded-2xl" />;
@@ -135,8 +158,23 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border bg-card">
-      <Table>
+    <div className="space-y-3">
+      <div className="flex items-center justify-end gap-3">
+        {editCount > 0 && (
+          <span className="text-sm text-muted-foreground">
+            {editCount} sin guardar
+          </span>
+        )}
+        <Button
+          className="font-bold"
+          disabled={saveBatch.isPending || editCount === 0}
+          onClick={save}
+        >
+          {saveBatch.isPending ? "Guardando…" : "Guardar calificaciones"}
+        </Button>
+      </div>
+      <div className="overflow-x-auto rounded-2xl border bg-card">
+        <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Matrícula</TableHead>
@@ -165,34 +203,24 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
               </TableCell>
               {grid.components.map((c) => {
                 const current = row.grades[c.id];
+                const key = `${row.subject_enrollment_id}:${c.id}`;
+                const edited = key in edits;
                 return (
                   <TableCell key={c.id} className="text-center">
                     <Input
-                      key={`${row.subject_enrollment_id}-${c.id}-${current ?? ""}`}
                       type="number"
                       min={0}
                       max={10}
                       step="0.1"
-                      defaultValue={current ?? ""}
+                      value={edited ? edits[key] : (current ?? "")}
                       aria-label={`${c.label} de ${row.student_name}`}
-                      className="mx-auto h-8 w-20 text-center"
-                      disabled={capture.isPending}
-                      onBlur={(e) => {
-                        const raw = e.target.value;
-                        if (raw === "") return;
-                        const value = Number(raw);
-                        if (Number.isNaN(value) || value < 0 || value > 10) {
-                          toast.error("La calificación debe estar entre 0 y 10");
-                          e.target.value = current == null ? "" : String(current);
-                          return;
-                        }
-                        if (current != null && value === current) return;
-                        capture.mutate({
-                          subjectEnrollmentId: row.subject_enrollment_id,
-                          componentId: c.id,
-                          value,
-                        });
-                      }}
+                      className={`mx-auto h-8 w-20 text-center ${
+                        edited ? "ring-2 ring-primary/40" : ""
+                      }`}
+                      disabled={saveBatch.isPending}
+                      onChange={(e) =>
+                        setEdits((prev) => ({ ...prev, [key]: e.target.value }))
+                      }
                     />
                   </TableCell>
                 );
@@ -226,7 +254,8 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
             </TableRow>
           )}
         </TableBody>
-      </Table>
+        </Table>
+      </div>
     </div>
   );
 }
