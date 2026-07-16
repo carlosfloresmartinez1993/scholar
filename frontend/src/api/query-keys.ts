@@ -57,6 +57,7 @@ export const queryKeys = {
   scholarshipsByStatus: (status: string) =>
     ["scholarships", "status", status] as const,
   scholarshipReport: ["scholarship-report"] as const,
+  termSummary: ["term-summary"] as const,
   fiscalProfile: (studentId: string) => ["fiscal-profile", studentId] as const,
   collectionReport: (from: string, to: string) =>
     ["collection-report", from, to] as const,

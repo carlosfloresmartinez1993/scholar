@@ -523,6 +523,16 @@ export interface ScholarshipReport {
   beca_cuatrimestre: number;
 }
 
+export interface TermSummaryRow {
+  term_id: string;
+  term_name: string;
+  expected: number;
+  collected: number;
+  pending: number;
+  collection_pct: number;
+  by_concept: Record<string, number>;
+}
+
 /** current vs previous-term value for one dashboard metric */
 export interface MetricDelta {
   current: number;

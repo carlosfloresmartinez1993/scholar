@@ -9,6 +9,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Home,
+  BarChart3,
   GraduationCap,
   Users,
   Landmark,
@@ -88,6 +89,12 @@ const NAV_GROUPS = [
     label: "Gestión",
     items: [
       { to: "/tesoreria", label: "Tesorería", icon: Banknote },
+      {
+        to: "/reportes",
+        label: "Reportes",
+        icon: BarChart3,
+        roles: ["admin_sistema", "direccion", "tesoreria"],
+      },
       { to: "/periodos", label: "Periodos", icon: CalendarRange },
     ],
   },
@@ -144,7 +151,15 @@ function AppShell() {
                   {group.label}
                 </p>
               )}
-              {group.items.map(({ to, label, icon: Icon }) => (
+              {group.items
+                .filter(
+                  (item) =>
+                    !("roles" in item) ||
+                    me?.is_superuser ||
+                    (me?.role &&
+                      (item.roles as readonly string[]).includes(me.role)),
+                )
+                .map(({ to, label, icon: Icon }) => (
                 <Link
                   key={to}
                   to={to}

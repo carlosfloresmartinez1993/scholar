@@ -12,6 +12,7 @@ import {
   FileText,
   Pencil,
   Plus,
+  Printer,
   TriangleAlertIcon,
   Upload,
   X,
@@ -41,6 +42,7 @@ import type {
   UserPublic,
 } from "@/api/types";
 import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
+import { printKardex } from "@/lib/kardex-print";
 import {
   ADMISSION_TYPE_LABELS,
   CHARGE_STATUS_LABELS,
@@ -960,6 +962,10 @@ function AcademicoTab({ student }: { student: Student }) {
     queryKey: queryKeys.terms,
     queryFn: () => api<Term[]>("/catalog/terms"),
   });
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
 
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const planVersionId = selectedPlan ?? enrollments?.[0]?.plan_version_id ?? null;
@@ -1083,7 +1089,26 @@ function AcademicoTab({ student }: { student: Student }) {
 
       {planVersionId && (
         <section className="space-y-3">
-          <h2 className="text-xl font-bold">Kárdex</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold">Kárdex</h2>
+            <Button
+              variant="outline"
+              disabled={!kardex}
+              onClick={() =>
+                kardex &&
+                printKardex({
+                  institutionName: institution?.name ?? "INUE",
+                  studentName: student.full_name,
+                  enrollmentNumber: student.enrollment_number,
+                  planLabel:
+                    planVersionLabels.get(planVersionId) ?? planVersionId,
+                  kardex,
+                })
+              }
+            >
+              <Printer className="size-4" /> Imprimir kárdex
+            </Button>
+          </div>
           {loadingKardex && <Skeleton className="h-40 w-full rounded-2xl" />}
           {kardex && (
             <>
