@@ -47,6 +47,7 @@ const MAX_ROWS = 1000; // mirrors the backend cap on bulk-intake rows
 // (curp,nombre,email). Paste from Excel (tab-separated) to avoid it.
 function parseRows(text: string): BulkIntakeRow[] {
   const lines = text
+    .replace(/^\uFEFF/, "") // strip a UTF-8 BOM (Excel .csv) before parsing
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
