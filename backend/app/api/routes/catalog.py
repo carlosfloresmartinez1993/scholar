@@ -501,9 +501,16 @@ async def import_term_from_calendar(
                  entity="term", entity_id=str(term.id), detail=f"{term.name} (calendario)")
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise HTTPException(status_code=409, detail="Ya existe un ciclo con ese nombre")
+        # distinguish the calendar-link race (uq_term_calendar) from a name clash
+        if "calendar" in str(exc.orig).lower():
+            raise HTTPException(
+                status_code=409, detail="Ese ciclo del calendario ya fue importado"
+            ) from exc
+        raise HTTPException(
+            status_code=409, detail="Ya existe un ciclo con ese nombre"
+        ) from exc
     await session.refresh(term)
     return term
 
