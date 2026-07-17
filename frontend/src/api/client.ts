@@ -3,10 +3,12 @@ import type {
   BulkIntakeRow,
   CalendarGroup,
   CalendarProgram,
+  CalendarTerm,
   Group,
   Program,
   PromoteCycleResult,
   StudentCalendar,
+  Term,
 } from "./types";
 
 const BASE_URL = "/api/v1";
@@ -123,6 +125,18 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
 
 export const getCalendarPrograms = () =>
   api<CalendarProgram[]>("/catalog/calendar/programs");
+
+export const getCalendarTerms = () =>
+  api<CalendarTerm[]>("/catalog/calendar/terms");
+
+export const importCalendarTerm = (calendarTermId: string) =>
+  api<Term>("/catalog/terms/import", {
+    method: "POST",
+    body: JSON.stringify({ calendar_term_id: calendarTermId }),
+  });
+
+export const syncTermCalendar = (termId: string) =>
+  api<Term>(`/catalog/terms/${termId}/sync-calendar`, { method: "POST" });
 
 export const getCalendarGroups = (filters?: {
   term_id?: string;

@@ -1,8 +1,10 @@
 """Catalog routes: institution, campuses, programs, RVOE, plan versions,
 subjects (+seriación, evaluation schemes), terms and groups."""
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.api.deps import AcademicStaff, AnyStaff, ServiciosEscolares, SessionDep
@@ -41,6 +43,7 @@ from app.models import (
     SubjectPrerequisite,
     Term,
     TermCreate,
+    TermImport,
     TermPublic,
     TermUpdate,
 )
@@ -178,6 +181,23 @@ async def list_calendar_campuses(_: AnyStaff) -> list[dict]:
 async def list_calendar_programs(_: AnyStaff) -> list[dict]:
     """Programs of the calendar system (to link Program.calendar_program_id)."""
     return await calendar.get_programs()
+
+
+@router.get("/calendar/terms")
+async def list_calendar_terms(session: SessionDep, _: AnyStaff) -> list[dict]:
+    """Terms of the calendar system, flagged with whether they're already imported
+    into scholar — so staff import a period instead of retyping its dates."""
+    terms = await calendar.get_terms()
+    imported = set(
+        (
+            await session.exec(
+                select(Term.calendar_term_id).where(Term.calendar_term_id.is_not(None))  # type: ignore[union-attr]
+            )
+        ).all()
+    )
+    for t in terms:
+        t["imported"] = str(t.get("id")) in {str(i) for i in imported}
+    return terms
 
 
 @router.get("/calendar/groups")
@@ -426,6 +446,100 @@ async def create_term(
     session.add(term)
     audit.record(session, actor=current_user.email, action="term.created",
                  entity="term", entity_id=str(term.id), detail=term.name)
+    await session.commit()
+    await session.refresh(term)
+    return term
+
+
+def _cal_date(value: object) -> date:
+    """Parse a date from the external calendar; a malformed value is the
+    calendar's fault, so surface a controlled 422 instead of a 500."""
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail="El ciclo del calendario tiene fechas inválidas")
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="El ciclo del calendario tiene fechas inválidas"
+        ) from exc
+
+
+@router.post("/terms/import", status_code=201)
+async def import_term_from_calendar(
+    session: SessionDep, current_user: ServiciosEscolares, body: TermImport
+) -> TermPublic:
+    """Create a scholar term from a calendar term — name + dates come from the
+    calendar (the source of truth for periods), no manual date entry."""
+    institution = await get_default_institution(session)
+    existing = (
+        await session.exec(
+            select(Term).where(
+                Term.institution_id == institution.id,
+                Term.calendar_term_id == body.calendar_term_id,
+            )
+        )
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Ese ciclo del calendario ya fue importado")
+    cal_terms = await calendar.get_terms()
+    cal = next((t for t in cal_terms if str(t.get("id")) == str(body.calendar_term_id)), None)
+    if cal is None:
+        raise HTTPException(status_code=404, detail="Ciclo del calendario no encontrado")
+    if not cal.get("start_date") or not cal.get("end_date"):
+        raise HTTPException(
+            status_code=422, detail="El ciclo del calendario no tiene fechas definidas"
+        )
+    term = Term(
+        name=str(cal.get("name") or cal.get("code"))[:64],
+        start_date=_cal_date(cal["start_date"]),
+        end_date=_cal_date(cal["end_date"]),
+        institution_id=institution.id,
+        calendar_term_id=body.calendar_term_id,
+    )
+    session.add(term)
+    audit.record(session, actor=current_user.email, action="term.imported",
+                 entity="term", entity_id=str(term.id), detail=f"{term.name} (calendario)")
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # distinguish the calendar-link race from a name clash by the exact
+        # constraint name (Postgres names it in the message)
+        if "uq_term_calendar" in str(exc.orig).lower():
+            raise HTTPException(
+                status_code=409, detail="Ese ciclo del calendario ya fue importado"
+            ) from exc
+        raise HTTPException(
+            status_code=409, detail="Ya existe un ciclo con ese nombre"
+        ) from exc
+    await session.refresh(term)
+    return term
+
+
+@router.post("/terms/{term_id}/sync-calendar")
+async def sync_term_from_calendar(
+    session: SessionDep, current_user: ServiciosEscolares, term_id: uuid.UUID
+) -> TermPublic:
+    """Re-pull a linked term's dates from the calendar (if the calendar changed
+    them). Colegiatura due dates are derived from these, so they stay in sync."""
+    term = await session.get(Term, term_id)
+    if term is None:
+        raise HTTPException(status_code=404, detail="Ciclo no encontrado")
+    if term.calendar_term_id is None:
+        raise HTTPException(status_code=409, detail="El ciclo no está vinculado al calendario")
+    cal_terms = await calendar.get_terms()
+    cal = next((t for t in cal_terms if str(t.get("id")) == str(term.calendar_term_id)), None)
+    if cal is None:
+        raise HTTPException(status_code=404, detail="Ciclo del calendario no encontrado")
+    if not cal.get("start_date") or not cal.get("end_date"):
+        raise HTTPException(
+            status_code=422, detail="El ciclo del calendario no tiene fechas definidas"
+        )
+    term.start_date = _cal_date(cal["start_date"])
+    term.end_date = _cal_date(cal["end_date"])
+    session.add(term)
+    audit.record(session, actor=current_user.email, action="term.synced",
+                 entity="term", entity_id=str(term.id), detail="fechas del calendario")
     await session.commit()
     await session.refresh(term)
     return term
