@@ -16,6 +16,7 @@ from app.models import (
     Group,
     GroupEnrollment,
     GroupEnrollmentStatus,
+    GroupSubject,
     PlanEnrollmentStatus,
     Student,
     StudentPlanEnrollment,
@@ -28,46 +29,69 @@ from app.services import audit
 from app.services.enrollment import enroll_student_core
 
 
-async def _passed_source_group(session: AsyncSession, group_enrollment_id) -> bool:
-    """True only if every subject the student took in the source group is aprobada
-    (a single cursando/reprobada means they repeat, so they don't advance)."""
-    statuses = (
-        await session.exec(
-            select(SubjectEnrollment.status).where(
-                SubjectEnrollment.group_enrollment_id == group_enrollment_id
+async def _passed_source_group(
+    session: AsyncSession, group_enrollment_id, source_group_id
+) -> bool:
+    """True only if the student passed EVERY subject of the source group. A partial
+    enrollment (they took only some subjects) or any non-aprobada means they repeat,
+    so they don't advance."""
+    required = set(
+        (
+            await session.exec(
+                select(GroupSubject.plan_subject_id).where(
+                    GroupSubject.group_id == source_group_id
+                )
             )
-        )
-    ).all()
-    return bool(statuses) and all(s == SubjectEnrollmentStatus.aprobada for s in statuses)
+        ).all()
+    )
+    if not required:
+        return False
+    passed = set(
+        (
+            await session.exec(
+                select(GroupSubject.plan_subject_id)
+                .join(SubjectEnrollment, SubjectEnrollment.group_subject_id == GroupSubject.id)
+                .where(
+                    SubjectEnrollment.group_enrollment_id == group_enrollment_id,
+                    SubjectEnrollment.status == SubjectEnrollmentStatus.aprobada,
+                )
+            )
+        ).all()
+    )
+    return required <= passed
 
 
 async def promote_cycle(
     session: AsyncSession,
     current_user,
     *,
+    institution_id=None,
     today: date | None = None,
     lead_days: int | None = None,
     dry_run: bool = True,
 ) -> dict:
     """Promote every eligible student into their linked next-term group. Returns a
-    summary of promoted + skipped (with reasons). dry_run changes nothing."""
+    summary of promoted + skipped (with reasons). dry_run changes nothing. Pass
+    institution_id to scope to one tenant (the interactive path always does); the
+    cron leaves it None for an intentional global run."""
     today = today or utcnow().date()
     lead_days = settings.PROMOTION_LEAD_DAYS if lead_days is None else lead_days
     cutoff = today + timedelta(days=lead_days)
 
     # target groups: explicitly linked, in a term that starts within the lead
     # window and hasn't ended (so late-captured grades still get picked up).
-    targets = (
-        await session.exec(
-            select(Group, Term)
-            .join(Term, Term.id == Group.term_id)
-            .where(
-                Group.promotes_from_group_id.is_not(None),  # type: ignore[union-attr]
-                Term.start_date <= cutoff,
-                Term.end_date >= today,
-            )
+    query = (
+        select(Group, Term)
+        .join(Term, Term.id == Group.term_id)
+        .where(
+            Group.promotes_from_group_id.is_not(None),  # type: ignore[union-attr]
+            Term.start_date <= cutoff,
+            Term.end_date >= today,
         )
-    ).all()
+    )
+    if institution_id is not None:
+        query = query.where(Term.institution_id == institution_id)
+    targets = (await session.exec(query)).all()
 
     promoted: list[dict] = []
     skipped: list[dict] = []
@@ -106,7 +130,7 @@ async def promote_cycle(
                 skipped.append({**info, "reason": "no continúa (baja/egresado)"})
                 continue
             # passed the whole source period?
-            if not await _passed_source_group(session, en.id):
+            if not await _passed_source_group(session, en.id, target.promotes_from_group_id):
                 skipped.append({**info, "reason": "no acreditó el periodo"})
                 continue
             if dry_run:

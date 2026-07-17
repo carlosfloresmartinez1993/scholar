@@ -294,7 +294,12 @@ class GroupBase(SQLModel):
 class Group(GroupBase, table=True):
     __tablename__ = "groups"
     # Servo Grupo key = (Ciclo, Plantel, Clave): same code may repeat across campuses.
-    __table_args__ = (UniqueConstraint("term_id", "campus_id", "code", name="uq_group_code"),)
+    __table_args__ = (
+        UniqueConstraint("term_id", "campus_id", "code", name="uq_group_code"),
+        # a source group promotes into at most one next-term group (NULLs distinct,
+        # so unlinked groups are unconstrained) — prevents double-promote/double-bill.
+        UniqueConstraint("promotes_from_group_id", name="uq_group_promotes_from"),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     plan_version_id: uuid.UUID = Field(foreign_key="plan_versions.id", index=True)
     term_id: uuid.UUID = Field(foreign_key="terms.id", index=True)

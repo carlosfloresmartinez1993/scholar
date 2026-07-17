@@ -381,7 +381,13 @@ function PromoteCycleDialog({
         <DialogFooter>
           <Button
             className="font-bold"
-            disabled={run.isPending || preview.isLoading || isEmpty}
+            disabled={
+              run.isPending ||
+              preview.isFetching ||
+              preview.isError ||
+              !data ||
+              isEmpty
+            }
             onClick={() => run.mutate()}
           >
             {run.isPending ? "Promoviendo…" : "Promover y facturar"}
@@ -448,7 +454,11 @@ function CreateGroupDialog({
       api<Group[]>(`/catalog/groups?plan_version_id=${form.plan_version_id}`),
     enabled: open && !!form.plan_version_id,
   });
-  const sourceOptions = (planGroups ?? []).filter((g) => g.term_id !== termId);
+  // valid predecessors only: same plan, the immediately previous period, and a
+  // different (earlier) term — mirrors the backend lineage check.
+  const sourceOptions = (planGroups ?? []).filter(
+    (g) => g.term_id !== termId && g.period_number === form.period_number - 1,
+  );
 
   const planOptions = [...planVersionLabels.entries()].map(([value, label]) => ({
     value,
@@ -489,7 +499,11 @@ function CreateGroupDialog({
                 required
                 value={form.period_number}
                 onChange={(e) =>
-                  setForm({ ...form, period_number: Number(e.target.value) })
+                  setForm({
+                    ...form,
+                    period_number: Number(e.target.value),
+                    promotes_from_group_id: NONE, // predecessors depend on the period
+                  })
                 }
               />
             </div>
@@ -498,7 +512,9 @@ function CreateGroupDialog({
             <Label>Plan de estudios</Label>
             <SearchableSelect
               value={form.plan_version_id}
-              onChange={(v) => setForm({ ...form, plan_version_id: v })}
+              onChange={(v) =>
+                setForm({ ...form, plan_version_id: v, promotes_from_group_id: NONE })
+              }
               options={planOptions}
               placeholder="Seleccione un plan"
             />
@@ -639,9 +655,17 @@ function GroupCalendarLink({ group }: { group: Group }) {
 
 function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
   const queryClient = useQueryClient();
+  // the source group is in a previous term, so it isn't in `groups` (current term)
+  // — fetch it by id to show its real code.
+  const { data: sourceGroup } = useQuery({
+    queryKey: ["group", group.promotes_from_group_id],
+    queryFn: () => api<Group>(`/catalog/groups/${group.promotes_from_group_id}`),
+    enabled: !!group.promotes_from_group_id,
+  });
   const promotesFrom = group.promotes_from_group_id
     ? (groups.find((g) => g.id === group.promotes_from_group_id)?.code ??
-      "otro ciclo")
+      sourceGroup?.code ??
+      "…")
     : null;
   const { data: groupSubjects, isLoading } = useQuery({
     queryKey: queryKeys.groupSubjects(group.id),

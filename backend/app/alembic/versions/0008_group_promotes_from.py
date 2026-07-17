@@ -26,8 +26,13 @@ def upgrade() -> None:
         'fk_groups_promotes_from', 'groups', 'groups',
         ['promotes_from_group_id'], ['id'],
     )
+    # a source group promotes into at most one next-term group
+    op.create_unique_constraint(
+        'uq_group_promotes_from', 'groups', ['promotes_from_group_id']
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint('uq_group_promotes_from', 'groups', type_='unique')
     op.drop_constraint('fk_groups_promotes_from', 'groups', type_='foreignkey')
     op.drop_column('groups', 'promotes_from_group_id')

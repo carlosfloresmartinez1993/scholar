@@ -10,6 +10,7 @@ import logging
 
 from sqlmodel import select
 
+from app.core.config import settings
 from app.core.db import async_session_factory
 from app.models import User
 from app.services.promotion import promote_cycle
@@ -20,12 +21,16 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     async with async_session_factory() as session:
-        # charges need a real created_by user id → act as the first superuser
+        # charges need a real created_by → the configured system admin, not an
+        # arbitrary superuser, so audit/ownership is deterministic
         actor = (
-            await session.exec(select(User).where(User.is_superuser == True))  # noqa: E712
+            await session.exec(select(User).where(User.email == settings.FIRST_SUPERUSER))
         ).first()
-        if actor is None:
-            logger.warning("cycle promotion: no superuser to act as; skipping")
+        if actor is None or not (actor.is_superuser and actor.is_active):
+            logger.warning(
+                "cycle promotion: system user %s not found/active; skipping",
+                settings.FIRST_SUPERUSER,
+            )
             return
         result = await promote_cycle(session, actor, dry_run=False)
         logger.info(
