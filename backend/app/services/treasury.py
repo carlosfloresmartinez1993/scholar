@@ -16,6 +16,7 @@ from app.models import (
     ChargeStatus,
     Institution,
     Payment,
+    PaymentAllocation,
     Scholarship,
     ScholarshipStatus,
     Student,
@@ -24,6 +25,7 @@ from app.models.common import utcnow
 
 
 async def charge_paid_amount(session: AsyncSession, charge_id: uuid.UUID) -> float:
+    """Paid total for a charge: direct payments plus multi-charge allocations."""
     paid = (
         await session.exec(
             select(func.coalesce(func.sum(Payment.amount), 0.0)).where(
@@ -31,13 +33,24 @@ async def charge_paid_amount(session: AsyncSession, charge_id: uuid.UUID) -> flo
             )
         )
     ).one()
-    return float(paid)
+    allocated = (
+        await session.exec(
+            select(func.coalesce(func.sum(PaymentAllocation.amount), 0.0))
+            .join(Payment, Payment.id == PaymentAllocation.payment_id)  # type: ignore[arg-type]
+            .where(
+                PaymentAllocation.charge_id == charge_id,
+                Payment.cancelled == False,  # noqa: E712
+            )
+        )
+    ).one()
+    return float(paid) + float(allocated)
 
 
 async def charges_paid_map(
     session: AsyncSession, charge_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, float]:
-    """Paid (non-cancelled) totals for many charges in one grouped query."""
+    """Paid (non-cancelled) totals for many charges: direct payments plus
+    multi-charge allocations, two grouped queries."""
     if not charge_ids:
         return {}
     rows = (
@@ -50,7 +63,21 @@ async def charges_paid_map(
             .group_by(Payment.charge_id)
         )
     ).all()
-    return {charge_id: float(paid) for charge_id, paid in rows}
+    out = {charge_id: float(paid) for charge_id, paid in rows}
+    alloc_rows = (
+        await session.exec(
+            select(PaymentAllocation.charge_id, func.sum(PaymentAllocation.amount))
+            .join(Payment, Payment.id == PaymentAllocation.payment_id)  # type: ignore[arg-type]
+            .where(
+                PaymentAllocation.charge_id.in_(charge_ids),  # type: ignore[attr-defined]
+                Payment.cancelled == False,  # noqa: E712
+            )
+            .group_by(PaymentAllocation.charge_id)
+        )
+    ).all()
+    for charge_id, paid in alloc_rows:
+        out[charge_id] = out.get(charge_id, 0.0) + float(paid)
+    return out
 
 
 def _net(charge: Charge) -> float:

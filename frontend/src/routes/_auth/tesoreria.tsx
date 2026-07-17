@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -87,8 +87,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+// ?studentId= deep-links into Caja with the student preloaded, so "Cobrar"
+// anywhere in the app (cartera vencida, ⌘K) is one click away from charging.
 export const Route = createFileRoute("/_auth/tesoreria")({
   component: TesoreriaPage,
+  validateSearch: (search: Record<string, unknown>): { studentId?: string } =>
+    typeof search.studentId === "string" && search.studentId
+      ? { studentId: search.studentId }
+      : {},
 });
 
 const NONE = "__none__";
@@ -105,10 +111,16 @@ function useInstitution() {
 }
 
 function TesoreriaPage() {
+  const { studentId } = Route.useSearch();
+  const [tab, setTab] = useState("caja");
+  // A deep link always lands on Caja, even if the user was on another tab.
+  useEffect(() => {
+    if (studentId) setTab("caja");
+  }, [studentId]);
   return (
     <div className="space-y-6">
       <h1 className="text-3xl">Tesorería</h1>
-      <Tabs defaultValue="caja">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="caja">Caja</TabsTrigger>
           <TabsTrigger value="conceptos">Conceptos</TabsTrigger>
@@ -140,10 +152,28 @@ function TesoreriaPage() {
 
 function CajaTab() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { studentId: deepStudentId } = Route.useSearch();
   const { data: me } = useMe();
   const { data: institution } = useInstitution();
   const [query, setQuery] = useState("");
   const [student, setStudent] = useState<Student | null>(null);
+
+  // Deep link (?studentId=): preload the student straight into Caja.
+  const { data: deepStudent, error: deepStudentError } = useQuery({
+    queryKey: queryKeys.student(deepStudentId ?? ""),
+    queryFn: () => api<Student>(`/students/${deepStudentId}`),
+    enabled: !!deepStudentId,
+  });
+  useEffect(() => {
+    if (deepStudent) {
+      setStudent(deepStudent);
+      setSelectedIds(new Set());
+    }
+  }, [deepStudent]);
+  useEffect(() => {
+    if (deepStudentError) toast.error("No se pudo cargar el alumno del enlace");
+  }, [deepStudentError]);
 
   const { data: results } = useQuery({
     queryKey: queryKeys.students(query),
@@ -159,6 +189,19 @@ function CajaTab() {
 
   const [cobrarCharge, setCobrarCharge] = useState<Charge | null | undefined>(undefined);
   const [facturarPayment, setFacturarPayment] = useState<Payment | null>(null);
+  // Multi-cobro: charges ticked for a single combined payment.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [multiOpen, setMultiOpen] = useState(false);
+
+  const pickStudent = (s: Student | null) => {
+    setStudent(s);
+    setSelectedIds(new Set());
+    setMultiOpen(false);
+    // Drop a consumed deep link so "Cambiar alumno" doesn't re-select it.
+    if (deepStudentId) {
+      navigate({ to: "/tesoreria", search: {}, replace: true });
+    }
+  };
 
   const receiptFor = (payment: Payment): ReceiptData | null => {
     if (!institution || !student) return null;
@@ -178,6 +221,20 @@ function CajaTab() {
   const pendientes =
     statement?.charges.filter((c) => c.status !== "cancelado" && c.balance > 0) ?? [];
   const pagos = statement?.payments.filter((p) => !p.cancelled).slice().reverse() ?? [];
+
+  const selectedCharges = pendientes.filter((c) => selectedIds.has(c.id));
+  const selectedTotal =
+    Math.round(selectedCharges.reduce((sum, c) => sum + c.balance, 0) * 100) / 100;
+  const allSelected = pendientes.length > 0 && selectedCharges.length === pendientes.length;
+
+  const toggleCharge = (id: string, on: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -202,7 +259,7 @@ function CajaTab() {
                     key={s.id}
                     className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted/50"
                     onClick={() => {
-                      setStudent(s);
+                      pickStudent(s);
                       setQuery("");
                     }}
                   >
@@ -241,7 +298,7 @@ function CajaTab() {
             <Button className="font-bold" onClick={() => setCobrarCharge(null)}>
               <Plus className="size-4" /> Cobro libre
             </Button>
-            <Button variant="outline" onClick={() => setStudent(null)}>
+            <Button variant="outline" onClick={() => pickStudent(null)}>
               Cambiar alumno
             </Button>
           </div>
@@ -251,13 +308,34 @@ function CajaTab() {
       {student && (
         <>
           <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-muted-foreground">
-              Cargos pendientes
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-muted-foreground">
+                Cargos pendientes
+              </h3>
+              {selectedCharges.length > 0 && (
+                <Button size="sm" className="font-bold" onClick={() => setMultiOpen(true)}>
+                  Cobrar seleccionados ({selectedCharges.length}) ·{" "}
+                  {formatMoney(selectedTotal)}
+                </Button>
+              )}
+            </div>
             <div className="rounded-2xl border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        aria-label="Seleccionar todos"
+                        checked={allSelected}
+                        onCheckedChange={(v) =>
+                          setSelectedIds(
+                            v === true
+                              ? new Set(pendientes.map((c) => c.id))
+                              : new Set(),
+                          )
+                        }
+                      />
+                    </TableHead>
                     <TableHead>Concepto</TableHead>
                     <TableHead>Vence</TableHead>
                     <TableHead>Saldo</TableHead>
@@ -267,13 +345,20 @@ function CajaTab() {
                 <TableBody>
                   {loadingStatement && (
                     <TableRow>
-                      <TableCell colSpan={4}>
+                      <TableCell colSpan={5}>
                         <Skeleton className="h-6 w-full" />
                       </TableCell>
                     </TableRow>
                   )}
                   {pendientes.map((c) => (
                     <TableRow key={c.id}>
+                      <TableCell>
+                        <Checkbox
+                          aria-label={`Seleccionar ${c.description}`}
+                          checked={selectedIds.has(c.id)}
+                          onCheckedChange={(v) => toggleCharge(c.id, v === true)}
+                        />
+                      </TableCell>
                       <TableCell className="font-semibold">{c.description}</TableCell>
                       <TableCell>{formatDate(c.due_date)}</TableCell>
                       <TableCell data-numeric className="font-semibold">
@@ -289,7 +374,7 @@ function CajaTab() {
                   {!loadingStatement && pendientes.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={4}
+                        colSpan={5}
                         className="py-8 text-center text-muted-foreground"
                       >
                         Sin cargos pendientes
@@ -370,6 +455,20 @@ function CajaTab() {
           onOpenChange={(o) => !o && setCobrarCharge(undefined)}
           onPaid={(payment) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.statement(student.id) });
+            printPaymentReceipt(payment);
+          }}
+        />
+      )}
+
+      {student && multiOpen && (
+        <PaymentDialog
+          student={student}
+          multiCharges={selectedCharges}
+          open
+          onOpenChange={(o) => !o && setMultiOpen(false)}
+          onPaid={(payment) => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.statement(student.id) });
+            setSelectedIds(new Set());
             printPaymentReceipt(payment);
           }}
         />
@@ -804,8 +903,8 @@ function CarteraVencidaTab() {
                     size="sm"
                     onClick={() =>
                       navigate({
-                        to: "/alumnos/$studentId",
-                        params: { studentId: r.student_id },
+                        to: "/tesoreria",
+                        search: { studentId: r.student_id },
                       })
                     }
                   >

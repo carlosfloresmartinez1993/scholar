@@ -30,6 +30,8 @@ from app.models import (
     PlanVersion,
     Rvoe,
     Payment,
+    PaymentAllocation,
+    PaymentAllocationPublic,
     PaymentCreate,
     PaymentPlanGenerateIn,
     PaymentPublic,
@@ -48,6 +50,7 @@ from app.services.treasury import (
     apply_late_fees,
     apply_scholarship_to_pending,
     charge_paid_amount,
+    charges_paid_map,
     generate_enrollment_charges,
     overdue_balance,
     refresh_charge_status,
@@ -300,8 +303,34 @@ async def register_payment(
     student = await session.get(Student, body.student_id)
     if student is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    if body.charge_id and body.charge_ids:
+        raise HTTPException(
+            status_code=400, detail="Use charge_id o charge_ids, no ambos"
+        )
     charge = None
-    if body.charge_id:
+    targets: list[Charge] = []
+    if body.charge_ids:
+        ids = list(dict.fromkeys(body.charge_ids))  # dedupe, keep order
+        # Lock every selected charge (deterministic order → no deadlock) before
+        # reading balances, so two concurrent multi-cobros can't both allocate
+        # against the same charge and overstate the paid total.
+        locked = (
+            await session.exec(
+                select(Charge).where(Charge.id.in_(ids)).with_for_update().order_by(Charge.id)  # type: ignore[attr-defined]
+            )
+        ).all()
+        by_id = {c.id: c for c in locked}
+        for charge_id in ids:
+            c = by_id.get(charge_id)
+            if c is None or c.student_id != student.id:
+                raise HTTPException(status_code=400, detail="Cargo inválido")
+            if c.status == ChargeStatus.cancelado:
+                raise HTTPException(
+                    status_code=409, detail=f"El cargo '{c.description}' está cancelado"
+                )
+            targets.append(c)
+        targets.sort(key=lambda c: (c.due_date, c.created_at))
+    elif body.charge_id:
         charge = await session.get(Charge, body.charge_id)
         if charge is None or charge.student_id != student.id:
             raise HTTPException(status_code=400, detail="Cargo inválido")
@@ -310,10 +339,53 @@ async def register_payment(
     institution = await get_default_institution(session)
     folio = await next_folio(session, institution.id, "recibo")
     payment = Payment(
-        **body.model_dump(), receipt_folio=folio, received_by=current_user.id
+        **body.model_dump(exclude={"charge_ids"}),
+        receipt_folio=folio,
+        received_by=current_user.id,
     )
     session.add(payment)
     await session.flush()
+    allocations: list[PaymentAllocation] = []
+    if targets:
+        # Split the payment oldest-due-first, capped at each charge's open
+        # balance; any remainder stays as saldo a favor on the payment itself.
+        paid_map = await charges_paid_map(session, [c.id for c in targets])
+        remaining = round(body.amount, 2)
+        new_totals: dict[uuid.UUID, float] = {}
+        for c in targets:
+            if remaining <= 0:
+                break
+            net = max(c.amount - c.scholarship_discount, 0.0)
+            balance = round(net - paid_map.get(c.id, 0.0), 2)
+            if balance <= 0:
+                continue
+            take = min(balance, remaining)
+            allocations.append(
+                PaymentAllocation(payment_id=payment.id, charge_id=c.id, amount=take)
+            )
+            new_totals[c.id] = paid_map.get(c.id, 0.0) + take
+            remaining = round(remaining - take, 2)
+        if not allocations:
+            raise HTTPException(
+                status_code=409, detail="Los cargos seleccionados no tienen saldo"
+            )
+        session.add_all(allocations)
+        # Derive each touched charge's status from the in-memory paid total
+        # (mirrors refresh_charge_status) instead of re-querying per charge.
+        for c in targets:
+            paid = new_totals.get(c.id)
+            if paid is None:
+                continue
+            net = max(c.amount - c.scholarship_discount, 0.0)
+            c.status = (
+                ChargeStatus.pagado
+                if paid >= net - 0.005
+                else ChargeStatus.parcial
+                if paid > 0
+                else ChargeStatus.pendiente
+            )
+            session.add(c)
+        await session.flush()
     if charge:
         await refresh_charge_status(session, charge)
     audit.record(session, actor=current_user.email, action="payment.registered",
@@ -321,7 +393,12 @@ async def register_payment(
                  detail=f"${body.amount} {body.method}")
     await session.commit()
     await session.refresh(payment)
-    return payment
+    pub = PaymentPublic.model_validate(payment, from_attributes=True)
+    pub.allocations = [
+        PaymentAllocationPublic(charge_id=a.charge_id, amount=a.amount)
+        for a in allocations
+    ]
+    return pub
 
 
 @router.post("/payments/{payment_id}/cancel")
@@ -338,6 +415,16 @@ async def cancel_payment(
         charge = await session.get(Charge, payment.charge_id)
         if charge:
             await refresh_charge_status(session, charge)
+    # A multi-charge payment reopens every charge it was allocated to.
+    allocs = (
+        await session.exec(
+            select(PaymentAllocation).where(PaymentAllocation.payment_id == payment.id)
+        )
+    ).all()
+    for a in allocs:
+        c = await session.get(Charge, a.charge_id)
+        if c:
+            await refresh_charge_status(session, c)
     audit.record(session, actor=current_user.email, action="payment.cancelled",
                  entity="payment", entity_id=payment.receipt_folio, detail=reason)  # RT-08
     await session.commit()
@@ -364,10 +451,27 @@ async def account_statement(
     pending = [c for c in active if c.balance > 0]
     today = utcnow().date()
     upcoming = [c.due_date for c in pending if c.due_date >= today]
+    payment_pubs = [PaymentPublic.model_validate(p, from_attributes=True) for p in payments]
+    if payments:
+        # Attach multi-charge splits so receipts can be reprinted line by line.
+        alloc_rows = (
+            await session.exec(
+                select(PaymentAllocation).where(
+                    PaymentAllocation.payment_id.in_([p.id for p in payments])  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+        by_payment: dict[uuid.UUID, list[PaymentAllocationPublic]] = {}
+        for a in alloc_rows:
+            by_payment.setdefault(a.payment_id, []).append(
+                PaymentAllocationPublic(charge_id=a.charge_id, amount=a.amount)
+            )
+        for pub in payment_pubs:
+            pub.allocations = by_payment.get(pub.id, [])
     return AccountStatement(
         student_id=student_id,
         charges=charges,
-        payments=[PaymentPublic.model_validate(p, from_attributes=True) for p in payments],
+        payments=payment_pubs,
         total_charged=total_charged,
         total_paid=total_paid,
         balance=round(sum(c.balance for c in pending), 2),

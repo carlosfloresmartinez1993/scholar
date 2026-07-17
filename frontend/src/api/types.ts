@@ -495,6 +495,11 @@ export interface Charge {
   balance: number;
 }
 
+export interface PaymentAllocation {
+  charge_id: string;
+  amount: number;
+}
+
 export interface Payment {
   id: string;
   student_id: string;
@@ -506,6 +511,7 @@ export interface Payment {
   notes: string;
   received_at: string;
   cancelled: boolean;
+  allocations?: PaymentAllocation[];
 }
 
 export interface AccountStatement {

@@ -131,6 +131,8 @@ from app.models.treasury import (
     FiscalProfileBase,
     FiscalProfilePublic,
     Payment,
+    PaymentAllocation,
+    PaymentAllocationPublic,
     PaymentCreate,
     PaymentMethod,
     PaymentPlanGenerateIn,

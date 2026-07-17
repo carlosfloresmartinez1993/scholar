@@ -47,7 +47,31 @@ export function paymentToReceiptData(
     cajero: string;
   },
 ): ReceiptData {
-  const charge = ctx.charges.find((c) => c.id === payment.charge_id);
+  // Multi-charge cobro: one line per allocated charge (plus any unallocated
+  // remainder as "Abono a cuenta"). Single-charge/free payments keep one line.
+  let lines: ReceiptLine[];
+  if (payment.allocations?.length) {
+    lines = payment.allocations.map((a) => ({
+      cantidad: 1,
+      concepto:
+        ctx.charges.find((c) => c.id === a.charge_id)?.description ?? "Cargo",
+      importe: a.amount,
+    }));
+    const allocated = payment.allocations.reduce((s, a) => s + a.amount, 0);
+    const remainder = Math.round((payment.amount - allocated) * 100) / 100;
+    if (remainder > 0) {
+      lines.push({ cantidad: 1, concepto: "Abono a cuenta", importe: remainder });
+    }
+  } else {
+    const charge = ctx.charges.find((c) => c.id === payment.charge_id);
+    lines = [
+      {
+        cantidad: 1,
+        concepto: charge ? charge.description : "Abono a cuenta",
+        importe: payment.amount,
+      },
+    ];
+  }
   return {
     institutionName: ctx.institution.name,
     rfc: ctx.institution.rfc,
@@ -56,13 +80,7 @@ export function paymentToReceiptData(
     date: payment.received_at,
     studentName: ctx.student.full_name,
     enrollmentNumber: ctx.student.enrollment_number,
-    lines: [
-      {
-        cantidad: 1,
-        concepto: charge ? charge.description : "Abono a cuenta",
-        importe: payment.amount,
-      },
-    ],
+    lines,
     formaPago:
       PAYMENT_METHOD_LABELS[payment.method] +
       (payment.bank_reference ? ` · ${payment.bank_reference}` : ""),

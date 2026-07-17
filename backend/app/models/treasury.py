@@ -142,9 +142,31 @@ class Payment(SQLModel, table=True):
     cancel_reason: str = Field(default="", max_length=255)
 
 
+class PaymentAllocation(SQLModel, table=True):
+    """Split of one payment across several charges, so a student who owes
+    N colegiaturas settles them in a single cobro: one payment, one folio,
+    one receipt (RF-T03)."""
+    __tablename__ = "payment_allocations"
+    __table_args__ = (
+        UniqueConstraint("payment_id", "charge_id", name="uq_payment_allocation"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    payment_id: uuid.UUID = Field(foreign_key="payments.id", index=True)
+    charge_id: uuid.UUID = Field(foreign_key="charges.id", index=True)
+    amount: float = Field(gt=0)
+
+
+class PaymentAllocationPublic(SQLModel):
+    charge_id: uuid.UUID
+    amount: float
+
+
 class PaymentCreate(SQLModel):
     student_id: uuid.UUID
     charge_id: uuid.UUID | None = None
+    # Multi-charge cobro: the payment is allocated across these charges
+    # oldest-due-first. Mutually exclusive with charge_id.
+    charge_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     amount: float = Field(gt=0)
     method: PaymentMethod
     bank_reference: str = ""
@@ -162,6 +184,7 @@ class PaymentPublic(SQLModel):
     notes: str
     received_at: datetime
     cancelled: bool
+    allocations: list[PaymentAllocationPublic] = []
 
 
 class ScholarshipStatus(str, Enum):

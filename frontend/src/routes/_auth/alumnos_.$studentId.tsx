@@ -99,14 +99,34 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+const DETAIL_TABS = [
+  "datos",
+  "expediente",
+  "academico",
+  "horario",
+  "cuenta",
+  "justificantes",
+] as const;
+type DetailTab = (typeof DETAIL_TABS)[number];
+
+// ?tab= lets other screens deep-link straight to a section (e.g. ?tab=cuenta).
 export const Route = createFileRoute("/_auth/alumnos_/$studentId")({
   component: AlumnoDetailPage,
+  validateSearch: (search: Record<string, unknown>): { tab?: DetailTab } =>
+    DETAIL_TABS.includes(search.tab as DetailTab)
+      ? { tab: search.tab as DetailTab }
+      : {},
 });
 
 const NONE = "__none__";
 
 function AlumnoDetailPage() {
   const { studentId } = Route.useParams();
+  const { tab: tabParam } = Route.useSearch();
+  const [tab, setTab] = useState<string>(tabParam ?? "datos");
+  useEffect(() => {
+    if (tabParam) setTab(tabParam);
+  }, [tabParam]);
   const { data: student, isLoading, error } = useQuery({
     queryKey: queryKeys.student(studentId),
     queryFn: () => api<Student>(`/students/${studentId}`),
@@ -157,7 +177,7 @@ function AlumnoDetailPage() {
         </Badge>
       </div>
 
-      <Tabs defaultValue="datos">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="datos">Datos</TabsTrigger>
           <TabsTrigger value="expediente">Expediente</TabsTrigger>

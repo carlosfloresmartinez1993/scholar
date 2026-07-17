@@ -25,15 +25,18 @@ import {
 
 const NONE = "__none__";
 
-// One payment dialog for both call sites (POST /treasury/payments):
+// One payment dialog for all call sites (POST /treasury/payments):
 //  - Fixed-charge / cobro-libre mode: pass `charge` (a Charge, or null). No dropdown.
 //  - Dropdown mode: pass `charges` (open charges). Defaults to the oldest open charge.
+//  - Multi-cobro mode: pass `multiCharges` (the selected charges). One payment /
+//    one folio settles all of them, allocated oldest-due-first by the backend.
 // The dialog is dumb: it just registers the payment and calls `onPaid` before
 // closing so each site can do its own thing (print a receipt, invalidate, etc.).
 export function PaymentDialog({
   student,
   charge,
   charges,
+  multiCharges,
   open,
   onOpenChange,
   onPaid,
@@ -41,14 +44,19 @@ export function PaymentDialog({
   student: Student;
   charge?: Charge | null;
   charges?: Charge[];
+  multiCharges?: Charge[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onPaid?: (payment: Payment) => void;
 }) {
-  const dropdown = charges !== undefined;
+  const multi = multiCharges !== undefined && multiCharges.length > 0;
+  const dropdown = !multi && charges !== undefined;
+  const multiTotal = multi
+    ? Math.round(multiCharges.reduce((s, c) => s + c.balance, 0) * 100) / 100
+    : 0;
   const [form, setForm] = useState({
     charge_id: NONE,
-    amount: charge ? String(charge.balance) : "",
+    amount: multi ? String(multiTotal) : charge ? String(charge.balance) : "",
     method: "efectivo" as PaymentMethod,
     bank_reference: "",
     notes: "",
@@ -60,11 +68,14 @@ export function PaymentDialog({
         method: "POST",
         body: JSON.stringify({
           student_id: student.id,
-          charge_id: dropdown
-            ? form.charge_id === NONE
-              ? null
-              : form.charge_id
-            : (charge?.id ?? null),
+          charge_id: multi
+            ? null
+            : dropdown
+              ? form.charge_id === NONE
+                ? null
+                : form.charge_id
+              : (charge?.id ?? null),
+          charge_ids: multi ? multiCharges.map((c) => c.id) : null,
           amount: Number(form.amount),
           method: form.method,
           bank_reference: form.bank_reference,
@@ -86,7 +97,7 @@ export function PaymentDialog({
     if (!open) {
       setForm({
         charge_id: NONE,
-        amount: charge ? String(charge.balance) : "",
+        amount: multi ? String(multiTotal) : charge ? String(charge.balance) : "",
         method: "efectivo",
         bank_reference: "",
         notes: "",
@@ -103,7 +114,7 @@ export function PaymentDialog({
     : null;
   // default to settling the oldest open charge instead of "sin cargo"
   useEffect(() => {
-    if (open && oldestOpen && form.charge_id === NONE && form.amount === "") {
+    if (open && dropdown && oldestOpen && form.charge_id === NONE && form.amount === "") {
       setForm((f) => ({
         ...f,
         charge_id: oldestOpen.id,
@@ -113,11 +124,13 @@ export function PaymentDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, oldestOpen?.id]);
 
-  const title = dropdown
-    ? "Registrar pago"
-    : charge
-      ? `Cobrar: ${charge.description}`
-      : "Cobro libre";
+  const title = multi
+    ? `Cobrar ${multiCharges.length} cargos`
+    : dropdown
+      ? "Registrar pago"
+      : charge
+        ? `Cobrar: ${charge.description}`
+        : "Cobro libre";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -132,6 +145,28 @@ export function PaymentDialog({
             pay.mutate();
           }}
         >
+          {multi && (
+            <div className="rounded-xl border">
+              {multiCharges.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
+                >
+                  <span className="font-semibold">{c.description}</span>
+                  <span data-numeric>{formatMoney(c.balance)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3 bg-muted/50 px-3 py-2 text-sm font-bold">
+                <span>Total</span>
+                <span data-numeric>{formatMoney(multiTotal)}</span>
+              </div>
+            </div>
+          )}
+          {multi && Number(form.amount) < multiTotal && (
+            <p className="text-xs text-muted-foreground">
+              Pago parcial: se abona a los cargos más antiguos primero.
+            </p>
+          )}
           {dropdown && (
             <div className="grid gap-2">
               <Label>Cargo (opcional)</Label>

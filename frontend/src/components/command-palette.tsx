@@ -117,6 +117,16 @@ export function CommandPalette() {
           });
         },
       });
+      // One keystroke from any screen to charging this student in Caja.
+      list.push({
+        key: `student-cobrar:${s.id}`,
+        label: `Cobrar a ${s.full_name}`,
+        hint: "Caja",
+        run: () => {
+          close();
+          navigate({ to: "/tesoreria", search: { studentId: s.id } });
+        },
+      });
     }
 
     for (const p of programs ?? []) {
