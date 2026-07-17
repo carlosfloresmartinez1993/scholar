@@ -20,7 +20,8 @@ export const queryKeys = {
     ["group-billing-status", groupId] as const,
   promoteCyclePreview: ["promote-cycle-preview"] as const,
 
-  students: (q?: string) => ["students", q ?? ""] as const,
+  students: (q?: string, campusId?: string) =>
+    ["students", q ?? "", campusId ?? "all"] as const,
   student: (id: string) => ["student", id] as const,
   planEnrollments: (studentId: string) =>
     ["plan-enrollments", studentId] as const,
@@ -66,5 +67,9 @@ export const queryKeys = {
   collectionReport: (from: string, to: string) =>
     ["collection-report", from, to] as const,
   aging: ["aging"] as const,
-  dashboardStats: ["dashboard-stats"] as const,
+  dashboardStats: (days: number) => ["dashboard-stats", days] as const,
+  enrollmentsSeries: (days: number) =>
+    ["enrollments-series", days] as const,
+  dashboardActivity: (days: number) =>
+    ["dashboard-activity", days] as const,
 };

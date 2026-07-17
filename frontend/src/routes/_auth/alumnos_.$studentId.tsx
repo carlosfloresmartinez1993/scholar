@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   BadgeDollarSign,
   CalendarDays,
+  Camera as CameraIcon,
   Check,
   Eye,
   FilePlus,
@@ -69,6 +70,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { PaymentDialog } from "@/components/payment-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
+import { StudentAvatar } from "@/components/student-avatar";
+import { StudentPhotoDialog } from "@/components/student-photo-dialog";
+import { StudentStatusBadge } from "@/components/student-status-badge";
 import {
   Tabs,
   TabsContent,
@@ -149,41 +153,29 @@ function AlumnoDetailPage() {
   }
 
   if (isLoading || !student) {
-    return <Skeleton className="h-96 w-full rounded-2xl" />;
+    return <Skeleton className="h-96 w-full rounded-md" />;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Button variant="ghost" size="icon-sm" asChild aria-label="Volver">
           <Link to="/alumnos">
             <ArrowLeft className="size-4" />
           </Link>
         </Button>
-        <h1 className="text-3xl">{student.full_name}</h1>
-        <Badge variant="secondary" data-numeric>
-          {student.enrollment_number}
-        </Badge>
-        <Badge
-          variant={
-            student.status === "activo"
-              ? "default"
-              : student.status === "baja_definitiva"
-                ? "destructive"
-                : "outline"
-          }
-        >
-          {STUDENT_STATUS_LABELS[student.status]}
-        </Badge>
+        Alumnos
       </div>
+
+      <IdentityHeader student={student} />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="datos">Datos</TabsTrigger>
-          <TabsTrigger value="expediente">Expediente</TabsTrigger>
-          <TabsTrigger value="academico">Académico</TabsTrigger>
+          <TabsTrigger value="datos">Resumen</TabsTrigger>
+          <TabsTrigger value="academico">Kárdex</TabsTrigger>
+          <TabsTrigger value="cuenta">Pagos</TabsTrigger>
+          <TabsTrigger value="expediente">Documentos</TabsTrigger>
           <TabsTrigger value="horario">Horario</TabsTrigger>
-          <TabsTrigger value="cuenta">Estado de cuenta</TabsTrigger>
           <TabsTrigger value="justificantes">Justificantes</TabsTrigger>
         </TabsList>
         <TabsContent value="datos" className="mt-4">
@@ -206,6 +198,92 @@ function AlumnoDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// --- Identity header ---------------------------------------------------------
+
+function IdentityHeader({ student }: { student: Student }) {
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [photoVersion, setPhotoVersion] = useState(0);
+  const { data: campuses } = useQuery({
+    queryKey: queryKeys.campuses,
+    queryFn: () => api<Campus[]>("/catalog/campuses"),
+  });
+  // program/plan quick fact from data this page already loads for its tabs
+  const { data: enrollments } = useQuery({
+    queryKey: queryKeys.planEnrollments(student.id),
+    queryFn: () =>
+      api<PlanEnrollment[]>(`/students/${student.id}/plan-enrollments`),
+  });
+  const planVersionLabels = usePlanVersionLabels();
+  const campusName =
+    campuses?.find((c) => c.id === student.campus_id)?.name ?? "—";
+  const activePlan =
+    enrollments?.find((e) => e.status === "inscrito") ?? enrollments?.[0];
+  const planLabel = activePlan
+    ? planVersionLabels.get(activePlan.plan_version_id)
+    : null;
+
+  const meta = [
+    student.email || "Sin email",
+    student.phone || "Sin teléfono",
+    `Ingreso: ${formatDate(student.created_at)}`,
+  ];
+
+  return (
+    <Card className="rounded-md border shadow-sm">
+      <CardContent className="flex flex-wrap items-center gap-5 p-6">
+        <div className="relative shrink-0">
+          <StudentAvatar
+            studentId={student.id}
+            name={student.full_name}
+            hasPhoto={student.has_photo || photoVersion > 0}
+            version={photoVersion}
+            className="size-20 text-2xl"
+          />
+          <button
+            type="button"
+            onClick={() => setPhotoOpen(true)}
+            aria-label="Capturar fotografía"
+            title="Capturar fotografía"
+            className="absolute -bottom-1 -right-1 flex size-7 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:bg-muted"
+          >
+            <CameraIcon className="size-3.5" />
+          </button>
+        </div>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl md:text-3xl">{student.full_name}</h1>
+            <StudentStatusBadge status={student.status} />
+          </div>
+          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            {meta.map((part, i) => (
+              <span key={part} className="flex items-center gap-x-2">
+                {i > 0 && <span aria-hidden>·</span>}
+                {part}
+              </span>
+            ))}
+            <span aria-hidden>·</span>
+            <span data-numeric className="font-semibold text-foreground">
+              {student.enrollment_number}
+            </span>
+            <span aria-hidden>·</span>
+            <span data-numeric>{student.curp}</span>
+          </p>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+            Plantel {campusName}
+            {planLabel && <span className="normal-case"> · {planLabel}</span>}
+          </p>
+        </div>
+      </CardContent>
+      <StudentPhotoDialog
+        open={photoOpen}
+        onOpenChange={setPhotoOpen}
+        student={student}
+        onSaved={() => setPhotoVersion(Date.now())}
+      />
+    </Card>
   );
 }
 
@@ -257,7 +335,7 @@ function DatosTab({ student }: { student: Student }) {
     campuses?.find((c) => c.id === student.campus_id)?.name ?? "—";
 
   return (
-    <Card className="rounded-2xl">
+    <Card className="rounded-md">
       <CardContent className="space-y-3 p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold">Datos generales</h2>
@@ -453,13 +531,13 @@ function ExpedienteTab({ student }: { student: Student }) {
     );
   }
   if (isLoading || !expediente) {
-    return <Skeleton className="h-64 w-full rounded-2xl" />;
+    return <Skeleton className="h-64 w-full rounded-md" />;
   }
 
   return (
     <div className="space-y-6">
       {expediente.overdue_balance > 0 && (
-        <p className="rounded-xl border border-destructive/40 bg-red-50 px-4 py-3 text-sm font-semibold text-destructive dark:bg-destructive/10">
+        <p className="rounded-md border border-destructive/40 bg-red-50 px-4 py-3 text-sm font-semibold text-destructive dark:bg-destructive/10">
           El alumno tiene adeudo vencido por{" "}
           {formatMoney(expediente.overdue_balance)}. La emisión de documentos
           oficiales puede estar bloqueada.
@@ -467,7 +545,7 @@ function ExpedienteTab({ student }: { student: Student }) {
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="rounded-2xl">
+        <Card className="rounded-md">
           <CardContent className="space-y-3 p-6">
             <h2 className="text-lg font-bold">Checklist de requisitos</h2>
             {expediente.checklist.length === 0 && (
@@ -497,7 +575,7 @@ function ExpedienteTab({ student }: { student: Student }) {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl">
+        <Card className="rounded-md">
           <CardContent className="space-y-3 p-6">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">Documentos emitidos</h2>
@@ -539,7 +617,7 @@ function ExpedienteTab({ student }: { student: Student }) {
             <Upload className="size-4" /> Subir documento
           </Button>
         </div>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1047,7 +1125,7 @@ function AcademicoTab({ student }: { student: Student }) {
             <Plus className="size-4" /> Inscribir a plan
           </Button>
         </div>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1129,10 +1207,10 @@ function AcademicoTab({ student }: { student: Student }) {
               <Printer className="size-4" /> Imprimir kárdex
             </Button>
           </div>
-          {loadingKardex && <Skeleton className="h-40 w-full rounded-2xl" />}
+          {loadingKardex && <Skeleton className="h-40 w-full rounded-md" />}
           {kardex && (
             <>
-              <Card className="rounded-2xl">
+              <Card className="rounded-md">
                 <CardContent className="space-y-3 p-6">
                   <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
                     <span>
@@ -1188,7 +1266,7 @@ function AcademicoTab({ student }: { student: Student }) {
                 </CardContent>
               </Card>
 
-              <div className="rounded-2xl border bg-card">
+              <div className="rounded-md border bg-card">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1394,7 +1472,7 @@ function CuentaTab({ student }: { student: Student }) {
     );
   }
   if (isLoading || !statement) {
-    return <Skeleton className="h-64 w-full rounded-2xl" />;
+    return <Skeleton className="h-64 w-full rounded-md" />;
   }
 
   return (
@@ -1433,7 +1511,7 @@ function CuentaTab({ student }: { student: Student }) {
 
       <section className="space-y-3">
         <h2 className="text-xl font-bold">Cargos</h2>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1508,7 +1586,7 @@ function CuentaTab({ student }: { student: Student }) {
 
       <section className="space-y-3">
         <h2 className="text-xl font-bold">Pagos</h2>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1588,7 +1666,7 @@ function CuentaTab({ student }: { student: Student }) {
             <Plus className="size-4" /> Nueva beca
           </Button>
         </div>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1759,7 +1837,7 @@ function SummaryChip({
           ? "border-green-500/40 text-green-700 dark:text-green-400"
           : "";
   return (
-    <div className={`rounded-xl border bg-card px-4 py-2 ${toneClass}`}>
+    <div className={`rounded-md border bg-card px-4 py-2 ${toneClass}`}>
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
@@ -2180,7 +2258,7 @@ function HorarioTab({ student }: { student: Student }) {
   });
 
   if (isLoading) {
-    return <Skeleton className="h-64 w-full rounded-2xl" />;
+    return <Skeleton className="h-64 w-full rounded-md" />;
   }
 
   if (error || !data) {
@@ -2226,7 +2304,7 @@ function HorarioTab({ student }: { student: Student }) {
   }
 
   return (
-    <div className="rounded-2xl border bg-card">
+    <div className="rounded-md border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
@@ -2335,7 +2413,7 @@ function JustificantesTab({ student }: { student: Student }) {
         </Button>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

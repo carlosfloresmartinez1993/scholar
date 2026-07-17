@@ -43,7 +43,7 @@ function ReportesPage() {
 
 function StatCard({ label, value }: { label: string; value?: number | string }) {
   return (
-    <Card className="rounded-2xl">
+    <Card className="rounded-md">
       <CardContent className="p-5">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {label}
@@ -123,7 +123,7 @@ function TermSummarySection() {
           </Button>
         </div>
       ) : isLoading ? (
-        <Skeleton className="h-40 w-full rounded-2xl" />
+        <Skeleton className="h-40 w-full rounded-md" />
       ) : rows && rows.length === 0 ? (
         <EmptyState
           icon={BarChart3}
@@ -131,7 +131,7 @@ function TermSummarySection() {
           description="Aún no se han generado cargos por cuatrimestre."
         />
       ) : (
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>

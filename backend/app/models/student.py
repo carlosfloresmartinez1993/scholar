@@ -56,7 +56,12 @@ class Student(StudentBase, table=True):
     institution_id: uuid.UUID = Field(foreign_key="institutions.id", index=True)
     campus_id: uuid.UUID = Field(foreign_key="campuses.id", index=True)
     enrollment_number: str = Field(max_length=32)  # matrícula, assigned on create
+    photo_path: str | None = Field(default=None, max_length=500)
     created_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def has_photo(self) -> bool:
+        return self.photo_path is not None
 
 
 class StudentCreate(StudentBase):
@@ -77,6 +82,8 @@ class StudentPublic(StudentBase):
     campus_id: uuid.UUID
     enrollment_number: str
     created_at: datetime
+    # the file itself is served by GET /students/{id}/photo (path never leaks)
+    has_photo: bool = False
 
 
 # --- Bulk cohort intake: create + enroll many new students into one group -------

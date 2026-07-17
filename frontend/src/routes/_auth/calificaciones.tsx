@@ -173,12 +173,12 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
   };
 
   if (isLoading || !grid) {
-    return <Skeleton className="h-64 w-full rounded-2xl" />;
+    return <Skeleton className="h-64 w-full rounded-md" />;
   }
 
   if (grid.components.length === 0) {
     return (
-      <p className="rounded-xl border border-amber-400/60 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+      <p className="rounded-md border border-amber-400/60 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
         La materia no tiene componentes de evaluación configurados. Defínalos en
         «Programas» para poder capturar.
       </p>
@@ -201,7 +201,7 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
           {saveBatch.isPending ? "Guardando…" : "Guardar calificaciones"}
         </Button>
       </div>
-      <div className="overflow-x-auto rounded-2xl border bg-card">
+      <div className="overflow-x-auto rounded-md border bg-card">
         <Table>
         <TableHeader>
           <TableRow>
@@ -362,7 +362,7 @@ function ActasSection({ groupSubjectId }: { groupSubjectId: string }) {
         </div>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -510,7 +510,7 @@ function ActaSnapshot({ acta }: { acta: GradeActa }) {
         {acta.signed_at &&
           ` · Firmada por ${acta.signed_by_name} el ${formatDateTime(acta.signed_at)}`}
       </p>
-      <div className="rounded-xl border">
+      <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>

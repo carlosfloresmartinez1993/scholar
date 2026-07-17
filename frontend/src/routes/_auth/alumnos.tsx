@@ -13,11 +13,14 @@ import type {
 } from "@/api/types";
 import {
   ADMISSION_TYPE_LABELS,
+  formatDate,
   STUDENT_STATUS_LABELS,
 } from "@/lib/format";
+import { StudentAvatar } from "@/components/student-avatar";
+import { StudentStatusBadge } from "@/components/student-status-badge";
 import { usePersistedState } from "@/lib/use-persisted-state";
+import { ALL_CAMPUSES, useCampus } from "@/lib/campus-context";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -50,21 +53,6 @@ export const Route = createFileRoute("/_auth/alumnos")({
 
 const CURP_RE = /^[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d$/;
 
-export function studentStatusVariant(
-  status: StudentStatus,
-): "default" | "secondary" | "destructive" | "outline" {
-  switch (status) {
-    case "activo":
-      return "default";
-    case "egresado":
-      return "secondary";
-    case "baja_definitiva":
-      return "destructive";
-    default:
-      return "outline";
-  }
-}
-
 interface StudentForm {
   curp: string;
   full_name: string;
@@ -91,40 +79,40 @@ function AlumnosPage() {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
 
-  const { data: students, isLoading } = useQuery({
-    queryKey: queryKeys.students(search),
-    queryFn: () =>
-      api<Student[]>(
-        `/students?limit=200${search ? `&q=${encodeURIComponent(search)}` : ""}`,
-      ),
-  });
   const { data: campuses } = useQuery({
     queryKey: queryKeys.campuses,
     queryFn: () => api<Campus[]>("/catalog/campuses"),
   });
 
-  // Sticky table filters (persisted, restored on mount). "all" = no filter.
-  const [campusFilter, setCampusFilter] = usePersistedState<string>(
-    "alumnos-filters-v1:campus",
-    "all",
-    (v) => typeof v === "string", // stale campus ids are dropped below
-  );
+  // Global campus filter (header switcher); stale stored ids fall back to all.
+  const { campusId } = useCampus();
+  const effectiveCampus =
+    campusId === ALL_CAMPUSES || !campuses
+      ? campusId
+      : campuses.some((c) => c.id === campusId)
+        ? campusId
+        : ALL_CAMPUSES;
+
+  const { data: students, isLoading } = useQuery({
+    queryKey: queryKeys.students(search, effectiveCampus),
+    queryFn: () =>
+      api<Student[]>(
+        `/students?limit=200${search ? `&q=${encodeURIComponent(search)}` : ""}${
+          effectiveCampus !== ALL_CAMPUSES
+            ? `&campus_id=${effectiveCampus}`
+            : ""
+        }`,
+      ),
+  });
+
+  // Sticky status filter (persisted, restored on mount). "all" = no filter.
   const [statusFilter, setStatusFilter] = usePersistedState<string>(
     "alumnos-filters-v1:status",
     "all",
     (v) => v === "all" || (typeof v === "string" && v in STUDENT_STATUS_LABELS),
   );
-  // Drop a stored campus id that no longer exists in the loaded options.
-  const effectiveCampus =
-    campusFilter === "all" || !campuses
-      ? campusFilter
-      : campuses.some((c) => c.id === campusFilter)
-        ? campusFilter
-        : "all";
   const filteredStudents = students?.filter(
-    (s) =>
-      (effectiveCampus === "all" || s.campus_id === effectiveCampus) &&
-      (statusFilter === "all" || s.status === statusFilter),
+    (s) => statusFilter === "all" || s.status === statusFilter,
   );
 
   const [open, setOpen] = useState(false);
@@ -217,22 +205,6 @@ function AlumnosPage() {
           Buscar
         </Button>
 
-        {campuses && campuses.length > 1 && (
-          <Select value={effectiveCampus} onValueChange={setCampusFilter}>
-            <SelectTrigger className="w-48" aria-label="Filtrar por campus">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los campus</SelectItem>
-              {campuses.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-44" aria-label="Filtrar por estatus">
             <SelectValue />
@@ -248,14 +220,15 @@ function AlumnosPage() {
         </Select>
       </form>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-14" aria-label="Fotografía" />
               <TableHead>Matrícula</TableHead>
               <TableHead>Nombre</TableHead>
               <TableHead>CURP</TableHead>
-              <TableHead>Campus</TableHead>
+              <TableHead>Plantel</TableHead>
               <TableHead>Ingreso</TableHead>
               <TableHead>Estatus</TableHead>
             </TableRow>
@@ -264,7 +237,7 @@ function AlumnosPage() {
             {isLoading &&
               [1, 2, 3, 4].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
@@ -280,6 +253,14 @@ function AlumnosPage() {
                   })
                 }
               >
+                <TableCell>
+                  <StudentAvatar
+                    studentId={s.id}
+                    name={s.full_name}
+                    hasPhoto={s.has_photo}
+                    className="size-8 text-xs"
+                  />
+                </TableCell>
                 <TableCell className="font-semibold" data-numeric>
                   {s.enrollment_number}
                 </TableCell>
@@ -290,20 +271,18 @@ function AlumnosPage() {
                 <TableCell className="text-muted-foreground">
                   {campusName(s.campus_id)}
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {ADMISSION_TYPE_LABELS[s.admission_type]}
+                <TableCell className="text-muted-foreground" data-numeric>
+                  {formatDate(s.created_at)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={studentStatusVariant(s.status)}>
-                    {STUDENT_STATUS_LABELS[s.status]}
-                  </Badge>
+                  <StudentStatusBadge status={s.status} />
                 </TableCell>
               </TableRow>
             ))}
             {filteredStudents && filteredStudents.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={7}
                   className="py-10 text-center text-muted-foreground"
                 >
                   {search || effectiveCampus !== "all" || statusFilter !== "all" ? (

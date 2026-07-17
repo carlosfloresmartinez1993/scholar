@@ -5,9 +5,11 @@ import asyncio
 import csv
 import io
 import uuid
+from contextlib import suppress
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import select
 
 from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
@@ -41,6 +43,7 @@ from app.models import (
 from app.services import audit, calendar
 from app.services.academics import require_operable_rvoe
 from app.services.enrollment import create_student_core, enroll_student_core
+from app.services.files import save_upload
 from app.services.promotion import promote_cycle
 
 router = APIRouter(prefix="/students", tags=["students"])
@@ -111,6 +114,64 @@ async def update_student(
     await session.commit()
     await session.refresh(student)
     return student
+
+
+# --- Photo (credencial-style portrait) -------------------------------------------
+
+PHOTO_TYPES = {"image/jpeg", "image/png"}
+PHOTO_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/{student_id}/photo")
+async def upload_student_photo(
+    session: SessionDep,
+    current_user: ServiciosEscolares,
+    student_id: uuid.UUID,
+    file: UploadFile,
+) -> StudentPublic:
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    path = await save_upload(
+        file,
+        f"student-photos/{student_id}",
+        allowed_types=PHOTO_TYPES,
+        max_bytes=PHOTO_MAX_BYTES,
+        type_error_detail="Solo se aceptan imágenes JPEG o PNG",
+    )
+    old_path = student.photo_path
+    student.photo_path = path
+    session.add(student)
+    audit.record(session, actor=current_user.email, action="student.photo_uploaded",
+                 entity="student", entity_id=str(student_id))
+    try:
+        await session.commit()
+    except Exception:
+        # commit failed → the DB still points at the old file; drop the new one
+        await session.rollback()
+        with suppress(OSError):
+            Path(path).unlink(missing_ok=True)
+        raise
+    if old_path:
+        with suppress(OSError):
+            Path(old_path).unlink(missing_ok=True)  # best-effort cleanup
+    await session.refresh(student)
+    return student
+
+
+@router.get("/{student_id}/photo")
+async def get_student_photo(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+) -> FileResponse:
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    if not student.photo_path or not Path(student.photo_path).is_file():
+        raise HTTPException(status_code=404, detail="El alumno no tiene fotografía")
+    media_type = (
+        "image/png" if student.photo_path.lower().endswith(".png") else "image/jpeg"
+    )
+    return FileResponse(student.photo_path, media_type=media_type)
 
 
 # --- Plan enrollment (RF-C04) ---------------------------------------------------

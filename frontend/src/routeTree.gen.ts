@@ -17,6 +17,7 @@ import { Route as AuthTesoreriaRouteImport } from './routes/_auth/tesoreria'
 import { Route as AuthReportesRouteImport } from './routes/_auth/reportes'
 import { Route as AuthProgramasRouteImport } from './routes/_auth/programas'
 import { Route as AuthPeriodosRouteImport } from './routes/_auth/periodos'
+import { Route as AuthPerfilRouteImport } from './routes/_auth/perfil'
 import { Route as AuthInscripcionesRouteImport } from './routes/_auth/inscripciones'
 import { Route as AuthGruposRouteImport } from './routes/_auth/grupos'
 import { Route as AuthCalificacionesRouteImport } from './routes/_auth/calificaciones'
@@ -64,6 +65,11 @@ const AuthPeriodosRoute = AuthPeriodosRouteImport.update({
   path: '/periodos',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthPerfilRoute = AuthPerfilRouteImport.update({
+  id: '/perfil',
+  path: '/perfil',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthInscripcionesRoute = AuthInscripcionesRouteImport.update({
   id: '/inscripciones',
   path: '/inscripciones',
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/calificaciones': typeof AuthCalificacionesRoute
   '/grupos': typeof AuthGruposRoute
   '/inscripciones': typeof AuthInscripcionesRoute
+  '/perfil': typeof AuthPerfilRoute
   '/periodos': typeof AuthPeriodosRoute
   '/programas': typeof AuthProgramasRoute
   '/reportes': typeof AuthReportesRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/calificaciones': typeof AuthCalificacionesRoute
   '/grupos': typeof AuthGruposRoute
   '/inscripciones': typeof AuthInscripcionesRoute
+  '/perfil': typeof AuthPerfilRoute
   '/periodos': typeof AuthPeriodosRoute
   '/programas': typeof AuthProgramasRoute
   '/reportes': typeof AuthReportesRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/_auth/calificaciones': typeof AuthCalificacionesRoute
   '/_auth/grupos': typeof AuthGruposRoute
   '/_auth/inscripciones': typeof AuthInscripcionesRoute
+  '/_auth/perfil': typeof AuthPerfilRoute
   '/_auth/periodos': typeof AuthPeriodosRoute
   '/_auth/programas': typeof AuthProgramasRoute
   '/_auth/reportes': typeof AuthReportesRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/calificaciones'
     | '/grupos'
     | '/inscripciones'
+    | '/perfil'
     | '/periodos'
     | '/programas'
     | '/reportes'
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/calificaciones'
     | '/grupos'
     | '/inscripciones'
+    | '/perfil'
     | '/periodos'
     | '/programas'
     | '/reportes'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/_auth/calificaciones'
     | '/_auth/grupos'
     | '/_auth/inscripciones'
+    | '/_auth/perfil'
     | '/_auth/periodos'
     | '/_auth/programas'
     | '/_auth/reportes'
@@ -265,6 +277,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthPeriodosRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/perfil': {
+      id: '/_auth/perfil'
+      path: '/perfil'
+      fullPath: '/perfil'
+      preLoaderRoute: typeof AuthPerfilRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/inscripciones': {
       id: '/_auth/inscripciones'
       path: '/inscripciones'
@@ -324,6 +343,7 @@ interface AuthRouteChildren {
   AuthCalificacionesRoute: typeof AuthCalificacionesRoute
   AuthGruposRoute: typeof AuthGruposRoute
   AuthInscripcionesRoute: typeof AuthInscripcionesRoute
+  AuthPerfilRoute: typeof AuthPerfilRoute
   AuthPeriodosRoute: typeof AuthPeriodosRoute
   AuthProgramasRoute: typeof AuthProgramasRoute
   AuthReportesRoute: typeof AuthReportesRoute
@@ -340,6 +360,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthCalificacionesRoute: AuthCalificacionesRoute,
   AuthGruposRoute: AuthGruposRoute,
   AuthInscripcionesRoute: AuthInscripcionesRoute,
+  AuthPerfilRoute: AuthPerfilRoute,
   AuthPeriodosRoute: AuthPeriodosRoute,
   AuthProgramasRoute: AuthProgramasRoute,
   AuthReportesRoute: AuthReportesRoute,

@@ -41,7 +41,8 @@
 }
 
 :root {
-  --radius: 0.75rem;
+  /* Tighter corners across the app (redesign): lg == 0.375rem */
+  --radius: 0.375rem;
 
   /* Custom easing — built-in `ease` is too weak (interface-kit) */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -78,13 +79,14 @@
   /* Yellow ring is invisible on white (≈1.6:1); focus in light mode is black */
   --ring: #111111;
 
-  --sidebar: #ffffff;
-  --sidebar-foreground: #111111;
+  /* Dark near-black sidebar on a light content area (brand yellow-on-black) */
+  --sidebar: #111111;
+  --sidebar-foreground: #fafafa;
   --sidebar-primary: #fce004;
   --sidebar-primary-foreground: #111111;
-  --sidebar-accent: #fefce8;
-  --sidebar-accent-foreground: #111111;
-  --sidebar-border: #e2e8f0;
+  --sidebar-accent: #27272a;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #27272a;
   --sidebar-ring: #fce004;
 }
 
@@ -117,7 +119,7 @@
   --input: #27272a;
   --ring: #fce004;
 
-  --sidebar: #09090b;
+  --sidebar: #111111;
   --sidebar-foreground: #fafafa;
   --sidebar-primary: #fce004;
   --sidebar-primary-foreground: #111111;

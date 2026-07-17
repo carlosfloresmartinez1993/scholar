@@ -109,7 +109,7 @@ function ProgramasPage() {
         />
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -243,7 +243,7 @@ function ProgramCalendarLink({ program }: { program: Program }) {
   );
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card px-4 py-3">
+    <section className="flex flex-wrap items-center gap-3 rounded-md border bg-card px-4 py-3">
       <CalendarDays className="size-4 text-muted-foreground" />
       <span className="text-sm font-semibold">Calendario</span>
       {isError ? (
@@ -519,7 +519,7 @@ function RvoeSection({
         </Button>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -853,7 +853,7 @@ function PlanVersionSection({
         </Button>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -1100,7 +1100,7 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
         </Button>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -1299,7 +1299,7 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
                   No hay materias de periodos anteriores para seriar.
                 </p>
               ) : (
-                <div className="max-h-48 space-y-1 overflow-y-auto rounded-xl border p-2">
+                <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
                   {prereqCandidates.map((s) => (
                     <label
                       key={s.id}
@@ -1428,7 +1428,7 @@ function ComponentsDialog({
           {components?.map((c) => (
             <div
               key={c.id}
-              className="flex items-center gap-3 rounded-xl border px-3 py-2 text-sm"
+              className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm"
             >
               <Badge variant="secondary">{EVALUATION_KIND_LABELS[c.kind]}</Badge>
               <span className="font-semibold">{c.label}</span>

@@ -119,7 +119,7 @@ function UsuariosPage() {
         </Button>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

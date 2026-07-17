@@ -104,10 +104,28 @@ export type ScholarshipStatus =
 
 // --- Users / audit ----------------------------------------------------------
 
+export type UserPosition =
+  | "control_escolar"
+  | "directivo"
+  | "cobranza"
+  | "docente"
+  | "coordinacion_academica"
+  | "direccion"
+  | "sistemas"
+  | "administrativo";
+
 export interface UserPublic {
   id: string;
   email: string;
   full_name: string;
+  /** Preferred display name (profile settings); falls back to full_name. */
+  display_name?: string | null;
+  location?: string | null;
+  position?: UserPosition | null;
+  recovery_email?: string | null;
+  recovery_email_verified?: boolean;
+  /** candidate address awaiting code verification (never replaces recovery_email until verified) */
+  pending_recovery_email?: string | null;
   role: UserRole;
   is_active: boolean;
   is_superuser: boolean;
@@ -262,6 +280,8 @@ export interface Student {
   admission_type: AdmissionType;
   enrollment_number: string;
   created_at: string;
+  /** photo served by GET /students/{id}/photo when true */
+  has_photo?: boolean;
 }
 
 export interface BulkIntakeRow {
@@ -593,6 +613,18 @@ export interface DashboardStats {
     unsigned_actas: number;
     groups_without_teacher: number;
   };
+  /** period-scoped metrics for the selected 1/7/14/30-day window */
+  period: {
+    days: number;
+    collected: MetricDelta;
+    new_enrollments: MetricDelta;
+  };
+}
+
+/** one bar of the new-enrollments chart */
+export interface EnrollmentPoint {
+  date: string;
+  count: number;
 }
 
 export interface CollectionReport {

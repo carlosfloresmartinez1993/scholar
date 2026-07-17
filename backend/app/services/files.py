@@ -11,12 +11,24 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg", "image/webp"}
 
 
-async def save_upload(file: UploadFile, subdir: str) -> str:
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=415, detail="Solo se aceptan PDF o imágenes")
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Archivo mayor a 20 MB")
+async def save_upload(
+    file: UploadFile,
+    subdir: str,
+    *,
+    allowed_types: set[str] = ALLOWED_TYPES,
+    max_bytes: int = MAX_UPLOAD_BYTES,
+    type_error_detail: str = "Solo se aceptan PDF o imágenes",
+) -> str:
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=415, detail=type_error_detail)
+    # read at most max_bytes + 1: enough to detect oversize without buffering
+    # an arbitrarily large body in memory
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Archivo mayor a {max_bytes // (1024 * 1024)} MB",
+        )
     directory = Path(settings.UPLOADS_DIR) / subdir
     directory.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename or "archivo").name.replace(" ", "_")

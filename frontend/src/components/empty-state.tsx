@@ -13,10 +13,10 @@ export function EmptyState({
   children?: React.ReactNode;
 }) {
   return (
-    <Card className="rounded-2xl">
+    <Card className="rounded-md">
       <CardContent className="flex flex-col items-center gap-1 py-16 text-center">
         <div
-          className="stagger-item mb-3 flex size-16 items-center justify-center rounded-2xl bg-primary/15"
+          className="stagger-item mb-3 flex size-16 items-center justify-center rounded-md bg-primary/15"
           aria-hidden="true"
         >
           <Icon className="size-8 text-foreground/70" />

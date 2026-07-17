@@ -1,4 +1,15 @@
-from app.models.user import User, UserBase, UserCreate, UserPublic, UserRole, UserUpdate
+from app.models.user import (
+    ProfileUpdate,
+    RecoveryEmailRequest,
+    RecoveryEmailVerify,
+    User,
+    UserBase,
+    UserCreate,
+    UserPosition,
+    UserPublic,
+    UserRole,
+    UserUpdate,
+)
 from app.models.audit import AuditLog
 from app.models.folio import FolioCounter
 from app.models.catalog import (

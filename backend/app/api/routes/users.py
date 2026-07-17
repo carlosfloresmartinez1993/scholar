@@ -1,16 +1,144 @@
 """User management (RT-07): superuser manages staff accounts; each account has
-a granular role (servicios escolares, tesorería, coordinación, docente…)."""
+a granular role (servicios escolares, tesorería, coordinación, docente…).
+Also self-service profile settings (display name, position, recovery email)."""
+import hashlib
+import hmac
+import html
+import secrets
 import uuid
+from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, SessionDep, SuperUser
-from app.core.security import get_password_hash
-from app.models import User, UserCreate, UserPublic, UserRole, UserUpdate
+from app.api.deps import AnyStaff, CurrentUser, SessionDep, SuperUser
+from app.core.security import get_password_hash, verify_password
+from app.models import (
+    ProfileUpdate,
+    RecoveryEmailRequest,
+    RecoveryEmailVerify,
+    User,
+    UserCreate,
+    UserPublic,
+    UserRole,
+    UserUpdate,
+)
+from app.models.common import utcnow
 from app.services import audit
+from app.services.email import send_email
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+RECOVERY_CODE_TTL_MINUTES = 10
+RECOVERY_RESEND_SECONDS = 60
+
+
+# --- Self-service profile (current user) --------------------------------------
+
+@router.patch("/me/profile")
+async def update_my_profile(
+    session: SessionDep, current_user: CurrentUser, body: ProfileUpdate
+) -> UserPublic:
+    changes = body.model_dump(exclude_unset=True)
+    # never a real attribute — only used to authorize an email change below
+    current_password = changes.pop("current_password", None)
+    if "email" in changes:
+        if changes["email"] is None:
+            raise HTTPException(status_code=422, detail="El email no puede quedar vacío")
+        new_email = changes["email"].lower()
+        if new_email != current_user.email:
+            # changing the login email requires re-entering the password
+            if not current_password:
+                raise HTTPException(status_code=403, detail="Contraseña incorrecta")
+            ok, _ = verify_password(current_password, current_user.hashed_password)
+            if not ok:
+                raise HTTPException(status_code=403, detail="Contraseña incorrecta")
+            dup = (await session.exec(select(User).where(User.email == new_email))).first()
+            if dup:
+                raise HTTPException(status_code=409, detail="Email already registered")
+        changes["email"] = new_email
+    for k, v in changes.items():
+        setattr(current_user, k, v)
+    session.add(current_user)
+    audit.record(session, actor=current_user.email, action="user.profile_updated",
+                 entity="user", entity_id=str(current_user.id),
+                 detail=", ".join(changes.keys()))
+    await session.commit()
+    await session.refresh(current_user)
+    return current_user
+
+
+@router.post("/me/recovery-email/request")
+async def request_recovery_email(
+    session: SessionDep,
+    current_user: CurrentUser,
+    body: RecoveryEmailRequest,
+    background: BackgroundTasks,
+) -> dict:
+    """Send a 6-digit verification code to the given recovery email. Also the
+    resend path: same endpoint, throttled to one send per minute."""
+    now = utcnow()
+    if (
+        current_user.recovery_code_sent_at is not None
+        and (now - current_user.recovery_code_sent_at).total_seconds()
+        < RECOVERY_RESEND_SECONDS
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Espera un minuto antes de solicitar otro código",
+        )
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    # The candidate address stays pending; the verified one is untouched until
+    # the code checks out.
+    current_user.pending_recovery_email = body.email.lower()
+    current_user.recovery_code_hash = hashlib.sha256(code.encode()).hexdigest()
+    current_user.recovery_code_expires = now + timedelta(minutes=RECOVERY_CODE_TTL_MINUTES)
+    current_user.recovery_code_sent_at = now
+    session.add(current_user)
+    audit.record(session, actor=current_user.email, action="user.recovery_email_requested",
+                 entity="user", entity_id=str(current_user.id))
+    await session.commit()
+    # The code travels only by email — never in the API response.
+    safe_name = html.escape(current_user.display_name or current_user.full_name)
+    background.add_task(
+        send_email,
+        to=current_user.pending_recovery_email,
+        subject="Código de verificación — INUE Escolar",
+        html=(
+            f"<p>Hola {safe_name},</p>"
+            f"<p>Tu código para verificar el correo de recuperación es:</p>"
+            f"<p style='font-size:24px;font-weight:bold;letter-spacing:4px'>{code}</p>"
+            f"<p>Vence en {RECOVERY_CODE_TTL_MINUTES} minutos. Si no lo "
+            f"solicitaste, ignora este mensaje.</p>"
+        ),
+    )
+    return {"ok": True}
+
+
+@router.post("/me/recovery-email/verify")
+async def verify_recovery_email(
+    session: SessionDep, current_user: CurrentUser, body: RecoveryEmailVerify
+) -> UserPublic:
+    if not current_user.recovery_code_hash or current_user.recovery_code_expires is None:
+        raise HTTPException(status_code=400, detail="No hay un código pendiente de verificar")
+    if utcnow() > current_user.recovery_code_expires:
+        raise HTTPException(status_code=400, detail="El código expiró; solicita uno nuevo")
+    submitted = hashlib.sha256(body.code.encode()).hexdigest()
+    if not hmac.compare_digest(submitted, current_user.recovery_code_hash):
+        raise HTTPException(status_code=400, detail="Código incorrecto")
+    # promote the pending address now that its code checked out
+    current_user.recovery_email = current_user.pending_recovery_email
+    current_user.recovery_email_verified = True
+    current_user.pending_recovery_email = None
+    current_user.recovery_code_hash = None
+    current_user.recovery_code_expires = None
+    current_user.recovery_code_sent_at = None
+    session.add(current_user)
+    audit.record(session, actor=current_user.email, action="user.recovery_email_verified",
+                 entity="user", entity_id=str(current_user.id))
+    await session.commit()
+    await session.refresh(current_user)
+    return current_user
 
 
 @router.get("")

@@ -29,7 +29,7 @@ function AuditoriaPage() {
     <div className="space-y-6">
       <h1 className="text-3xl">Auditoría</h1>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

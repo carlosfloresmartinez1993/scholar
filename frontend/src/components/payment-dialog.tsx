@@ -146,7 +146,7 @@ export function PaymentDialog({
           }}
         >
           {multi && (
-            <div className="rounded-xl border">
+            <div className="rounded-md border">
               {multiCharges.map((c) => (
                 <div
                   key={c.id}

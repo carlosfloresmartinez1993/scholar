@@ -240,7 +240,7 @@ function CajaTab() {
     <div className="space-y-6">
       {/* Student search */}
       {!student ? (
-        <Card className="rounded-2xl">
+        <Card className="rounded-md">
           <CardContent className="space-y-3 p-6">
             <h2 className="text-lg font-bold">Cobrar a un alumno</h2>
             <div className="relative max-w-md">
@@ -253,7 +253,7 @@ function CajaTab() {
               />
             </div>
             {query.trim().length >= 2 && (
-              <div className="max-w-md divide-y rounded-xl border">
+              <div className="max-w-md divide-y rounded-md border">
                 {results?.map((s) => (
                   <button
                     key={s.id}
@@ -319,7 +319,7 @@ function CajaTab() {
                 </Button>
               )}
             </div>
-            <div className="rounded-2xl border bg-card">
+            <div className="rounded-md border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -390,7 +390,7 @@ function CajaTab() {
             <h3 className="text-sm font-semibold text-muted-foreground">
               Pagos recientes
             </h3>
-            <div className="rounded-2xl border bg-card">
+            <div className="rounded-md border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -513,7 +513,7 @@ function InstitucionReciboCard() {
   });
 
   return (
-    <Card className="rounded-2xl border-dashed">
+    <Card className="rounded-md border-dashed">
       <CardContent className="space-y-3 p-6">
         <h3 className="text-sm font-semibold text-muted-foreground">
           Encabezado de recibos · datos fiscales de la institución
@@ -647,7 +647,7 @@ function FacturarDialog({
               habilitará al conectar un PAC.
             </p>
             {!editing && profile ? (
-              <div className="space-y-1 rounded-xl border p-4 text-sm">
+              <div className="space-y-1 rounded-md border p-4 text-sm">
                 <p className="font-bold">{profile.razon_social}</p>
                 <p className="text-muted-foreground">RFC: {profile.rfc}</p>
                 {profile.regimen_fiscal && (
@@ -857,7 +857,7 @@ function CarteraVencidaTab() {
           · {formatMoney(total)}
         </span>
       </h2>
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -989,7 +989,7 @@ function ConceptosTab() {
         </Button>
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -1187,7 +1187,7 @@ function RecargosSection() {
   });
 
   return (
-    <Card className="rounded-2xl border-dashed">
+    <Card className="rounded-md border-dashed">
       <CardContent className="space-y-3 p-6">
         <div className="flex items-center gap-2">
           <Badge variant="secondary">{CONCEPT_KIND_LABELS.recargo}</Badge>
@@ -1280,7 +1280,7 @@ function BecasTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1 rounded-xl border p-1">
+        <div className="flex gap-1 rounded-md border p-1">
           {BECA_FILTERS.map((f) => (
             <Button
               key={f.value}
@@ -1299,7 +1299,7 @@ function BecasTab() {
         )}
       </div>
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -1449,9 +1449,9 @@ function ReportesTab() {
           <DateRangeFilter value={range} onChange={setRange} />
         </div>
         {loadingCollection ? (
-          <Skeleton className="h-32 w-full rounded-2xl" />
+          <Skeleton className="h-32 w-full rounded-md" />
         ) : collection ? (
-          <Card className="rounded-2xl">
+          <Card className="rounded-md">
             <CardContent className="flex flex-wrap items-start gap-8 p-6">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1521,7 +1521,7 @@ function ReportesTab() {
             </span>
           </h2>
         </div>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1581,7 +1581,7 @@ function ReportesTab() {
 
       <section className="space-y-3">
         <h2 className="text-xl font-bold">Exportación SEP</h2>
-        <Card className="rounded-2xl">
+        <Card className="rounded-md">
           <CardContent className="flex flex-wrap items-center gap-3 p-6">
             <Label className="text-sm font-semibold">Ciclo</Label>
             <Select value={effectiveSepTerm} onValueChange={setSepTermId}>
@@ -1613,7 +1613,7 @@ function ReportesTab() {
 
 function MetricCard({ label, value }: { label: string; value?: number | string }) {
   return (
-    <Card className="rounded-2xl">
+    <Card className="rounded-md">
       <CardContent className="p-5">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {label}

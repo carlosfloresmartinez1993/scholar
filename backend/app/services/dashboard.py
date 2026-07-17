@@ -1,13 +1,15 @@
 """Inicio dashboard: per-level headcounts (activos, grupos, becados) and cartera
-vencida for the open term, each with a delta vs the previous term."""
+vencida for the open term, plus period-scoped metrics (cobrado, inscripciones
+nuevas) over a selectable window of 1/7/14/30 days."""
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
     AbsenceJustification,
+    AuditLog,
     Charge,
     ChargeStatus,
     EducationLevel,
@@ -17,6 +19,7 @@ from app.models import (
     GroupEnrollmentStatus,
     GroupSubject,
     JustificationStatus,
+    Payment,
     PlanVersion,
     Program,
     Rvoe,
@@ -30,6 +33,9 @@ from app.models.common import utcnow
 from app.services.treasury import charges_paid_map
 
 LEVEL_ORDER = list(EducationLevel)
+
+# Día / Semana / Quincena / Mes — the only selectable dashboard windows.
+VALID_PERIOD_DAYS = {1, 7, 14, 30}
 
 # Groups → their program level, shared join chain used by every per-level count.
 _LEVEL_JOINS = (
@@ -130,7 +136,97 @@ async def _pending_tasks(session: AsyncSession, open_term_id: uuid.UUID) -> dict
     }
 
 
-async def dashboard_stats(session: AsyncSession, today: date | None = None) -> dict:
+async def _collected_between(
+    session: AsyncSession, start: datetime, end: datetime
+) -> float:
+    total = await session.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0.0)).where(
+            Payment.cancelled == False,  # noqa: E712
+            Payment.received_at >= start,
+            Payment.received_at < end,
+        )
+    )
+    return round(total or 0.0, 2)
+
+
+async def _enrollments_between(
+    session: AsyncSession, start: datetime, end: datetime
+) -> int:
+    count = await session.scalar(
+        select(func.count())
+        .select_from(GroupEnrollment)
+        .where(GroupEnrollment.created_at >= start, GroupEnrollment.created_at < end)
+    )
+    return count or 0
+
+
+def _period_window(
+    days: int, now: datetime | None = None
+) -> tuple[datetime, datetime, datetime]:
+    """Calendar-day-aligned window shared by the KPIs and the chart:
+    current = [midnight of (today - (days-1)), now), previous = the equal-length
+    window right before it. Returns (prev_start, start, now)."""
+    now = now or utcnow()
+    start = datetime.combine(now.date() - timedelta(days=days - 1), datetime.min.time())
+    return start - timedelta(days=days), start, now
+
+
+async def period_stats(session: AsyncSession, days: int, now: datetime | None = None) -> dict:
+    """Cobrado + inscripciones nuevas of the current window, with the previous
+    equal-length window for the delta."""
+    prev_start, start, now = _period_window(days, now)
+    return {
+        "days": days,
+        "collected": {
+            "current": await _collected_between(session, start, now),
+            "previous": await _collected_between(session, prev_start, start),
+        },
+        "new_enrollments": {
+            "current": await _enrollments_between(session, start, now),
+            "previous": await _enrollments_between(session, prev_start, start),
+        },
+    }
+
+
+async def enrollments_series(
+    session: AsyncSession, days: int, now: datetime | None = None
+) -> list[dict]:
+    """New group-enrollments per calendar day over the same window as the KPIs
+    (buckets in Python — bounded by one window's volume; ponytail: fine at
+    institution scale)."""
+    _, start, _ = _period_window(days, now)
+    first_day = start.date()
+    created = (
+        await session.exec(
+            select(GroupEnrollment.created_at).where(GroupEnrollment.created_at >= start)
+        )
+    ).all()
+    buckets = {first_day + timedelta(days=i): 0 for i in range(days)}
+    for created_at in created:
+        day = created_at.date()
+        if day in buckets:
+            buckets[day] += 1
+    return [{"date": day.isoformat(), "count": count} for day, count in buckets.items()]
+
+
+async def recent_activity(
+    session: AsyncSession, days: int, limit: int = 10, now: datetime | None = None
+) -> list[AuditLog]:
+    now = now or utcnow()
+    start = now - timedelta(days=days)
+    return (
+        await session.exec(
+            select(AuditLog)
+            .where(AuditLog.created_at >= start)
+            .order_by(AuditLog.created_at.desc())  # type: ignore[attr-defined]
+            .limit(max(1, min(limit, 50)))
+        )
+    ).all()
+
+
+async def dashboard_stats(
+    session: AsyncSession, today: date | None = None, days: int = 30
+) -> dict:
     today = today or utcnow().date()
     terms = (
         await session.exec(select(Term).order_by(Term.start_date.desc()))  # type: ignore[attr-defined]
@@ -152,6 +248,7 @@ async def dashboard_stats(session: AsyncSession, today: date | None = None) -> d
             "cartera_vencida": {"current": 0.0, "previous": 0.0},
             "pending": {"justifications_pending": 0, "unsigned_actas": 0,
                         "groups_without_teacher": 0},
+            "period": await period_stats(session, days),
         }
 
     cur_students = await _students_by_level(session, open_term.id)
@@ -172,4 +269,5 @@ async def dashboard_stats(session: AsyncSession, today: date | None = None) -> d
             "previous": await _cartera_vencida(session, prev_term, today) if prev_term else 0.0,
         },
         "pending": await _pending_tasks(session, open_term.id),
+        "period": await period_stats(session, days),
     }

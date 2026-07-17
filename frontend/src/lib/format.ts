@@ -16,6 +16,7 @@ import type {
   ScholarshipStatus,
   StudentStatus,
   SubjectEnrollmentStatus,
+  UserPosition,
   UserRole,
 } from "@/api/types";
 
@@ -148,6 +149,17 @@ export const SCHOLARSHIP_STATUS_LABELS: Record<ScholarshipStatus, string> = {
   cancelada: "Cancelada",
 };
 
+export const POSITION_LABELS: Record<UserPosition, string> = {
+  control_escolar: "Control escolar",
+  directivo: "Directivo",
+  cobranza: "Cobranza",
+  docente: "Docente",
+  coordinacion_academica: "Coordinación académica",
+  direccion: "Dirección",
+  sistemas: "Sistemas",
+  administrativo: "Administrativo",
+};
+
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin_sistema: "Administrador del sistema",
   direccion: "Dirección",
@@ -193,4 +205,15 @@ export function formatDateTime(d?: string | null): string {
 /** Today's date as YYYY-MM-DD (local time). */
 export function todayISO(): string {
   return new Date().toLocaleDateString("sv-SE");
+}
+
+/** "2026-07-17T10:00:00" -> "hace 5 min" / "hace 2 h" / "hace 3 días". */
+export function relativeTime(d: string): string {
+  const iso = /[Zz]|[+-]\d\d:?\d\d$/.test(d) ? d : `${d}Z`;
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "hace un momento";
+  if (seconds < 3600) return `hace ${Math.floor(seconds / 60)} min`;
+  if (seconds < 86400) return `hace ${Math.floor(seconds / 3600)} h`;
+  const days = Math.floor(seconds / 86400);
+  return days === 1 ? "hace 1 día" : `hace ${days} días`;
 }

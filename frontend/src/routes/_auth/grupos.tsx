@@ -170,7 +170,7 @@ function GruposPage() {
           description="Cree un ciclo en «Periodos» y selecciónelo para administrar sus grupos."
         />
       ) : (
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -321,7 +321,7 @@ function PromoteCycleDialog({
                 </p>
 
                 {data.promoted.length > 0 && (
-                  <div className="rounded-2xl border bg-card">
+                  <div className="rounded-md border bg-card">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -348,7 +348,7 @@ function PromoteCycleDialog({
                 )}
 
                 {data.skipped.length > 0 && (
-                  <div className="rounded-2xl border bg-card">
+                  <div className="rounded-md border bg-card">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -610,7 +610,7 @@ function GroupCalendarLink({ group }: { group: Group }) {
   );
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card px-4 py-3">
+    <section className="flex flex-wrap items-center gap-3 rounded-md border bg-card px-4 py-3">
       <CalendarDays className="size-4 text-muted-foreground" />
       <span className="text-sm font-semibold">Calendario</span>
       {isError ? (
@@ -784,7 +784,7 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
             <Plus className="size-4" /> Agregar materia
           </Button>
         </div>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -852,7 +852,7 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
             </Button>
           </div>
         </div>
-        <div className="rounded-2xl border bg-card">
+        <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -897,7 +897,7 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
               alumnos facturados. Usa «Generar cargos del grupo» para completar
               los faltantes.
             </p>
-            <div className="rounded-2xl border bg-card">
+            <div className="rounded-md border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1262,7 +1262,7 @@ function EnrollDialog({
           </div>
           <div className="grid gap-2">
             <Label>Materias (opcional — vacío inscribe todas)</Label>
-            <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border p-2">
+            <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
               {groupSubjects.map((gs) => (
                 <label
                   key={gs.id}

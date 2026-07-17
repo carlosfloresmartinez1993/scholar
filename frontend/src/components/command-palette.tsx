@@ -1,6 +1,7 @@
-// Global quick-nav + quick-action palette (⌘K / Ctrl+K). Built on the existing
-// shadcn Dialog + Input (no cmdk dependency): a single filtered, keyboard-driven
-// list that jumps to a student (deep-link), a program, or any screen.
+// Global quick-access search (⌘K / Ctrl+K, or the header search box). Built on
+// the existing shadcn Dialog + Input (no cmdk dependency): a single filtered,
+// keyboard-driven list that jumps to a student (deep-link), a program, a page
+// or a quick action.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -12,17 +13,18 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
-// Static navigation / quick actions. `to` values are real routes from _auth.
+// Static pages / quick actions. `to` values are real routes from _auth.
 const ACTIONS = [
-  { label: "Inicio", to: "/" },
-  { label: "Alumnos", to: "/alumnos" },
-  { label: "Programas", to: "/programas" },
-  { label: "Grupos", to: "/grupos" },
-  { label: "Capturar calificaciones", to: "/calificaciones" },
-  { label: "Asistencias", to: "/asistencias" },
-  { label: "Cobrar / Caja", to: "/tesoreria" },
-  { label: "Inscribir alumno", to: "/grupos" },
-  { label: "Periodos", to: "/periodos" },
+  { label: "Inicio", to: "/", hint: "Página" },
+  { label: "Alumnos", to: "/alumnos", hint: "Página" },
+  { label: "Programas", to: "/programas", hint: "Página" },
+  { label: "Grupos", to: "/grupos", hint: "Página" },
+  { label: "Capturar calificaciones", to: "/calificaciones", hint: "Acción" },
+  { label: "Asistencias", to: "/asistencias", hint: "Página" },
+  { label: "Cobrar / Caja", to: "/tesoreria", hint: "Acción" },
+  { label: "Inscribir alumno", to: "/inscripciones", hint: "Acción" },
+  { label: "Periodos", to: "/periodos", hint: "Página" },
+  { label: "Mi perfil", to: "/perfil", hint: "Página" },
 ] as const;
 
 interface Item {
@@ -32,9 +34,14 @@ interface Item {
   run: () => void;
 }
 
-export function CommandPalette() {
+export function CommandPalette({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [active, setActive] = useState(0);
@@ -50,12 +57,12 @@ export function CommandPalette() {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setOpen((v) => !v);
+        onOpenChange(!open);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [open, onOpenChange]);
 
   // Reset input whenever the palette opens.
   useEffect(() => {
@@ -84,7 +91,7 @@ export function CommandPalette() {
     enabled: open,
   });
 
-  const close = () => setOpen(false);
+  const close = () => onOpenChange(false);
 
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase();
@@ -95,7 +102,7 @@ export function CommandPalette() {
         list.push({
           key: `action:${a.label}`,
           label: a.label,
-          hint: "Ir a",
+          hint: a.hint,
           run: () => {
             close();
             navigate({ to: a.to });
@@ -165,11 +172,11 @@ export function CommandPalette() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
         className="top-[20%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
-        aria-label="Paleta de comandos"
+        aria-label="Búsqueda rápida"
       >
         <div className="flex items-center gap-2 border-b px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
@@ -178,7 +185,7 @@ export function CommandPalette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onInputKeyDown}
-            placeholder="Buscar alumno, programa o pantalla…"
+            placeholder="Buscar alumnos, páginas y acciones…"
             aria-label="Buscar"
             className="border-0 px-0 shadow-none focus-visible:ring-0"
           />

@@ -367,7 +367,7 @@ function BulkIntake({
                 Máximo {MAX_ROWS} alumnos por carga. Divida el archivo.
               </p>
             )}
-            <div className="rounded-2xl border bg-card">
+            <div className="rounded-md border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -414,7 +414,7 @@ function BulkIntake({
               {result.enrolled} inscritos
             </p>
             {result.errors.length > 0 && (
-              <div className="rounded-2xl border bg-card">
+              <div className="rounded-md border bg-card">
                 <Table>
                   <TableHeader>
                     <TableRow>

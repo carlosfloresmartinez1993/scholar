@@ -19,12 +19,27 @@ class UserRole(str, Enum):
     docente = "docente"
 
 
+class UserPosition(str, Enum):
+    """Job position shown on the profile (informative; roles govern permissions)."""
+    control_escolar = "control_escolar"
+    directivo = "directivo"
+    cobranza = "cobranza"
+    docente = "docente"
+    coordinacion_academica = "coordinacion_academica"
+    direccion = "direccion"
+    sistemas = "sistemas"
+    administrativo = "administrativo"
+
+
 class UserBase(SQLModel):
     email: EmailStr = Field(unique=True, index=True, max_length=255)
     full_name: str = Field(max_length=255)
     role: UserRole = UserRole.docente
     is_active: bool = True
     is_superuser: bool = False
+    display_name: str | None = Field(default=None, max_length=255)
+    location: str | None = Field(default=None, max_length=255)
+    position: UserPosition | None = None
 
 
 class User(UserBase, table=True):
@@ -32,6 +47,16 @@ class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
     created_at: datetime = Field(default_factory=utcnow)
+    # Recovery email + 6-digit verification code (hash only, never the code).
+    # A new address lands in pending_recovery_email and only replaces
+    # recovery_email once its code is verified — a failed/abandoned attempt
+    # never clobbers the previously verified address.
+    recovery_email: str | None = Field(default=None, max_length=255)
+    recovery_email_verified: bool = False
+    pending_recovery_email: str | None = Field(default=None, max_length=255)
+    recovery_code_hash: str | None = Field(default=None, max_length=64)
+    recovery_code_expires: datetime | None = None
+    recovery_code_sent_at: datetime | None = None
 
 
 class UserCreate(UserBase):
@@ -49,3 +74,24 @@ class UserUpdate(SQLModel):
 class UserPublic(UserBase):
     id: uuid.UUID
     created_at: datetime
+    recovery_email: str | None = None
+    recovery_email_verified: bool = False
+    pending_recovery_email: str | None = None
+
+
+class ProfileUpdate(SQLModel):
+    """Self-service profile edits (PATCH /users/me/profile)."""
+    display_name: str | None = Field(default=None, max_length=255)
+    location: str | None = Field(default=None, max_length=255)
+    position: UserPosition | None = None
+    email: EmailStr | None = None
+    # required (and verified) only when changing the primary email
+    current_password: str | None = None
+
+
+class RecoveryEmailRequest(SQLModel):
+    email: EmailStr
+
+
+class RecoveryEmailVerify(SQLModel):
+    code: str = Field(min_length=6, max_length=6)

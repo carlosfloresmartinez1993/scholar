@@ -151,7 +151,7 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
   });
 
   if (isLoading || !grid) {
-    return <Skeleton className="h-48 w-full rounded-2xl" />;
+    return <Skeleton className="h-48 w-full rounded-md" />;
   }
 
   return (
@@ -187,7 +187,7 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
         </p>
       )}
 
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -268,7 +268,7 @@ function ReportSection({ groupSubjectId }: { groupSubjectId: string }) {
   return (
     <section className="space-y-3">
       <h2 className="text-xl font-bold">Reporte de asistencia</h2>
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -394,7 +394,7 @@ function JustificationsSection() {
   return (
     <section className="space-y-3">
       <h2 className="text-xl font-bold">Justificantes pendientes</h2>
-      <div className="rounded-2xl border bg-card">
+      <div className="rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
