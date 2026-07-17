@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30
     FRONTEND_URL: str = "http://localhost:5173"
     ENVIRONMENT: Literal["local", "development", "production"] = "local"
+    # cycle promotion: bill reinscripción this many days before a term's start_date
+    PROMOTION_LEAD_DAYS: int = 15
 
     BACKEND_CORS_ORIGINS: Annotated[list[AnyUrl] | str, BeforeValidator(parse_cors)] = []
 

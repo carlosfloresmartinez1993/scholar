@@ -586,6 +586,34 @@ async def list_groups(
     return (await session.exec(q)).all()
 
 
+@router.get("/groups/{group_id}")
+async def get_group(session: SessionDep, _: AnyStaff, group_id: uuid.UUID) -> GroupPublic:
+    group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    return group
+
+
+async def _validate_promotion_source(
+    session: SessionDep, source_id: uuid.UUID, *,
+    plan_version_id: uuid.UUID, campus_id: uuid.UUID, period_number: int,
+) -> None:
+    """A promotion source must be the same plan + plantel and an EARLIER period —
+    not an arbitrary/future/unrelated group."""
+    source = await session.get(Group, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Grupo de origen no encontrado")
+    if (
+        source.plan_version_id != plan_version_id
+        or source.campus_id != campus_id
+        or source.period_number >= period_number
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="El grupo de origen debe ser del mismo plan y plantel, de un periodo anterior",
+        )
+
+
 @router.post("/groups", status_code=201)
 async def create_group(
     session: SessionDep, current_user: AcademicStaff, body: GroupCreate
@@ -593,6 +621,12 @@ async def create_group(
     rvoe = await require_operable_rvoe(session, body.plan_version_id)  # RT-03
     if await session.get(Term, body.term_id) is None:
         raise HTTPException(status_code=404, detail="Ciclo no encontrado")
+    if body.promotes_from_group_id is not None:
+        await _validate_promotion_source(
+            session, body.promotes_from_group_id,
+            plan_version_id=body.plan_version_id, campus_id=rvoe.campus_id,
+            period_number=body.period_number,
+        )
     # campus is derived from the plan's RVOE, not supplied by the client
     group = Group(**body.model_dump(), campus_id=rvoe.campus_id)
     session.add(group)
@@ -624,7 +658,14 @@ async def update_group(
     group = await session.get(Group, group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("promotes_from_group_id") is not None:
+        await _validate_promotion_source(
+            session, changes["promotes_from_group_id"],
+            plan_version_id=group.plan_version_id, campus_id=group.campus_id,
+            period_number=group.period_number,
+        )
+    for k, v in changes.items():
         setattr(group, k, v)
     session.add(group)
     audit.record(session, actor=current_user.email, action="group.updated",

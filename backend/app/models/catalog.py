@@ -308,24 +308,34 @@ class GroupBase(SQLModel):
 class Group(GroupBase, table=True):
     __tablename__ = "groups"
     # Servo Grupo key = (Ciclo, Plantel, Clave): same code may repeat across campuses.
-    __table_args__ = (UniqueConstraint("term_id", "campus_id", "code", name="uq_group_code"),)
+    __table_args__ = (
+        UniqueConstraint("term_id", "campus_id", "code", name="uq_group_code"),
+        # a source group promotes into at most one next-term group (NULLs distinct,
+        # so unlinked groups are unconstrained) — prevents double-promote/double-bill.
+        UniqueConstraint("promotes_from_group_id", name="uq_group_promotes_from"),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     plan_version_id: uuid.UUID = Field(foreign_key="plan_versions.id", index=True)
     term_id: uuid.UUID = Field(foreign_key="terms.id", index=True)
     campus_id: uuid.UUID = Field(foreign_key="campuses.id", index=True)
     # id of the matching group in the calendar system (no FK: other database)
     calendar_group_id: uuid.UUID | None = Field(default=None)
+    # the previous-term group whose passing students promote INTO this one — the
+    # explicit link the cycle-promotion cron follows (RF-C: reinscripción).
+    promotes_from_group_id: uuid.UUID | None = Field(default=None, foreign_key="groups.id")
     created_at: datetime = Field(default_factory=utcnow)
 
 
 class GroupCreate(GroupBase):
     plan_version_id: uuid.UUID
     term_id: uuid.UUID
+    promotes_from_group_id: uuid.UUID | None = None
     # campus is derived from the plan version's RVOE (RVOE = program + campus)
 
 
 class GroupUpdate(SQLModel):
     calendar_group_id: uuid.UUID | None = None
+    promotes_from_group_id: uuid.UUID | None = None
 
 
 class GroupPublic(GroupBase):
@@ -334,6 +344,7 @@ class GroupPublic(GroupBase):
     term_id: uuid.UUID
     campus_id: uuid.UUID
     calendar_group_id: uuid.UUID | None = None
+    promotes_from_group_id: uuid.UUID | None = None
 
 
 class GroupSubjectBase(SQLModel):

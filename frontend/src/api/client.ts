@@ -6,6 +6,7 @@ import type {
   CalendarTerm,
   Group,
   Program,
+  PromoteCycleResult,
   StudentCalendar,
   Term,
 } from "./types";
@@ -168,6 +169,13 @@ export const linkGroupToCalendar = (
 
 export const getStudentCalendar = (studentId: string) =>
   api<StudentCalendar>(`/students/${studentId}/calendar`);
+
+// --- Cycle promotion (reinscripción) ----------------------------------------
+
+export const promoteCycle = (dryRun: boolean) =>
+  api<PromoteCycleResult>(`/students/promote-cycle?dry_run=${dryRun}`, {
+    method: "POST",
+  });
 
 // --- Onboarding (Inscripciones) ---------------------------------------------
 

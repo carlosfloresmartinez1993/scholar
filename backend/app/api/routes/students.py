@@ -41,6 +41,7 @@ from app.models import (
 from app.services import audit, calendar
 from app.services.academics import require_operable_rvoe
 from app.services.enrollment import create_student_core, enroll_student_core
+from app.services.promotion import promote_cycle
 
 router = APIRouter(prefix="/students", tags=["students"])
 
@@ -244,6 +245,19 @@ async def bulk_intake(
     )
     await session.commit()
     return BulkIntakeResult(enrolled=enrolled, errors=errors)
+
+
+@router.post("/promote-cycle")
+async def promote_cycle_endpoint(
+    session: SessionDep, current_user: ServiciosEscolares, dry_run: bool = True
+) -> dict:
+    """Preview (dry_run=true, default) or run cycle promotion: enroll + bill each
+    linked next-term group's passing, continuing students (reinscripción). Scoped
+    to the caller's institution (the cron runs it globally)."""
+    institution = await get_default_institution(session)
+    return await promote_cycle(
+        session, current_user, institution_id=institution.id, dry_run=dry_run
+    )
 
 
 @router.get("/{student_id}/subject-enrollments")

@@ -7,12 +7,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, Plus, UserPlus, Users } from "lucide-react";
+import { ArrowUpCircle, CalendarDays, Plus, UserPlus, Users } from "lucide-react";
 import {
   api,
   ApiError,
   getCalendarGroups,
   linkGroupToCalendar,
+  promoteCycle,
 } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
@@ -24,6 +25,7 @@ import type {
   PlanSubject,
   PlanVersion,
   Program,
+  PromoteCycleResult,
   Rvoe,
   Student,
   Term,
@@ -119,6 +121,7 @@ function GruposPage() {
   const [groupId, setGroupId] = useState<string | null>(null);
   const group = groups?.find((g) => g.id === groupId) ?? null;
   const [createOpen, setCreateOpen] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
 
   const campusName = (id: string) =>
     campuses?.find((c) => c.id === id)?.name ?? "—";
@@ -147,6 +150,9 @@ function GruposPage() {
               ))}
             </SelectContent>
           </Select>
+          <Button variant="outline" onClick={() => setPromoteOpen(true)}>
+            <ArrowUpCircle className="size-4" /> Promoción de ciclo
+          </Button>
           <Button
             className="font-bold"
             disabled={!termId}
@@ -225,7 +231,7 @@ function GruposPage() {
         </div>
       )}
 
-      {group && <GroupDetail group={group} />}
+      {group && <GroupDetail group={group} groups={groups ?? []} />}
 
       {termId && (
         <CreateGroupDialog
@@ -235,7 +241,160 @@ function GruposPage() {
           planVersionLabels={planVersionLabels}
         />
       )}
+
+      <PromoteCycleDialog open={promoteOpen} onOpenChange={setPromoteOpen} />
     </div>
+  );
+}
+
+// --- Cycle promotion (reinscripción) -----------------------------------------
+
+function PromoteCycleDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const preview = useQuery({
+    queryKey: queryKeys.promoteCyclePreview,
+    queryFn: () => promoteCycle(true),
+    enabled: open,
+    staleTime: 0,
+  });
+
+  const run = useMutation({
+    mutationFn: () => promoteCycle(false),
+    onSuccess: (r: PromoteCycleResult) => {
+      toast.success(
+        `${r.promoted_count} promovidos, ${r.skipped_count} omitidos`,
+      );
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
+      preview.refetch();
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al promover"),
+  });
+
+  const data = preview.data;
+  const isEmpty =
+    data && data.promoted_count === 0 && data.skipped_count === 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Promoción de ciclo</DialogTitle>
+          <DialogDescription>
+            Mueve a los alumnos que acreditaron y continúan al grupo del siguiente
+            cuatrimestre y genera su reinscripción. Normalmente se ejecuta de forma
+            automática antes de cada cuatrimestre; esta es una vista previa y
+            ejecución manual.
+          </DialogDescription>
+        </DialogHeader>
+
+        {preview.isLoading && <Skeleton className="h-24 w-full" />}
+        {preview.isError && (
+          <p className="text-sm text-destructive">
+            No se pudo cargar la vista previa.
+          </p>
+        )}
+
+        {data && (
+          <div className="space-y-4">
+            {isEmpty ? (
+              <p className="py-6 text-center text-muted-foreground">
+                No hay alumnos por promover en este momento.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm">
+                  <span className="font-semibold" data-numeric>
+                    {data.promoted_count}
+                  </span>{" "}
+                  alumnos se promoverán ·{" "}
+                  <span className="font-semibold" data-numeric>
+                    {data.skipped_count}
+                  </span>{" "}
+                  omitidos
+                </p>
+
+                {data.promoted.length > 0 && (
+                  <div className="rounded-2xl border bg-card">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Alumno</TableHead>
+                          <TableHead>Matrícula</TableHead>
+                          <TableHead>Grupo destino</TableHead>
+                          <TableHead>Ciclo</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {data.promoted.map((p, i) => (
+                          <TableRow key={`p-${i}`}>
+                            <TableCell className="font-semibold">
+                              {p.student}
+                            </TableCell>
+                            <TableCell data-numeric>{p.matricula}</TableCell>
+                            <TableCell data-numeric>{p.target_group}</TableCell>
+                            <TableCell>{p.term ?? "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {data.skipped.length > 0 && (
+                  <div className="rounded-2xl border bg-card">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Alumno</TableHead>
+                          <TableHead>Matrícula</TableHead>
+                          <TableHead>Motivo</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {data.skipped.map((p, i) => (
+                          <TableRow key={`s-${i}`}>
+                            <TableCell className="font-semibold">
+                              {p.student}
+                            </TableCell>
+                            <TableCell data-numeric>{p.matricula}</TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {p.reason ?? "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button
+            className="font-bold"
+            disabled={
+              run.isPending ||
+              preview.isFetching ||
+              preview.isError ||
+              !data ||
+              isEmpty
+            }
+            onClick={() => run.mutate()}
+          >
+            {run.isPending ? "Promoviendo…" : "Promover y facturar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -255,23 +414,51 @@ function CreateGroupDialog({
     code: "",
     period_number: 1,
     plan_version_id: "",
+    promotes_from_group_id: NONE,
   });
 
   const save = useMutation({
     mutationFn: () =>
       api<Group>("/catalog/groups", {
         method: "POST",
-        body: JSON.stringify({ ...form, term_id: termId }),
+        body: JSON.stringify({
+          code: form.code,
+          period_number: form.period_number,
+          plan_version_id: form.plan_version_id,
+          promotes_from_group_id:
+            form.promotes_from_group_id === NONE
+              ? null
+              : form.promotes_from_group_id,
+          term_id: termId,
+        }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
       toast.success("Grupo creado");
       onOpenChange(false);
-      setForm({ code: "", period_number: 1, plan_version_id: "" });
+      setForm({
+        code: "",
+        period_number: 1,
+        plan_version_id: "",
+        promotes_from_group_id: NONE,
+      });
     },
     onError: (e) =>
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
   });
+
+  // Candidate source groups: same plan version, from a different (previous) term.
+  const { data: planGroups } = useQuery({
+    queryKey: queryKeys.groups(`plan-${form.plan_version_id}`),
+    queryFn: () =>
+      api<Group[]>(`/catalog/groups?plan_version_id=${form.plan_version_id}`),
+    enabled: open && !!form.plan_version_id,
+  });
+  // valid predecessors only: same plan, the immediately previous period, and a
+  // different (earlier) term — mirrors the backend lineage check.
+  const sourceOptions = (planGroups ?? []).filter(
+    (g) => g.term_id !== termId && g.period_number === form.period_number - 1,
+  );
 
   const planOptions = [...planVersionLabels.entries()].map(([value, label]) => ({
     value,
@@ -312,7 +499,11 @@ function CreateGroupDialog({
                 required
                 value={form.period_number}
                 onChange={(e) =>
-                  setForm({ ...form, period_number: Number(e.target.value) })
+                  setForm({
+                    ...form,
+                    period_number: Number(e.target.value),
+                    promotes_from_group_id: NONE, // predecessors depend on the period
+                  })
                 }
               />
             </div>
@@ -321,10 +512,38 @@ function CreateGroupDialog({
             <Label>Plan de estudios</Label>
             <SearchableSelect
               value={form.plan_version_id}
-              onChange={(v) => setForm({ ...form, plan_version_id: v })}
+              onChange={(v) =>
+                setForm({ ...form, plan_version_id: v, promotes_from_group_id: NONE })
+              }
               options={planOptions}
               placeholder="Seleccione un plan"
             />
+          </div>
+          <div className="grid gap-2">
+            <Label>Proviene del grupo anterior (opcional)</Label>
+            <Select
+              value={form.promotes_from_group_id}
+              onValueChange={(v) =>
+                setForm({ ...form, promotes_from_group_id: v })
+              }
+              disabled={!form.plan_version_id}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Ninguno" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Ninguno</SelectItem>
+                {sourceOptions.map((g) => (
+                  <SelectItem key={g.id} value={g.id}>
+                    {g.code} · Periodo {g.period_number}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Al promover el ciclo, los alumnos que acrediten en ese grupo pasarán
+              a este.
+            </p>
           </div>
           <p className="text-sm text-muted-foreground">
             El campus se toma del RVOE del plan seleccionado.
@@ -434,8 +653,20 @@ function GroupCalendarLink({ group }: { group: Group }) {
 
 // --- Group detail ------------------------------------------------------------
 
-function GroupDetail({ group }: { group: Group }) {
+function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
   const queryClient = useQueryClient();
+  // the source group is in a previous term, so it isn't in `groups` (current term)
+  // — fetch it by id to show its real code.
+  const { data: sourceGroup } = useQuery({
+    queryKey: ["group", group.promotes_from_group_id],
+    queryFn: () => api<Group>(`/catalog/groups/${group.promotes_from_group_id}`),
+    enabled: !!group.promotes_from_group_id,
+  });
+  const promotesFrom = group.promotes_from_group_id
+    ? (groups.find((g) => g.id === group.promotes_from_group_id)?.code ??
+      sourceGroup?.code ??
+      "…")
+    : null;
   const { data: groupSubjects, isLoading } = useQuery({
     queryKey: queryKeys.groupSubjects(group.id),
     queryFn: () => api<GroupSubject[]>(`/catalog/groups/${group.id}/subjects`),
@@ -532,6 +763,12 @@ function GroupDetail({ group }: { group: Group }) {
 
   return (
     <div className="space-y-6">
+      {promotesFrom && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <ArrowUpCircle className="size-4" />
+          Proviene de: <Badge variant="secondary">{promotesFrom}</Badge>
+        </div>
+      )}
       <GroupCalendarLink group={group} />
 
       <section className="space-y-3">
