@@ -30,7 +30,8 @@ function LoginPage() {
         new URLSearchParams({ username: email, password }),
       );
       queryClient.setQueryData(queryKeys.me, user);
-      navigate({ to: "/" });
+      // students land in their portal; staff in the admin shell
+      navigate({ to: user.role === "alumno" ? "/portal" : "/" });
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 401
@@ -89,7 +90,7 @@ function LoginPage() {
         <div className="w-full max-w-sm">
           <h1 className="text-3xl">Iniciar sesión</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Acceso exclusivo para administración académica.
+            Acceso para personal y alumnos.
           </p>
 
           <form onSubmit={onSubmit} className="mt-8 grid gap-5">

@@ -4,10 +4,10 @@ CURP is the unique institutional identifier (RT-09).
 """
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.models.common import utcnow
@@ -29,13 +29,45 @@ class AdmissionType(str, Enum):
     movilidad = "movilidad"
 
 
+class Sex(str, Enum):
+    F = "F"
+    M = "M"
+
+
 class StudentBase(SQLModel):
     curp: str = Field(max_length=18, index=True)
     full_name: str = Field(max_length=255)
     email: str = Field(default="", max_length=255)
-    phone: str = Field(default="", max_length=32)
+    phone: str = Field(default="", max_length=32)  # móvil
     status: StudentStatus = StudentStatus.activo
     admission_type: AdmissionType = AdmissionType.nuevo_ingreso
+    # --- wizard capture (all optional; full_name stays the source of truth) ---
+    last_name_p: str | None = Field(default=None, max_length=100)
+    last_name_m: str | None = Field(default=None, max_length=100)
+    first_names: str | None = Field(default=None, max_length=100)
+    sex: Sex | None = None
+    birth_date: date | None = None
+    birth_country: str | None = Field(default=None, max_length=64)
+    birth_state: str | None = Field(default=None, max_length=64)
+    birth_place: str | None = Field(default=None, max_length=128)
+    # Domicilio — free-text capture (ponytail: no SEPOMEX catalog; staff types it)
+    street: str | None = Field(default=None, max_length=128)
+    ext_no: str | None = Field(default=None, max_length=16)
+    int_no: str | None = Field(default=None, max_length=16)
+    address_reference: str | None = Field(default=None, max_length=255)
+    colonia: str | None = Field(default=None, max_length=128)
+    municipio: str | None = Field(default=None, max_length=128)
+    locality: str | None = Field(default=None, max_length=128)
+    address_state: str | None = Field(default=None, max_length=64)
+    address_country: str | None = Field(default=None, max_length=64)
+    postal_code: str | None = Field(default=None, max_length=5)
+    # Contacto extra
+    phone_home: str | None = Field(default=None, max_length=32)
+    phone_work: str | None = Field(default=None, max_length=32)
+    # Historial académico
+    previous_school: str | None = Field(default=None, max_length=255)
+    previous_gpa: float | None = Field(default=None, ge=0, le=10)
+    enrollment_notes: str | None = Field(default=None, max_length=1000)
 
     @field_validator("curp")
     @classmethod
@@ -43,6 +75,16 @@ class StudentBase(SQLModel):
         v = v.strip().upper()
         if not CURP_RE.match(v):
             raise ValueError("CURP inválida")
+        return v
+
+    @field_validator("postal_code")
+    @classmethod
+    def _valid_postal_code(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not re.fullmatch(r"\d{5}", v):
+            raise ValueError("Código postal inválido (5 dígitos)")
         return v
 
 
@@ -64,8 +106,51 @@ class Student(StudentBase, table=True):
         return self.photo_path is not None
 
 
+class StudentRelative(SQLModel, table=True):
+    """Familiar / contacto del alumno (madre, padre, tutor…)."""
+    __tablename__ = "student_relatives"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    student_id: uuid.UUID = Field(foreign_key="students.id", index=True)
+    name: str = Field(max_length=255)
+    relationship: str = Field(max_length=32)  # madre/padre/tutor/cónyuge/hermano(a)/otro
+    phone: str | None = Field(default=None, max_length=32)
+
+
+class RelativeIn(SQLModel):
+    name: str = Field(min_length=1, max_length=255)
+    relationship: str = Field(min_length=1, max_length=32)
+    phone: str | None = Field(default=None, max_length=32)
+
+    @field_validator("name", "relationship")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("no puede estar vacío")
+        return value
+
+
+class RelativePublic(RelativeIn):
+    id: uuid.UUID
+    student_id: uuid.UUID
+
+
 class StudentCreate(StudentBase):
     campus_id: uuid.UUID
+    # optional when the split name is provided (the wizard sends the parts)
+    full_name: str = Field(default="", max_length=255)
+    # nested capture from the wizard; also editable later via /students/{id}/relatives
+    relatives: list[RelativeIn] = []
+
+    @model_validator(mode="after")
+    def _compose_full_name(self) -> "StudentCreate":
+        if not self.full_name.strip():
+            parts = [self.first_names, self.last_name_p, self.last_name_m]
+            composed = " ".join(p.strip() for p in parts if p and p.strip())
+            if not composed:
+                raise ValueError("Se requiere el nombre completo o nombre(s) y apellidos")
+            self.full_name = composed
+        return self
 
 
 class StudentUpdate(SQLModel):
@@ -74,6 +159,39 @@ class StudentUpdate(SQLModel):
     phone: str | None = None
     status: StudentStatus | None = None
     campus_id: uuid.UUID | None = None
+    last_name_p: str | None = None
+    last_name_m: str | None = None
+    first_names: str | None = None
+    sex: Sex | None = None
+    birth_date: date | None = None
+    birth_country: str | None = None
+    birth_state: str | None = None
+    birth_place: str | None = None
+    street: str | None = None
+    ext_no: str | None = None
+    int_no: str | None = None
+    address_reference: str | None = None
+    colonia: str | None = None
+    municipio: str | None = None
+    locality: str | None = None
+    address_state: str | None = None
+    address_country: str | None = None
+    postal_code: str | None = None
+    phone_home: str | None = None
+    phone_work: str | None = None
+    previous_school: str | None = None
+    previous_gpa: float | None = Field(default=None, ge=0, le=10)
+    enrollment_notes: str | None = None
+
+    @field_validator("postal_code")
+    @classmethod
+    def _valid_postal_code(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not re.fullmatch(r"\d{5}", v):
+            raise ValueError("Código postal inválido (5 dígitos)")
+        return v
 
 
 class StudentPublic(StudentBase):
@@ -229,3 +347,18 @@ class SubjectEnrollmentPublic(SQLModel):
     attempt_number: int
     status: SubjectEnrollmentStatus
     final_grade: float | None
+
+# --- Wizard intake: create + enroll ONE student in a single submit ----------------
+
+class WizardIntakeIn(SQLModel):
+    student: StudentCreate
+    group_id: uuid.UUID
+    waive_enrollment_fee: bool = False
+    override_prerequisites: bool = False
+    # step 6 of the wizard: create the portal account + email credentials
+    enable_portal_access: bool = False
+
+
+class WizardIntakeResult(SQLModel):
+    student: StudentPublic
+    enrollment: GroupEnrollmentPublic

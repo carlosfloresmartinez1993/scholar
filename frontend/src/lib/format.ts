@@ -167,6 +167,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   coordinador_academico: "Coordinación académica",
   tesoreria: "Tesorería",
   docente: "Docente",
+  alumno: "Alumno",
 };
 
 // --- Formatting helpers ------------------------------------------------------

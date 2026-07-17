@@ -72,11 +72,18 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     EMAILS_FROM_EMAIL: str = "escolar@inue.edu.mx"
     EMAILS_FROM_NAME: str = "INUE Escolar"
+    # Full RFC-5322 From header; empty -> composed from the two fields above.
+    EMAIL_FROM: str = ""
+
+    @property
+    def email_from(self) -> str:
+        return self.EMAIL_FROM or f"{self.EMAILS_FROM_NAME} <{self.EMAILS_FROM_EMAIL}>"
 
     @property
     def use_resend(self) -> bool:
-        """Use Resend on prod and Mailcatcher on local."""
-        return self.ENVIRONMENT == "production"
+        """Send through Resend's HTTP API whenever an API key is configured;
+        otherwise fall back to SMTP (mailcatcher in dev)."""
+        return bool(self.RESEND_API_KEY)
 
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str

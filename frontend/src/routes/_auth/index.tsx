@@ -112,7 +112,7 @@ function InicioPage() {
               className={cn(
                 "rounded-sm px-3 py-1.5 text-sm font-semibold transition-colors",
                 days === p.days
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-background text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -123,7 +123,7 @@ function InicioPage() {
       </div>
 
       {statsError ? (
-        <Card className="rounded-md border shadow-sm">
+        <Card className="rounded-md border">
           <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
             <p className="text-sm text-muted-foreground">
               No se pudieron cargar los indicadores del panel.
@@ -181,7 +181,7 @@ function InicioPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="rounded-md border shadow-sm">
+        <Card className="rounded-md border">
           <CardContent className="space-y-4 p-5">
             <div>
               <h2 className="text-base font-bold">Inscripciones nuevas</h2>
@@ -198,7 +198,7 @@ function InicioPage() {
             )}
           </CardContent>
         </Card>
-        <Card className="rounded-md border shadow-sm">
+        <Card className="rounded-md border">
           <CardContent className="space-y-3 p-5">
             <div>
               <h2 className="text-base font-bold">Actividad reciente</h2>
@@ -239,7 +239,7 @@ function HeroCollected({
   const periodLabel =
     PERIODS.find((p) => p.days === days)?.label.toLowerCase() ?? "periodo";
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 rounded-md bg-primary p-6 text-primary-foreground shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-4 rounded-md bg-primary p-6 text-primary-foreground">
       <div>
         <p className="text-xs font-bold uppercase tracking-wide text-primary-foreground/70">
           Cobrado del periodo ({periodLabel})
@@ -345,7 +345,7 @@ function KpiCard({
   invertDelta?: boolean;
 }) {
   return (
-    <Card className="rounded-md border shadow-sm">
+    <Card className="rounded-md border">
       <CardContent className="flex flex-col gap-3 p-5">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-md bg-muted">
@@ -748,7 +748,7 @@ function WorkItem({
   return (
     <Link
       to={to}
-      className="flex items-center gap-4 rounded-md border bg-card p-5 shadow-sm transition-colors hover:bg-muted/50"
+      className="flex items-center gap-4 rounded-md border bg-card p-5 transition-colors hover:bg-muted/50"
     >
       <div className="flex size-10 items-center justify-center rounded-md bg-muted">
         <Icon className="size-5 text-muted-foreground" />

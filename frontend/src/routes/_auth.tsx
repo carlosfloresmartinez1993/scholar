@@ -43,16 +43,20 @@ import {
 
 export const Route = createFileRoute("/_auth")({
   beforeLoad: async ({ context }) => {
-    const cached = context.queryClient.getQueryData(queryKeys.me);
-    if (cached) return;
-    try {
-      await context.queryClient.fetchQuery({
-        queryKey: queryKeys.me,
-        queryFn: () => api<UserPublic>("/auth/me"),
-      });
-    } catch {
-      throw redirect({ to: "/login" });
+    let me = context.queryClient.getQueryData<UserPublic>(queryKeys.me);
+    if (!me) {
+      try {
+        me = await context.queryClient.fetchQuery({
+          queryKey: queryKeys.me,
+          queryFn: () => api<UserPublic>("/auth/me"),
+        });
+      } catch {
+        throw redirect({ to: "/login" });
+      }
     }
+    if (!me) throw redirect({ to: "/login" });
+    // student accounts live in their own portal, never the staff shell
+    if (me.role === "alumno") throw redirect({ to: "/portal" });
   },
   component: AppShell,
 });

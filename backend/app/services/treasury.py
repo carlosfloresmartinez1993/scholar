@@ -525,3 +525,51 @@ async def scholarship_metrics(session: AsyncSession, today: date | None = None) 
         "beca_mes": await _beca_sum(today.replace(day=1)),
         "beca_cuatrimestre": await _beca_sum(term_start),
     }
+
+
+async def build_account_statement(session: AsyncSession, student_id: uuid.UUID):
+    """RF-T04 statement (cargos, pagos, saldo, próximos vencimientos) — shared
+    by the treasury route and the student portal's read-only view."""
+    from app.models import AccountStatement, PaymentAllocationPublic, PaymentPublic
+
+    charges = await student_charges_public(session, student_id)
+    payments = (
+        await session.exec(
+            select(Payment)
+            .where(Payment.student_id == student_id)
+            .order_by(Payment.received_at)
+        )
+    ).all()
+    active = [c for c in charges if c.status != ChargeStatus.cancelado]
+    total_charged = round(sum(max(c.amount - c.scholarship_discount, 0) for c in active), 2)
+    total_paid = round(sum(p.amount for p in payments if not p.cancelled), 2)
+    pending = [c for c in active if c.balance > 0]
+    today = utcnow().date()
+    upcoming = [c.due_date for c in pending if c.due_date >= today]
+    payment_pubs = [PaymentPublic.model_validate(p, from_attributes=True) for p in payments]
+    if payments:
+        # Attach multi-charge splits so receipts can be reprinted line by line.
+        alloc_rows = (
+            await session.exec(
+                select(PaymentAllocation).where(
+                    PaymentAllocation.payment_id.in_([p.id for p in payments])  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+        by_payment: dict[uuid.UUID, list[PaymentAllocationPublic]] = {}
+        for a in alloc_rows:
+            by_payment.setdefault(a.payment_id, []).append(
+                PaymentAllocationPublic(charge_id=a.charge_id, amount=a.amount)
+            )
+        for pub in payment_pubs:
+            pub.allocations = by_payment.get(pub.id, [])
+    return AccountStatement(
+        student_id=student_id,
+        charges=charges,
+        payments=payment_pubs,
+        total_charged=total_charged,
+        total_paid=total_paid,
+        balance=round(sum(c.balance for c in pending), 2),
+        overdue_balance=await overdue_balance(session, student_id),
+        next_due_date=min(upcoming) if upcoming else None,
+    )

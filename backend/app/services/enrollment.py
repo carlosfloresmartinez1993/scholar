@@ -19,6 +19,7 @@ from app.models import (
     PlanSubject,
     Student,
     StudentCreate,
+    StudentRelative,
     SubjectEnrollment,
     UserRole,
 )
@@ -88,11 +89,16 @@ async def create_student_core(
                 counter.last_number += 1
                 session.add(counter)
                 student = Student(
-                    **body.model_dump(), institution_id=institution.id,
+                    **body.model_dump(exclude={"relatives"}),
+                    institution_id=institution.id,
                     enrollment_number=f"{prefix}{counter.last_number:06d}",
                 )
                 session.add(student)
                 await session.flush()
+                for relative in body.relatives:
+                    session.add(
+                        StudentRelative(student_id=student.id, **relative.model_dump())
+                    )
             break
         except IntegrityError as e:
             # classify the violated constraint (portable across SQLite/Postgres:

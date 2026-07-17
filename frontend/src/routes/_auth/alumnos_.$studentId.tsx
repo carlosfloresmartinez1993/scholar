@@ -26,6 +26,8 @@ import type {
   Charge,
   ChargeConcept,
   Expediente,
+  Group,
+  GroupEnrollment,
   Institution,
   IssuedDocumentKind,
   Justification,
@@ -33,6 +35,7 @@ import type {
   Payment,
   PlanEnrollment,
   PlanVersion,
+  PortalAccessStatus,
   Program,
   Requirement,
   Rvoe,
@@ -216,6 +219,21 @@ function IdentityHeader({ student }: { student: Student }) {
     queryFn: () =>
       api<PlanEnrollment[]>(`/students/${student.id}/plan-enrollments`),
   });
+  // current group = the active group-enrollment (latest if several)
+  const { data: groupEnrollments } = useQuery({
+    queryKey: queryKeys.groupEnrollments(student.id),
+    queryFn: () =>
+      api<GroupEnrollment[]>(`/students/${student.id}/group-enrollments`),
+  });
+  const activeGroupEnrollment = groupEnrollments
+    ?.filter((e) => e.status === "activa")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  const { data: currentGroup } = useQuery({
+    queryKey: ["group", activeGroupEnrollment?.group_id ?? "none"],
+    queryFn: () =>
+      api<Group>(`/catalog/groups/${activeGroupEnrollment!.group_id}`),
+    enabled: !!activeGroupEnrollment,
+  });
   const planVersionLabels = usePlanVersionLabels();
   const campusName =
     campuses?.find((c) => c.id === student.campus_id)?.name ?? "—";
@@ -225,55 +243,53 @@ function IdentityHeader({ student }: { student: Student }) {
     ? planVersionLabels.get(activePlan.plan_version_id)
     : null;
 
-  const meta = [
-    student.email || "Sin email",
-    student.phone || "Sin teléfono",
-    `Ingreso: ${formatDate(student.created_at)}`,
+  // enrollment facts only — contact/ingreso live in the Resumen tab
+  const facts = [
+    { label: "Plantel", value: campusName },
+    { label: "Plan", value: planLabel ?? "Sin plan" },
+    { label: "Grupo", value: currentGroup?.code ?? "Sin grupo" },
   ];
 
   return (
-    <Card className="rounded-md border shadow-sm">
-      <CardContent className="flex flex-wrap items-center gap-5 p-6">
+    <Card className="rounded-md border">
+      <CardContent className="flex flex-wrap items-center gap-6 p-6">
         <div className="relative shrink-0">
           <StudentAvatar
             studentId={student.id}
             name={student.full_name}
             hasPhoto={student.has_photo || photoVersion > 0}
             version={photoVersion}
-            className="size-20 text-2xl"
+            className="size-28 text-4xl"
           />
           <button
             type="button"
             onClick={() => setPhotoOpen(true)}
             aria-label="Capturar fotografía"
             title="Capturar fotografía"
-            className="absolute -bottom-1 -right-1 flex size-7 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:bg-muted"
+            className="absolute -bottom-1 -right-1 flex size-8 items-center justify-center rounded-full border bg-background transition-colors hover:bg-muted"
           >
-            <CameraIcon className="size-3.5" />
+            <CameraIcon className="size-4" />
           </button>
         </div>
-        <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl md:text-3xl">{student.full_name}</h1>
+            <h1 className="text-3xl">{student.full_name}</h1>
             <StudentStatusBadge status={student.status} />
           </div>
-          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-            {meta.map((part, i) => (
-              <span key={part} className="flex items-center gap-x-2">
-                {i > 0 && <span aria-hidden>·</span>}
-                {part}
-              </span>
-            ))}
-            <span aria-hidden>·</span>
-            <span data-numeric className="font-semibold text-foreground">
+          <p className="text-sm text-muted-foreground">
+            Matrícula{" "}
+            <span data-numeric className="text-base font-bold text-foreground">
               {student.enrollment_number}
             </span>
-            <span aria-hidden>·</span>
-            <span data-numeric>{student.curp}</span>
           </p>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Plantel {campusName}
-            {planLabel && <span className="normal-case"> · {planLabel}</span>}
+          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            {facts.map((f, i) => (
+              <span key={f.label} className="flex items-center gap-x-2">
+                {i > 0 && <span aria-hidden>·</span>}
+                {f.label}{" "}
+                <span className="font-semibold text-foreground">{f.value}</span>
+              </span>
+            ))}
           </p>
         </div>
       </CardContent>
@@ -335,6 +351,7 @@ function DatosTab({ student }: { student: Student }) {
     campuses?.find((c) => c.id === student.campus_id)?.name ?? "—";
 
   return (
+    <div className="grid items-start gap-6 lg:grid-cols-2">
     <Card className="rounded-md">
       <CardContent className="space-y-3 p-6">
         <div className="flex items-center justify-between">
@@ -468,6 +485,108 @@ function DatosTab({ student }: { student: Student }) {
             </form>
           </DialogContent>
         </Dialog>
+      </CardContent>
+    </Card>
+    <PortalAccessCard student={student} />
+    </div>
+  );
+}
+
+// --- Acceso a la plataforma (portal del alumno) --------------------------------
+
+function PortalAccessCard({ student }: { student: Student }) {
+  const queryClient = useQueryClient();
+  const { data: status, isLoading, error, refetch } = useQuery({
+    queryKey: ["portal-access", student.id],
+    queryFn: () =>
+      api<PortalAccessStatus>(`/students/${student.id}/portal-access`),
+  });
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["portal-access", student.id] });
+
+  const enable = useMutation({
+    mutationFn: () =>
+      api(`/students/${student.id}/portal-access`, { method: "POST" }),
+    onSuccess: () => {
+      invalidate();
+      toast.success(
+        "Acceso habilitado — la contraseña se envió al correo del alumno",
+      );
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al habilitar"),
+  });
+  const disable = useMutation({
+    mutationFn: () =>
+      api(`/students/${student.id}/portal-access`, { method: "DELETE" }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Acceso desactivado");
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al desactivar"),
+  });
+
+  const active = !!status?.active;
+  return (
+    <Card className="rounded-md">
+      <CardContent className="space-y-3 p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold">Acceso a la plataforma</h2>
+          <span
+            className={
+              active
+                ? "inline-flex items-center rounded-sm border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400"
+                : "inline-flex items-center rounded-sm border bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground"
+            }
+          >
+            {active ? "Activo" : "Sin acceso"}
+          </span>
+        </div>
+        {isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : error ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-destructive">
+              No se pudo consultar el estado del acceso.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Reintentar
+            </Button>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {active
+                ? `El alumno inicia sesión con ${status?.email ?? "su correo"} y consulta su kárdex, calificaciones, estado de cuenta y horario.`
+                : student.email
+                  ? "Al habilitarlo se creará su cuenta y recibirá una contraseña generada en su correo."
+                  : "El alumno no tiene email registrado; captúralo antes de habilitar el acceso."}
+            </p>
+            <div>
+              {active ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={disable.isPending}
+                  onClick={() => disable.mutate()}
+                >
+                  {disable.isPending ? "Desactivando…" : "Desactivar"}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="font-bold"
+                  disabled={enable.isPending || !student.email}
+                  onClick={() => enable.mutate()}
+                >
+                  {enable.isPending ? "Habilitando…" : "Habilitar"}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

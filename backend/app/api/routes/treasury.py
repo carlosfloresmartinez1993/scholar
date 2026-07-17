@@ -49,6 +49,7 @@ from app.services.treasury import (
     active_scholarship_discount,
     apply_late_fees,
     apply_scholarship_to_pending,
+    build_account_statement,
     charge_paid_amount,
     charges_paid_map,
     generate_enrollment_charges,
@@ -439,45 +440,7 @@ async def account_statement(
     """RF-T04: cargos, pagos, saldo y próximos vencimientos."""
     if await session.get(Student, student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
-    charges = await student_charges_public(session, student_id)
-    payments = (
-        await session.exec(
-            select(Payment).where(Payment.student_id == student_id).order_by(Payment.received_at)
-        )
-    ).all()
-    active = [c for c in charges if c.status != ChargeStatus.cancelado]
-    total_charged = round(sum(max(c.amount - c.scholarship_discount, 0) for c in active), 2)
-    total_paid = round(sum(p.amount for p in payments if not p.cancelled), 2)
-    pending = [c for c in active if c.balance > 0]
-    today = utcnow().date()
-    upcoming = [c.due_date for c in pending if c.due_date >= today]
-    payment_pubs = [PaymentPublic.model_validate(p, from_attributes=True) for p in payments]
-    if payments:
-        # Attach multi-charge splits so receipts can be reprinted line by line.
-        alloc_rows = (
-            await session.exec(
-                select(PaymentAllocation).where(
-                    PaymentAllocation.payment_id.in_([p.id for p in payments])  # type: ignore[attr-defined]
-                )
-            )
-        ).all()
-        by_payment: dict[uuid.UUID, list[PaymentAllocationPublic]] = {}
-        for a in alloc_rows:
-            by_payment.setdefault(a.payment_id, []).append(
-                PaymentAllocationPublic(charge_id=a.charge_id, amount=a.amount)
-            )
-        for pub in payment_pubs:
-            pub.allocations = by_payment.get(pub.id, [])
-    return AccountStatement(
-        student_id=student_id,
-        charges=charges,
-        payments=payment_pubs,
-        total_charged=total_charged,
-        total_paid=total_paid,
-        balance=round(sum(c.balance for c in pending), 2),
-        overdue_balance=await overdue_balance(session, student_id),
-        next_due_date=min(upcoming) if upcoming else None,
-    )
+    return await build_account_statement(session, student_id)
 
 
 # --- Scholarships (RF-T05) -----------------------------------------------------------------

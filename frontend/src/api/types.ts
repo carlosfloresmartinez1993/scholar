@@ -8,7 +8,8 @@ export type UserRole =
   | "servicios_escolares"
   | "coordinador_academico"
   | "tesoreria"
-  | "docente";
+  | "docente"
+  | "alumno";
 
 export type EducationLevel =
   | "tsu"
@@ -126,6 +127,7 @@ export interface UserPublic {
   recovery_email_verified?: boolean;
   /** candidate address awaiting code verification (never replaces recovery_email until verified) */
   pending_recovery_email?: string | null;
+  student_id?: string | null;
   role: UserRole;
   is_active: boolean;
   is_superuser: boolean;
@@ -268,6 +270,8 @@ export interface GroupSubject {
 
 // --- Students ----------------------------------------------------------------
 
+export type Sex = "F" | "M";
+
 export interface Student {
   id: string;
   institution_id: string;
@@ -282,6 +286,75 @@ export interface Student {
   created_at: string;
   /** photo served by GET /students/{id}/photo when true */
   has_photo?: boolean;
+  // wizard capture (all optional; full_name is the source of truth)
+  last_name_p?: string | null;
+  last_name_m?: string | null;
+  first_names?: string | null;
+  sex?: Sex | null;
+  birth_date?: string | null;
+  birth_country?: string | null;
+  birth_state?: string | null;
+  birth_place?: string | null;
+  street?: string | null;
+  ext_no?: string | null;
+  int_no?: string | null;
+  address_reference?: string | null;
+  colonia?: string | null;
+  municipio?: string | null;
+  locality?: string | null;
+  address_state?: string | null;
+  address_country?: string | null;
+  postal_code?: string | null;
+  phone_home?: string | null;
+  phone_work?: string | null;
+  previous_school?: string | null;
+  previous_gpa?: number | null;
+  enrollment_notes?: string | null;
+}
+
+export interface RelativeIn {
+  name: string;
+  relationship: string;
+  phone?: string | null;
+}
+
+export interface StudentRelative extends RelativeIn {
+  id: string;
+  student_id: string;
+}
+
+export interface WizardIntakeResult {
+  student: Student;
+  enrollment: GroupEnrollment;
+}
+
+// --- Student portal ----------------------------------------------------------
+
+export interface PortalMe {
+  student: Student;
+  plan: {
+    plan_version_id: string;
+    plan_label?: string | null;
+    program?: string | null;
+    rvoe?: string | null;
+  } | null;
+  group: { code: string; term: string; period_number: number } | null;
+}
+
+export interface PortalGradeRow {
+  subject: string;
+  code: string;
+  credits: number;
+  group_code: string;
+  status: SubjectEnrollmentStatus;
+  final_grade?: number | null;
+  attempt_number: number;
+}
+
+export interface PortalAccessStatus {
+  exists: boolean;
+  active: boolean;
+  email?: string | null;
 }
 
 export interface BulkIntakeRow {

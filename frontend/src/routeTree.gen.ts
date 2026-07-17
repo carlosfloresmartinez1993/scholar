@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PortalRouteImport } from './routes/portal'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthRouteImport } from './routes/_auth'
 import { Route as AuthIndexRouteImport } from './routes/_auth/index'
@@ -26,6 +27,11 @@ import { Route as AuthAsistenciasRouteImport } from './routes/_auth/asistencias'
 import { Route as AuthAlumnosRouteImport } from './routes/_auth/alumnos'
 import { Route as AuthAlumnosStudentIdRouteImport } from './routes/_auth/alumnos_.$studentId'
 
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -109,6 +115,7 @@ const AuthAlumnosStudentIdRoute = AuthAlumnosStudentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AuthIndexRoute
   '/login': typeof LoginRoute
+  '/portal': typeof PortalRoute
   '/alumnos': typeof AuthAlumnosRoute
   '/asistencias': typeof AuthAsistenciasRoute
   '/auditoria': typeof AuthAuditoriaRoute
@@ -125,6 +132,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/portal': typeof PortalRoute
   '/alumnos': typeof AuthAlumnosRoute
   '/asistencias': typeof AuthAsistenciasRoute
   '/auditoria': typeof AuthAuditoriaRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_auth': typeof AuthRouteWithChildren
   '/login': typeof LoginRoute
+  '/portal': typeof PortalRoute
   '/_auth/alumnos': typeof AuthAlumnosRoute
   '/_auth/asistencias': typeof AuthAsistenciasRoute
   '/_auth/auditoria': typeof AuthAuditoriaRoute
@@ -164,6 +173,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/portal'
     | '/alumnos'
     | '/asistencias'
     | '/auditoria'
@@ -180,6 +190,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/portal'
     | '/alumnos'
     | '/asistencias'
     | '/auditoria'
@@ -198,6 +209,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_auth'
     | '/login'
+    | '/portal'
     | '/_auth/alumnos'
     | '/_auth/asistencias'
     | '/_auth/auditoria'
@@ -217,10 +229,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthRoute: typeof AuthRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PortalRoute: typeof PortalRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -375,6 +395,7 @@ const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRouteWithChildren,
   LoginRoute: LoginRoute,
+  PortalRoute: PortalRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

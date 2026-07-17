@@ -9,14 +9,16 @@ from sqlmodel import Field, SQLModel
 
 
 class UserRole(str, Enum):
-    """RT-07: staff roles. Students are not users in this iteration (portal later);
-    superusers bypass role checks."""
+    """RT-07: staff roles + the student portal role. Staff guards are explicit
+    role lists (see api/deps.py), so `alumno` never passes them; superusers
+    bypass role checks."""
     admin_sistema = "admin_sistema"
     direccion = "direccion"
     servicios_escolares = "servicios_escolares"
     coordinador_academico = "coordinador_academico"
     tesoreria = "tesoreria"
     docente = "docente"
+    alumno = "alumno"
 
 
 class UserPosition(str, Enum):
@@ -47,6 +49,10 @@ class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
     created_at: datetime = Field(default_factory=utcnow)
+    # role=alumno accounts are linked 1:1 to their student row (portal access)
+    student_id: uuid.UUID | None = Field(
+        default=None, foreign_key="students.id", unique=True
+    )
     # Recovery email + 6-digit verification code (hash only, never the code).
     # A new address lands in pending_recovery_email and only replaces
     # recovery_email once its code is verified — a failed/abandoned attempt
@@ -77,6 +83,7 @@ class UserPublic(UserBase):
     recovery_email: str | None = None
     recovery_email_verified: bool = False
     pending_recovery_email: str | None = None
+    student_id: uuid.UUID | None = None
 
 
 class ProfileUpdate(SQLModel):

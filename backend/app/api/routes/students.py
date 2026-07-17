@@ -8,7 +8,7 @@ import uuid
 from contextlib import suppress
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import select
 
@@ -30,20 +30,29 @@ from app.models import (
     PlanEnrollmentPublic,
     PlanVersion,
     Program,
+    RelativeIn,
+    RelativePublic,
     Rvoe,
     Student,
     StudentCreate,
     StudentPlanEnrollment,
     StudentPublic,
+    StudentRelative,
     StudentUpdate,
     SubjectEnrollment,
     SubjectEnrollmentPublic,
     Term,
+    User,
+    UserPublic,
+    WizardIntakeIn,
+    WizardIntakeResult,
 )
 from app.services import audit, calendar
 from app.services.academics import require_operable_rvoe
+from app.services.email import send_email
 from app.services.enrollment import create_student_core, enroll_student_core
 from app.services.files import save_upload
+from app.services.portal import credentials_email, grant_portal_access
 from app.services.promotion import promote_cycle
 
 router = APIRouter(prefix="/students", tags=["students"])
@@ -114,6 +123,111 @@ async def update_student(
     await session.commit()
     await session.refresh(student)
     return student
+
+
+# --- Relatives (familiares / contactos) --------------------------------------------
+
+@router.get("/{student_id}/relatives")
+async def list_relatives(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+) -> list[RelativePublic]:
+    return (
+        await session.exec(
+            select(StudentRelative)
+            .where(StudentRelative.student_id == student_id)
+            .order_by(StudentRelative.name)
+        )
+    ).all()
+
+
+@router.post("/{student_id}/relatives", status_code=201)
+async def add_relative(
+    session: SessionDep,
+    current_user: ServiciosEscolares,
+    student_id: uuid.UUID,
+    body: RelativeIn,
+) -> RelativePublic:
+    if await session.get(Student, student_id) is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    relative = StudentRelative(student_id=student_id, **body.model_dump())
+    session.add(relative)
+    audit.record(session, actor=current_user.email, action="student_relative.created",
+                 entity="student", entity_id=str(student_id), detail=body.name)
+    await session.commit()
+    await session.refresh(relative)
+    return relative
+
+
+@router.delete("/{student_id}/relatives/{relative_id}")
+async def delete_relative(
+    session: SessionDep,
+    current_user: ServiciosEscolares,
+    student_id: uuid.UUID,
+    relative_id: uuid.UUID,
+) -> dict:
+    relative = await session.get(StudentRelative, relative_id)
+    if relative is None or relative.student_id != student_id:
+        raise HTTPException(status_code=404, detail="Familiar no encontrado")
+    await session.delete(relative)
+    audit.record(session, actor=current_user.email, action="student_relative.deleted",
+                 entity="student", entity_id=str(student_id), detail=relative.name)
+    await session.commit()
+    return {"ok": True}
+
+
+# --- Portal access (servo parity: students see their own info) ---------------------
+
+@router.get("/{student_id}/portal-access")
+async def portal_access_status(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+) -> dict:
+    if await session.get(Student, student_id) is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    user = (
+        await session.exec(select(User).where(User.student_id == student_id))
+    ).first()
+    return {
+        "exists": user is not None,
+        "active": bool(user and user.is_active),
+        "email": user.email if user else None,
+    }
+
+
+@router.post("/{student_id}/portal-access", status_code=201)
+async def enable_portal_access(
+    session: SessionDep,
+    current_user: ServiciosEscolares,
+    student_id: uuid.UUID,
+    background: BackgroundTasks,
+) -> UserPublic:
+    """Create (or reactivate) the alumno account with the student's email and
+    a generated password sent by email — never in this response."""
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    user, password = await grant_portal_access(session, student, current_user.email)
+    await session.commit()
+    await session.refresh(user)
+    message = credentials_email(student.full_name, user.email, password)
+    background.add_task(send_email, to=user.email, **message)
+    return user
+
+
+@router.delete("/{student_id}/portal-access")
+async def disable_portal_access(
+    session: SessionDep, current_user: ServiciosEscolares, student_id: uuid.UUID
+) -> dict:
+    user = (
+        await session.exec(select(User).where(User.student_id == student_id))
+    ).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="El alumno no tiene acceso al portal")
+    user.is_active = False
+    session.add(user)
+    audit.record(session, actor=current_user.email, action="portal_access.disabled",
+                 entity="student", entity_id=str(student_id), detail=user.email)
+    await session.commit()
+    return {"ok": True}
 
 
 # --- Photo (credencial-style portrait) -------------------------------------------
@@ -250,6 +364,44 @@ async def enroll_in_group(
     return enrollment
 
 
+@router.post("/intake", status_code=201)
+async def wizard_intake(
+    session: SessionDep,
+    current_user: ServiciosEscolares,
+    body: WizardIntakeIn,
+    background: BackgroundTasks,
+) -> WizardIntakeResult:
+    """One submit from the inscripciones wizard: create the student (full
+    capture, relatives included) and enroll them into the group — matrícula,
+    plan enrollment and auto-billing reuse the existing service logic. With
+    enable_portal_access the alumno account is created in the same
+    transaction and the credentials are emailed after commit."""
+    institution = await get_default_institution(session)
+    group = await session.get(Group, body.group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    student = await create_student_core(session, institution, body.student, current_user.email)
+    enrollment = await enroll_student_core(
+        session, current_user, student, group,
+        override_prerequisites=body.override_prerequisites,
+        waive_enrollment_fee=body.waive_enrollment_fee,
+    )
+    portal_message: tuple[str, dict] | None = None
+    if body.enable_portal_access:
+        user, password = await grant_portal_access(session, student, current_user.email)
+        portal_message = (user.email, credentials_email(student.full_name, user.email, password))
+    await session.commit()
+    if portal_message:
+        to, message = portal_message
+        background.add_task(send_email, to=to, **message)
+    await session.refresh(student)
+    await session.refresh(enrollment)
+    return WizardIntakeResult(
+        student=StudentPublic.model_validate(student),
+        enrollment=GroupEnrollmentPublic.model_validate(enrollment),
+    )
+
+
 @router.post("/bulk-intake", status_code=201)
 async def bulk_intake(
     session: SessionDep, current_user: ServiciosEscolares, body: BulkIntakeIn
@@ -334,14 +486,10 @@ async def list_subject_enrollments(
 
 # --- Calendar schedule (calendar.inue.online) -----------------------------------------
 
-@router.get("/{student_id}/calendar")
-async def student_calendar(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
-) -> dict:
+async def schedule_payload(session: SessionDep, student_id: uuid.UUID) -> dict:
     """Published schedule blocks of the student's active groups, read from the
-    calendar system via each Group.calendar_group_id link."""
-    if await session.get(Student, student_id) is None:
-        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    calendar system via each Group.calendar_group_id link. Shared by the staff
+    route and the student portal."""
     groups = (
         await session.exec(
             select(Group)
@@ -373,6 +521,15 @@ async def student_calendar(
             continue
         items.extend({"group_code": group.code, **block} for block in blocks)
     return {"items": items, "linked": True, "errors": errors}
+
+
+@router.get("/{student_id}/calendar")
+async def student_calendar(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+) -> dict:
+    if await session.get(Student, student_id) is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return await schedule_payload(session, student_id)
 
 
 # --- SEP export (RT-10) --------------------------------------------------------------

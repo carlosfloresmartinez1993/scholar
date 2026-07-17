@@ -93,7 +93,7 @@ function ProfileCard({ me }: { me: UserPublic }) {
   });
 
   return (
-    <Card className="rounded-md border shadow-sm">
+    <Card className="rounded-md border">
       <CardContent className="space-y-4 p-6">
         <div>
           <h2 className="text-lg font-bold">Perfil</h2>
@@ -264,7 +264,7 @@ function RecoveryEmailCard({ me }: { me: UserPublic }) {
     email.trim().toLowerCase() === (me.recovery_email ?? "");
 
   return (
-    <Card className="rounded-md border shadow-sm">
+    <Card className="rounded-md border">
       <CardContent className="space-y-4 p-6">
         <div className="flex items-center justify-between">
           <div>
@@ -410,7 +410,7 @@ function PasswordCard() {
   }
 
   return (
-    <Card className="rounded-md border shadow-sm">
+    <Card className="rounded-md border">
       <CardContent className="space-y-4 p-6">
         <div>
           <h2 className="text-lg font-bold">Seguridad</h2>

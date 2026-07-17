@@ -58,7 +58,9 @@ def require_roles(*roles: UserRole):
     return checker
 
 
-# Common role bundles
+# Common role bundles. NOTE: these are EXPLICIT lists — UserRole.alumno is
+# deliberately absent from every one of them, so portal accounts can never
+# reach staff endpoints (superusers are staff by definition and always pass).
 STAFF_ACADEMIC = (
     UserRole.admin_sistema,
     UserRole.direccion,
@@ -82,6 +84,19 @@ Authorizer = Annotated[
 TeacherOrAcademic = Annotated[
     User, Depends(require_roles(*STAFF_ACADEMIC, UserRole.docente))
 ]
+
+
+async def get_current_student_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Portal guard: ONLY role=alumno accounts linked to a student row pass —
+    staff (including superusers) get 403; the portal is strictly self-scoped."""
+    if current_user.role != UserRole.alumno or current_user.student_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough privileges")
+    return current_user
+
+
+CurrentStudentUser = Annotated[User, Depends(get_current_student_user)]
 
 
 async def verify_integration_api_key(request: Request) -> None:
