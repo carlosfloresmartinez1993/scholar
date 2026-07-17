@@ -503,8 +503,9 @@ async def import_term_from_calendar(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        # distinguish the calendar-link race (uq_term_calendar) from a name clash
-        if "calendar" in str(exc.orig).lower():
+        # distinguish the calendar-link race from a name clash by the exact
+        # constraint name (Postgres names it in the message)
+        if "uq_term_calendar" in str(exc.orig).lower():
             raise HTTPException(
                 status_code=409, detail="Ese ciclo del calendario ya fue importado"
             ) from exc
