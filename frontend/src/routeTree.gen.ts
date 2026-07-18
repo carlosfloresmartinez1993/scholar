@@ -25,6 +25,7 @@ import { Route as AuthCalificacionesRouteImport } from './routes/_auth/calificac
 import { Route as AuthAuditoriaRouteImport } from './routes/_auth/auditoria'
 import { Route as AuthAsistenciasRouteImport } from './routes/_auth/asistencias'
 import { Route as AuthAlumnosRouteImport } from './routes/_auth/alumnos'
+import { Route as AuthTesoreriaAjustesRouteImport } from './routes/_auth/tesoreria_.ajustes'
 import { Route as AuthAlumnosStudentIdRouteImport } from './routes/_auth/alumnos_.$studentId'
 
 const PortalRoute = PortalRouteImport.update({
@@ -106,6 +107,11 @@ const AuthAlumnosRoute = AuthAlumnosRouteImport.update({
   path: '/alumnos',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthTesoreriaAjustesRoute = AuthTesoreriaAjustesRouteImport.update({
+  id: '/tesoreria_/ajustes',
+  path: '/tesoreria/ajustes',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthAlumnosStudentIdRoute = AuthAlumnosStudentIdRouteImport.update({
   id: '/alumnos_/$studentId',
   path: '/alumnos/$studentId',
@@ -129,6 +135,7 @@ export interface FileRoutesByFullPath {
   '/tesoreria': typeof AuthTesoreriaRoute
   '/usuarios': typeof AuthUsuariosRoute
   '/alumnos/$studentId': typeof AuthAlumnosStudentIdRoute
+  '/tesoreria/ajustes': typeof AuthTesoreriaAjustesRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -147,6 +154,7 @@ export interface FileRoutesByTo {
   '/usuarios': typeof AuthUsuariosRoute
   '/': typeof AuthIndexRoute
   '/alumnos/$studentId': typeof AuthAlumnosStudentIdRoute
+  '/tesoreria/ajustes': typeof AuthTesoreriaAjustesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/_auth/usuarios': typeof AuthUsuariosRoute
   '/_auth/': typeof AuthIndexRoute
   '/_auth/alumnos_/$studentId': typeof AuthAlumnosStudentIdRoute
+  '/_auth/tesoreria_/ajustes': typeof AuthTesoreriaAjustesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -187,6 +196,7 @@ export interface FileRouteTypes {
     | '/tesoreria'
     | '/usuarios'
     | '/alumnos/$studentId'
+    | '/tesoreria/ajustes'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/usuarios'
     | '/'
     | '/alumnos/$studentId'
+    | '/tesoreria/ajustes'
   id:
     | '__root__'
     | '/_auth'
@@ -224,6 +235,7 @@ export interface FileRouteTypes {
     | '/_auth/usuarios'
     | '/_auth/'
     | '/_auth/alumnos_/$studentId'
+    | '/_auth/tesoreria_/ajustes'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -346,6 +358,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAlumnosRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/tesoreria_/ajustes': {
+      id: '/_auth/tesoreria_/ajustes'
+      path: '/tesoreria/ajustes'
+      fullPath: '/tesoreria/ajustes'
+      preLoaderRoute: typeof AuthTesoreriaAjustesRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/alumnos_/$studentId': {
       id: '/_auth/alumnos_/$studentId'
       path: '/alumnos/$studentId'
@@ -371,6 +390,7 @@ interface AuthRouteChildren {
   AuthUsuariosRoute: typeof AuthUsuariosRoute
   AuthIndexRoute: typeof AuthIndexRoute
   AuthAlumnosStudentIdRoute: typeof AuthAlumnosStudentIdRoute
+  AuthTesoreriaAjustesRoute: typeof AuthTesoreriaAjustesRoute
 }
 
 const AuthRouteChildren: AuthRouteChildren = {
@@ -388,6 +408,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthUsuariosRoute: AuthUsuariosRoute,
   AuthIndexRoute: AuthIndexRoute,
   AuthAlumnosStudentIdRoute: AuthAlumnosStudentIdRoute,
+  AuthTesoreriaAjustesRoute: AuthTesoreriaAjustesRoute,
 }
 
 const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)

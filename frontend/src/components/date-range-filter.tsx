@@ -26,11 +26,11 @@ function addDays(iso: string, days: number): string {
   return d.toLocaleDateString("sv-SE");
 }
 
-/** Preset ranges start TODAY (not the selected term/nómina). */
+/** Preset ranges END today and look back N-1 days (reports are historical). */
 export function presetRange(preset: RangePreset): DateRange {
-  const from = todayISO();
-  if (preset === "custom") return { preset, from, to: addDays(from, 6) };
-  return { preset, from, to: addDays(from, PRESET_DAYS[preset] - 1) };
+  const to = todayISO();
+  if (preset === "custom") return { preset, from: addDays(to, -6), to };
+  return { preset, from: addDays(to, -(PRESET_DAYS[preset] - 1)), to };
 }
 
 export function DateRangeFilter({
