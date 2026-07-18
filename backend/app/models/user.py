@@ -63,6 +63,10 @@ class User(UserBase, table=True):
     recovery_code_hash: str | None = Field(default=None, max_length=64)
     recovery_code_expires: datetime | None = None
     recovery_code_sent_at: datetime | None = None
+    # Email-code login: only the sha256 of the 6-digit code is stored.
+    login_code_hash: str | None = Field(default=None, max_length=64)
+    login_code_expires: datetime | None = None
+    login_code_sent_at: datetime | None = None
 
 
 class UserCreate(UserBase):

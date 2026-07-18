@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { apiForm, ApiError } from "@/api/client";
+import { api, apiForm, ApiError } from "@/api/client";
 import type { UserPublic } from "@/api/types";
 import { queryKeys } from "@/api/query-keys";
 import { Button } from "@/components/ui/button";
@@ -12,15 +12,36 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
+type Mode = "password" | "code";
+
 function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [mode, setMode] = useState<Mode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
+  function finish(user: UserPublic) {
+    queryClient.setQueryData(queryKeys.me, user);
+    // students land in their portal; staff in the admin shell
+    navigate({ to: user.role === "alumno" ? "/portal" : "/" });
+  }
+
+  function fail(err: unknown, fallback: string) {
+    setError(
+      err instanceof ApiError && (err.status === 400 || err.status === 401)
+        ? fallback
+        : err instanceof ApiError
+          ? err.message
+          : "Error de conexión",
+    );
+  }
+
+  async function onSubmitPassword(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -29,20 +50,47 @@ function LoginPage() {
         "/auth/login",
         new URLSearchParams({ username: email, password }),
       );
-      queryClient.setQueryData(queryKeys.me, user);
-      // students land in their portal; staff in the admin shell
-      navigate({ to: user.role === "alumno" ? "/portal" : "/" });
+      finish(user);
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 401
-          ? "Correo o contraseña incorrectos"
-          : err instanceof ApiError
-            ? err.message
-            : "Error de conexión",
+      fail(err, "Correo o contraseña incorrectos");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onSubmitCode(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      if (!codeSent) {
+        await api("/auth/login-code/request", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+        setCodeSent(true);
+      } else {
+        const user = await api<UserPublic>("/auth/login-code/verify", {
+          method: "POST",
+          body: JSON.stringify({ email, code }),
+        });
+        finish(user);
+      }
+    } catch (err) {
+      fail(
+        err,
+        codeSent ? "Código incorrecto o expirado" : "No se pudo enviar el código",
       );
     } finally {
       setLoading(false);
     }
+  }
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+    setCode("");
+    setCodeSent(false);
   }
 
   return (
@@ -93,7 +141,37 @@ function LoginPage() {
             Acceso para personal y alumnos.
           </p>
 
-          <form onSubmit={onSubmit} className="mt-8 grid gap-5">
+          <div
+            role="group"
+            aria-label="Método de acceso"
+            className="mt-6 flex gap-1 rounded-md border p-1"
+          >
+            <Button
+              type="button"
+              size="sm"
+              className="flex-1"
+              variant={mode === "password" ? "default" : "ghost"}
+              aria-pressed={mode === "password"}
+              onClick={() => switchMode("password")}
+            >
+              Contraseña
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="flex-1"
+              variant={mode === "code" ? "default" : "ghost"}
+              aria-pressed={mode === "code"}
+              onClick={() => switchMode("code")}
+            >
+              Código por correo
+            </Button>
+          </div>
+
+          <form
+            onSubmit={mode === "password" ? onSubmitPassword : onSubmitCode}
+            className="mt-6 grid gap-5"
+          >
             <div className="grid gap-2">
               <Label htmlFor="email">Correo electrónico</Label>
               <Input
@@ -106,20 +184,57 @@ function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="usuario@inue.edu.mx"
                 className="h-11"
+                disabled={mode === "code" && codeSent}
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="password">Contraseña</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-11"
-              />
-            </div>
+
+            {mode === "password" && (
+              <div className="grid gap-2">
+                <Label htmlFor="password">Contraseña</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="h-11"
+                />
+              </div>
+            )}
+
+            {mode === "code" && codeSent && (
+              <div className="grid gap-2">
+                <Label htmlFor="code">Código de 6 dígitos</Label>
+                <Input
+                  id="code"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                  required
+                  autoFocus
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="000000"
+                  className="h-11 text-center text-lg tracking-[0.4em]"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Enviamos un código a {email}. Expira en 10 minutos.{" "}
+                  <button
+                    type="button"
+                    className="font-semibold underline"
+                    onClick={() => {
+                      setCodeSent(false);
+                      setCode("");
+                    }}
+                  >
+                    Cambiar correo
+                  </button>
+                </p>
+              </div>
+            )}
+
             <p
               aria-live="polite"
               className="min-h-5 text-sm font-semibold text-destructive"
@@ -132,7 +247,13 @@ function LoginPage() {
               className="w-full font-bold"
               disabled={loading}
             >
-              {loading ? "Ingresando…" : "Ingresar"}
+              {loading
+                ? "Un momento…"
+                : mode === "password"
+                  ? "Ingresar"
+                  : codeSent
+                    ? "Verificar código"
+                    : "Enviar código"}
             </Button>
           </form>
         </div>

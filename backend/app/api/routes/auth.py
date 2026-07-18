@@ -1,10 +1,21 @@
+import hashlib
+import hmac
 import logging
+import secrets
 import time
 import uuid
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import select
 
@@ -18,6 +29,8 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User, UserPublic
+from app.models.common import utcnow
+from app.services.email import send_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -182,3 +195,107 @@ async def change_password(
     session.add(current_user)
     await session.commit()
     return {"ok": True}
+
+# --- Login por código de correo -------------------------------------------------------
+# Same session cookies as the password login; the 6-digit code travels only by
+# email and only its sha256 lands in the DB. Reuses the login lockout machinery.
+
+LOGIN_CODE_TTL_MINUTES = 10
+LOGIN_CODE_RESEND_SECONDS = 60
+
+
+def _login_code_digest(code: str) -> str:
+    """Keyed digest: a bare sha256 of a 6-digit code is brute-forceable offline
+    by anyone who can read the DB; keying with SECRET_KEY closes that."""
+    return hmac.new(settings.SECRET_KEY.encode(), code.encode(), hashlib.sha256).hexdigest()
+
+
+class LoginCodeRequest(BaseModel):
+    email: str
+
+
+class LoginCodeVerify(BaseModel):
+    email: str
+    code: str = PydanticField(min_length=6, max_length=6)
+
+
+@router.post("/login-code/request")
+async def request_login_code(
+    session: SessionDep, body: LoginCodeRequest, background: BackgroundTasks
+) -> dict:
+    """Email a one-time 6-digit login code. Always returns ok — the response
+    never reveals whether the account exists."""
+    # Row lock: two concurrent requests must not each store a different code
+    # (one emailed code would silently be dead). No-op on sqlite tests.
+    result = await session.exec(
+        select(User).where(User.email == body.email.lower()).with_for_update()
+    )
+    user = result.first()
+    if user and user.is_active:
+        now = utcnow()
+        if (
+            user.login_code_sent_at is not None
+            and (now - user.login_code_sent_at).total_seconds() < LOGIN_CODE_RESEND_SECONDS
+        ):
+            # Silently suppress the resend: a 429 here would distinguish real
+            # accounts from unknown ones (which always get 200).
+            return {"ok": True}
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        user.login_code_hash = _login_code_digest(code)
+        user.login_code_expires = now + timedelta(minutes=LOGIN_CODE_TTL_MINUTES)
+        user.login_code_sent_at = now
+        session.add(user)
+        await session.commit()
+        background.add_task(
+            send_email,
+            to=user.email,
+            subject="Tu código de acceso — INUE Escolar",
+            html=(
+                "<p>Tu código para iniciar sesión es:</p>"
+                f"<p style='font-size:24px;font-weight:bold;letter-spacing:4px'>{code}</p>"
+                f"<p>Expira en {LOGIN_CODE_TTL_MINUTES} minutos. "
+                "Si no lo solicitaste, ignora este mensaje.</p>"
+            ),
+        )
+    return {"ok": True}
+
+
+@router.post("/login-code/verify")
+async def verify_login_code(
+    session: SessionDep, request: Request, response: Response, body: LoginCodeVerify
+) -> UserPublic:
+    key = _throttle_key(request, body.email.lower())
+    # Also lock per-account: distributed source IPs must share one attempt
+    # budget for a 6-digit keyspace, not get a fresh budget each.
+    acct_key = f"acct:{body.email.lower()}"
+    _check_login_lockout(key)
+    _check_login_lockout(acct_key)
+    # Lock the row so exactly one concurrent verification can consume the code.
+    result = await session.exec(
+        select(User).where(User.email == body.email.lower()).with_for_update()
+    )
+    user = result.first()
+    invalid = HTTPException(status_code=400, detail="Código incorrecto o expirado")
+    if not user or not user.is_active or not user.login_code_hash:
+        _record_failed_login(key)
+        _record_failed_login(acct_key)
+        raise invalid
+    if user.login_code_expires is None or utcnow() > user.login_code_expires:
+        _record_failed_login(key)
+        _record_failed_login(acct_key)
+        raise invalid
+    submitted = _login_code_digest(body.code)
+    if not hmac.compare_digest(submitted, user.login_code_hash):
+        _record_failed_login(key)
+        _record_failed_login(acct_key)
+        raise invalid
+    # single-use: burn the code before issuing the session
+    user.login_code_hash = None
+    user.login_code_expires = None
+    session.add(user)
+    await session.commit()
+    _failed_logins.pop(key, None)
+    _failed_logins.pop(acct_key, None)
+    _set_auth_cookies(response, str(user.id))
+    return user
+
