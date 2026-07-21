@@ -23,6 +23,7 @@ import {
   LogOut,
   Building2,
   Search,
+  User,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -40,6 +41,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const Route = createFileRoute("/_auth")({
   beforeLoad: async ({ context }) => {
@@ -167,12 +176,26 @@ function AppShell() {
             collapsed ? "w-16" : "w-60",
           )}
         >
-          <div className="flex h-20 items-center justify-center border-b border-sidebar-border px-3">
+          <div className="relative flex h-20 items-center justify-center border-b border-sidebar-border px-3">
             <img
               src="/logo-inue-light.svg"
               alt="INUE"
               className={collapsed ? "h-9 max-w-full" : "h-14 max-w-full"}
             />
+            {/* Absolutely positioned so the logo stays centered. Icon only. */}
+            <button
+              type="button"
+              onClick={() => setCollapsed((v) => !v)}
+              title={collapsed ? "Expandir menú" : "Contraer menú"}
+              aria-label={collapsed ? "Expandir menú" : "Contraer menú"}
+              className="absolute right-1.5 top-1.5 flex items-center justify-center rounded-md p-1.5 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              {collapsed ? (
+                <PanelLeftOpen className="size-4 shrink-0" />
+              ) : (
+                <PanelLeftClose className="size-4 shrink-0" />
+              )}
+            </button>
           </div>
           <nav className="flex-1 space-y-5 overflow-y-auto p-3">
             {groups.map((group) => (
@@ -207,59 +230,49 @@ function AppShell() {
               </div>
             ))}
           </nav>
-          <div className="space-y-1 border-t border-sidebar-border p-3">
-            <Link
-              to="/perfil"
-              title="Mi perfil"
-              className={cn(
-                "flex items-center gap-3 rounded-md bg-sidebar-accent/50 px-2 py-2 transition-colors hover:bg-sidebar-accent",
-                collapsed && "justify-center bg-transparent",
-              )}
-            >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-sm font-bold text-sidebar-primary">
-                {userInitials(me)}
-              </span>
-              {!collapsed && (
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold text-sidebar-foreground">
-                    {me?.display_name || me?.full_name || me?.email || "Usuario"}
+          <div className="border-t border-sidebar-border p-3">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  title="Mi cuenta"
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-md bg-sidebar-accent/50 px-2 py-2 text-left transition-colors hover:bg-sidebar-accent",
+                    collapsed && "justify-center bg-transparent",
+                  )}
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-sm font-bold text-sidebar-primary">
+                    {userInitials(me)}
                   </span>
-                  <span className="block truncate text-xs text-sidebar-foreground/60">
-                    {positionLabel(me)}
-                  </span>
-                </span>
-              )}
-            </Link>
-            <div className={cn("flex gap-1", collapsed && "flex-col")}>
-              <button
-                type="button"
-                onClick={() => setCollapsed((v) => !v)}
-                title={collapsed ? "Expandir menú" : "Contraer menú"}
-                className={cn(
-                  "flex flex-1 items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground",
-                  collapsed && "justify-center px-2",
-                )}
-              >
-                {collapsed ? (
-                  <PanelLeftOpen className="size-4 shrink-0" />
-                ) : (
-                  <>
-                    <PanelLeftClose className="size-4 shrink-0" /> Contraer
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={logout}
-                title="Cerrar sesión"
-                className={cn(
-                  "flex items-center justify-center rounded-md px-3 py-2 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-red-400",
-                  collapsed && "px-2",
-                )}
-              >
-                <LogOut className="size-4 shrink-0" />
-              </button>
-            </div>
+                  {!collapsed && (
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-sidebar-foreground">
+                        {me?.display_name || me?.full_name || me?.email || "Usuario"}
+                      </span>
+                      <span className="block truncate text-xs text-sidebar-foreground/60">
+                        {positionLabel(me)}
+                      </span>
+                    </span>
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-56">
+                <DropdownMenuLabel className="truncate">
+                  {me?.email}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/perfil">
+                    <User className="size-4" />
+                    Mi perfil
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={logout} variant="destructive">
+                  <LogOut className="size-4" />
+                  Cerrar sesión
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </aside>
 
