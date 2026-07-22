@@ -363,3 +363,33 @@ async def test_beca_directa_condonacion_y_precio_congelado(client, seed):
         json={"amount": 1, "reason": "No debería"},
     )
     assert again.status_code == 409
+
+
+async def test_porcentajes_preautorizados(client, seed):
+    """Dirección pre-authorizes percentages; caja grants those becas instantly
+    (no per-scholarship sign-off), anything else stays a request."""
+    await login(client)  # superuser passes the Authorizer check
+    campus_id = str(seed["campus"].id)
+    student = await make_student(client, campus_id)
+
+    resp = await client.put("/api/v1/treasury/scholarship-pcts", json=[50, 25, 25])
+    assert resp.status_code == 200
+    assert resp.json() == [25, 50]  # deduped + sorted
+    bad = await client.put("/api/v1/treasury/scholarship-pcts", json=[120])
+    assert bad.status_code == 400
+
+    await login(client, "tesoreria@inue.edu.mx")
+    forbidden = await client.put("/api/v1/treasury/scholarship-pcts", json=[10])
+    assert forbidden.status_code == 403  # only Authorizer edits the list
+
+    ok = (await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Beca 25", "pct": 25,
+        "valid_from": TODAY.isoformat(),
+    })).json()
+    assert ok["status"] == "activa"  # pre-authorized → no wait at caja
+
+    other = (await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Beca 33", "pct": 33,
+        "valid_from": TODAY.isoformat(),
+    })).json()
+    assert other["status"] == "solicitada"  # off-list → request flow

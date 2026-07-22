@@ -7,6 +7,7 @@ import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
   ChargeConcept,
+  Institution,
   Scholarship,
   ScholarshipStatus,
   Student,
@@ -97,6 +98,10 @@ function BecasSection() {
     queryKey: queryKeys.concepts,
     queryFn: () => api<ChargeConcept[]>("/treasury/concepts"),
   });
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
 
   const { data: scholarships, isLoading } = useQuery({
     queryKey: queryKeys.scholarshipsByStatus(filter),
@@ -157,8 +162,8 @@ function BecasSection() {
         <div className="flex items-center gap-3">
           {!canAuthorize && (
             <p className="text-xs text-muted-foreground">
-              Tus becas se envían como solicitud; Dirección o Administración las
-              autorizan.
+              Los porcentajes preautorizados se aplican al momento; otros se
+              envían como solicitud.
             </p>
           )}
           <Button className="font-bold" onClick={() => setCreateOpen(true)}>
@@ -259,6 +264,7 @@ function BecasSection() {
       {createOpen && (
         <BecaCreateDialog
           concepts={concepts ?? []}
+          authorizedPcts={institution?.scholarship_pcts ?? []}
           direct={!!canAuthorize}
           onClose={() => setCreateOpen(false)}
           onDone={() => {
@@ -273,13 +279,17 @@ function BecasSection() {
 
 // --- Crear beca -----------------------------------------------------------------------
 
+const CUSTOM_PCT = "__custom__";
+
 function BecaCreateDialog({
   concepts,
+  authorizedPcts,
   direct,
   onClose,
   onDone,
 }: {
   concepts: ChargeConcept[];
+  authorizedPcts: number[]; // pre-authorized by Dirección: apply instantly
   direct: boolean; // admin/superuser: the beca activates immediately
   onClose: () => void;
   onDone: () => void;
@@ -288,6 +298,8 @@ function BecaCreateDialog({
   const [student, setStudent] = useState<Student | null>(null);
   const [form, setForm] = useState({
     name: "",
+    // Preselect from the pre-authorized list (kills typos); custom stays possible.
+    pctChoice: authorizedPcts.length > 0 ? String(authorizedPcts[0]) : CUSTOM_PCT,
     pct: "",
     concept_id: COLEGIATURA,
     valid_from: todayISO(),
@@ -307,6 +319,12 @@ function BecaCreateDialog({
     (c) => c.is_active && (c.kind === "inscripcion" || c.kind === "reinscripcion"),
   );
 
+  const customPct = form.pctChoice === CUSTOM_PCT;
+  const pct = customPct ? Number(form.pct) : Number(form.pctChoice);
+  const pctInvalid = customPct && form.pct !== "" && (pct <= 0 || pct > 100);
+  // Applies instantly if the creator is an authorizer OR the pct is pre-authorized.
+  const willApply = direct || authorizedPcts.some((p) => Math.abs(p - pct) < 0.001);
+
   const save = useMutation({
     mutationFn: () =>
       api<Scholarship>("/treasury/scholarships", {
@@ -314,7 +332,7 @@ function BecaCreateDialog({
         body: JSON.stringify({
           student_id: student!.id,
           name: form.name,
-          pct: Number(form.pct),
+          pct,
           concept_id: form.concept_id === COLEGIATURA ? null : form.concept_id,
           valid_from: form.valid_from,
           valid_to: form.valid_to || null,
@@ -323,7 +341,7 @@ function BecaCreateDialog({
       }),
     onSuccess: () => {
       toast.success(
-        direct
+        willApply
           ? "Beca creada y aplicada a los cargos pendientes"
           : "Solicitud de beca enviada — requiere autorización",
       );
@@ -334,18 +352,15 @@ function BecaCreateDialog({
       toast.error(e instanceof ApiError ? e.message : "Error al guardar"),
   });
 
-  const pct = Number(form.pct);
-  const pctInvalid = form.pct !== "" && (pct <= 0 || pct > 100);
-
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Crear beca</DialogTitle>
           <DialogDescription>
-            {direct
+            {willApply
               ? "La beca se activa de inmediato y se aplica a los cargos pendientes del concepto."
-              : "La beca queda como solicitud hasta que Dirección o Administración la autorice."}
+              : "Porcentaje no preautorizado: la beca queda como solicitud hasta que Dirección o Administración la autorice."}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -422,20 +437,46 @@ function BecaCreateDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="nb-pct">Porcentaje (%)</Label>
-              <Input
-                id="nb-pct"
-                type="number"
-                required
-                min={0.1}
-                max={100}
-                step="0.1"
-                value={form.pct}
-                onChange={(e) => setForm({ ...form, pct: e.target.value })}
-              />
+              <Label>Porcentaje (%)</Label>
+              {authorizedPcts.length > 0 && (
+                <Select
+                  value={form.pctChoice}
+                  onValueChange={(v) => setForm({ ...form, pctChoice: v })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {authorizedPcts.map((p) => (
+                      <SelectItem key={p} value={String(p)}>
+                        {p}% · preautorizado
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_PCT}>Otro porcentaje…</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              {customPct && (
+                <Input
+                  id="nb-pct"
+                  type="number"
+                  required
+                  min={0.1}
+                  max={100}
+                  step="0.1"
+                  value={form.pct}
+                  onChange={(e) => setForm({ ...form, pct: e.target.value })}
+                />
+              )}
               {pctInvalid && (
                 <p className="text-xs text-destructive">
                   El porcentaje debe ser mayor a 0 y no exceder 100%.
+                </p>
+              )}
+              {customPct && !direct && !pctInvalid && (
+                <p className="text-xs text-muted-foreground">
+                  Un porcentaje fuera de la lista preautorizada se envía como
+                  solicitud.
                 </p>
               )}
             </div>
@@ -499,11 +540,11 @@ function BecaCreateDialog({
             <Button
               type="submit"
               className="font-bold"
-              disabled={save.isPending || !student || pctInvalid}
+              disabled={save.isPending || !student || pctInvalid || !(pct > 0)}
             >
               {save.isPending
                 ? "Guardando…"
-                : direct
+                : willApply
                   ? "Crear y aplicar"
                   : "Enviar solicitud"}
             </Button>

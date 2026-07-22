@@ -159,6 +159,8 @@ export interface Institution {
   late_fee_pct: number;
   late_fee_grace_days: number;
   block_documents_on_debt: boolean;
+  /** Beca percentages pre-authorized by Dirección: creating one applies instantly. */
+  scholarship_pcts: number[];
 }
 
 export interface Campus {

@@ -522,6 +522,27 @@ async def account_statement(
 
 # --- Scholarships (RF-T05) -----------------------------------------------------------------
 
+@router.put("/scholarship-pcts")
+async def set_scholarship_pcts(
+    session: SessionDep, current_user: Authorizer, body: list[float]
+) -> list[float]:
+    """Dirección pre-authorizes the beca percentages caja can grant without a
+    per-scholarship sign-off. Replaces the whole list."""
+    for p in body:
+        if not 0 < p <= 100:
+            raise HTTPException(
+                status_code=400, detail="Cada porcentaje debe ser mayor a 0 y no exceder 100%"
+            )
+    pcts = sorted(set(round(p, 2) for p in body))
+    institution = await get_default_institution(session)
+    institution.scholarship_pcts = pcts
+    session.add(institution)
+    audit.record(session, actor=current_user.email, action="scholarship_pcts.updated",
+                 entity="institution", entity_id=str(institution.id), detail=str(pcts))
+    await session.commit()
+    return pcts
+
+
 @router.get("/scholarships")
 async def list_scholarships(
     session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID | None = None,
@@ -559,7 +580,11 @@ async def create_scholarship(
         concept = await session.get(ChargeConcept, body.concept_id)
         if concept is None or not concept.is_active:
             raise HTTPException(status_code=404, detail="Concepto no encontrado")
-    auto_approve = current_user.is_superuser or current_user.role in (
+    institution = await get_default_institution(session)
+    # Pre-authorized percentage (set by Dirección beforehand) → no per-beca
+    # sign-off: the cashier doesn't wait for an authorization mid-process.
+    pre_authorized = any(abs(p - body.pct) < 0.001 for p in institution.scholarship_pcts)
+    auto_approve = pre_authorized or current_user.is_superuser or current_user.role in (
         UserRole.admin_sistema, UserRole.direccion
     )
     scholarship = Scholarship(
@@ -573,9 +598,10 @@ async def create_scholarship(
     if auto_approve:
         await session.flush()
         updated = await apply_scholarship_to_pending(session, scholarship)
+        how = "porcentaje preautorizado" if pre_authorized else "alta directa"
         audit.record(session, actor=current_user.email, action="scholarship.authorized",
                      entity="scholarship", entity_id=str(scholarship.id),
-                     detail=f"{body.name} — alta directa, {updated} cargos actualizados")
+                     detail=f"{body.name} — {how}, {updated} cargos actualizados")
     else:
         audit.record(session, actor=current_user.email, action="scholarship.requested",
                      entity="scholarship", entity_id=str(scholarship.id), detail=body.name)
