@@ -15,10 +15,12 @@ from app.api.routes.catalog import get_default_institution
 from app.models import (
     AccountStatement,
     Charge,
+    ChargeCondoneIn,
     ChargeConcept,
     ChargeConceptCreate,
     ChargeConceptKind,
     ChargeConceptPublic,
+    ChargeConceptUpdate,
     ChargeCreate,
     ChargePublic,
     ChargeStatus,
@@ -45,11 +47,13 @@ from app.models import (
 from app.models.common import utcnow
 from app.services import audit
 from app.services.folios import next_folio
+from app.models.user import UserRole
 from app.services.treasury import (
     active_scholarship_discount,
     apply_late_fees,
     apply_scholarship_to_pending,
     build_account_statement,
+    charge_net,
     charge_paid_amount,
     charges_paid_map,
     generate_enrollment_charges,
@@ -85,6 +89,29 @@ async def create_concept(
     return concept
 
 
+@router.patch("/concepts/{concept_id}")
+async def update_concept(
+    session: SessionDep, current_user: TreasuryStaff, concept_id: uuid.UUID,
+    body: ChargeConceptUpdate,
+) -> ChargeConceptPublic:
+    """Edit a concept in place (e.g. yearly price bump). Existing charges froze
+    their amount at generation, so past debts never move — only future charges
+    use the new price. No more cloning concepts per cycle."""
+    concept = await session.get(ChargeConcept, concept_id)
+    if concept is None:
+        raise HTTPException(status_code=404, detail="Concepto no encontrado")
+    changes = body.model_dump(exclude_unset=True)
+    for k, v in changes.items():
+        setattr(concept, k, v)
+    session.add(concept)
+    audit.record(session, actor=current_user.email, action="charge_concept.updated",
+                 entity="charge_concept", entity_id=str(concept.id),
+                 detail=f"{concept.name} {changes}")
+    await session.commit()
+    await session.refresh(concept)
+    return concept
+
+
 # --- Charges & payment plans (RF-T02) ------------------------------------------------
 
 @router.post("/charges", status_code=201)
@@ -103,7 +130,7 @@ async def create_charge(
         raise HTTPException(status_code=404, detail="Concepto no encontrado")
     discount = await active_scholarship_discount(
         session, student.id, body.amount, body.due_date,
-        kind=concept.kind if concept else None,
+        kind=concept.kind if concept else None, concept_id=body.concept_id,
     )
     charge = Charge(
         **body.model_dump(), scholarship_discount=discount, created_by=current_user.id
@@ -145,7 +172,8 @@ async def generate_payment_plan(
             day = min(body.first_due_date.day, 28)
             due = date(year, month, day)
         discount = await active_scholarship_discount(
-            session, student.id, concept.amount, due, kind=concept.kind
+            session, student.id, concept.amount, due,
+            kind=concept.kind, concept_id=concept.id,
         )
         charge = Charge(
             student_id=student.id,
@@ -295,6 +323,46 @@ async def cancel_charge(
     return {"ok": True}
 
 
+@router.post("/charges/{charge_id}/condone")
+async def condone_charge(
+    session: SessionDep, current_user: TreasuryStaff, charge_id: uuid.UUID,
+    body: ChargeCondoneIn,
+) -> ChargePublic:
+    """Condonación: forgive part or all of a charge's open balance at caja,
+    leaving the paid history intact (unlike cancelling the charge)."""
+    charge = await session.get(Charge, charge_id)
+    if charge is None:
+        raise HTTPException(status_code=404, detail="Cargo no encontrado")
+    if charge.status in (ChargeStatus.cancelado, ChargeStatus.pagado):
+        raise HTTPException(status_code=409, detail="El cargo no tiene saldo por condonar")
+    paid = await charge_paid_amount(session, charge_id)
+    open_balance = round(charge_net(charge) - paid, 2)
+    if open_balance <= 0:
+        raise HTTPException(status_code=409, detail="El cargo no tiene saldo por condonar")
+    amount = round(body.amount if body.amount is not None else open_balance, 2)
+    if amount > open_balance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La condonación excede el saldo del cargo ({open_balance:.2f})",
+        )
+    charge.condoned_amount = round(charge.condoned_amount + amount, 2)
+    charge.condoned_reason = body.reason
+    await refresh_charge_status(session, charge)
+    audit.record(session, actor=current_user.email, action="charge.condoned",
+                 entity="charge", entity_id=str(charge_id),
+                 detail=f"${amount:.2f} — {body.reason}")
+    await session.commit()
+    await session.refresh(charge)
+    return ChargePublic(
+        id=charge.id, student_id=charge.student_id, concept_id=charge.concept_id,
+        description=charge.description, amount=charge.amount,
+        scholarship_discount=charge.scholarship_discount,
+        condoned_amount=charge.condoned_amount, due_date=charge.due_date,
+        status=charge.status, is_late_fee=charge.is_late_fee, paid_amount=paid,
+        balance=max(charge_net(charge) - paid, 0.0),
+    )
+
+
 # --- Payments (RF-T03/T09) --------------------------------------------------------------
 
 @router.post("/payments", status_code=201)
@@ -356,7 +424,7 @@ async def register_payment(
         for c in targets:
             if remaining <= 0:
                 break
-            net = max(c.amount - c.scholarship_discount, 0.0)
+            net = charge_net(c)
             balance = round(net - paid_map.get(c.id, 0.0), 2)
             if balance <= 0:
                 continue
@@ -377,7 +445,7 @@ async def register_payment(
             paid = new_totals.get(c.id)
             if paid is None:
                 continue
-            net = max(c.amount - c.scholarship_discount, 0.0)
+            net = charge_net(c)
             c.status = (
                 ChargeStatus.pagado
                 if paid >= net - 0.005
@@ -462,23 +530,46 @@ async def list_scholarships(
 async def create_scholarship(
     session: SessionDep, current_user: TreasuryStaff, body: ScholarshipCreate
 ) -> ScholarshipPublic:
-    """RF-T05: captures a scholarship *request*. It stays `solicitada` (no
-    discount) until an admin authorizes it."""
+    """RF-T05: creates a beca. Requested by treasury staff it stays `solicitada`
+    (no discount) until an admin authorizes it; created by an admin/superuser it
+    activates immediately."""
     if await session.get(Student, body.student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
-    # Becas are percentage-only now (applied to colegiatura for the whole career).
+    # Becas are percentage-only now (frozen onto each charge at generation).
     if body.pct is None:
         raise HTTPException(status_code=400, detail="Indica el porcentaje de la beca")
+    if not 0 < body.pct <= 100:
+        raise HTTPException(
+            status_code=400, detail="El porcentaje debe ser mayor a 0 y no exceder 100%"
+        )
     if body.fixed_amount is not None:
         raise HTTPException(
             status_code=400, detail="Las becas son solo por porcentaje (sin monto fijo)"
         )
+    if body.concept_id is not None:
+        concept = await session.get(ChargeConcept, body.concept_id)
+        if concept is None or not concept.is_active:
+            raise HTTPException(status_code=404, detail="Concepto no encontrado")
+    auto_approve = current_user.is_superuser or current_user.role in (
+        UserRole.admin_sistema, UserRole.direccion
+    )
     scholarship = Scholarship(
         **body.model_dump(), status=ScholarshipStatus.solicitada, requested_by=current_user.id
     )
+    if auto_approve:
+        scholarship.status = ScholarshipStatus.activa
+        scholarship.approved_by = current_user.id
+        scholarship.authorized_at = utcnow()
     session.add(scholarship)
-    audit.record(session, actor=current_user.email, action="scholarship.requested",
-                 entity="scholarship", entity_id=str(scholarship.id), detail=body.name)
+    if auto_approve:
+        await session.flush()
+        updated = await apply_scholarship_to_pending(session, scholarship)
+        audit.record(session, actor=current_user.email, action="scholarship.authorized",
+                     entity="scholarship", entity_id=str(scholarship.id),
+                     detail=f"{body.name} — alta directa, {updated} cargos actualizados")
+    else:
+        audit.record(session, actor=current_user.email, action="scholarship.requested",
+                     entity="scholarship", entity_id=str(scholarship.id), detail=body.name)
     await session.commit()
     await session.refresh(scholarship)
     return scholarship
@@ -639,7 +730,7 @@ async def aging_report(session: SessionDep, _: TreasuryStaff) -> list[dict]:
     rows = []
     for charge, student in charges:
         paid = await charge_paid_amount(session, charge.id)
-        balance = max(charge.amount - charge.scholarship_discount - paid, 0.0)
+        balance = max(charge_net(charge) - paid, 0.0)
         if balance <= 0:
             continue
         days = (today - charge.due_date).days

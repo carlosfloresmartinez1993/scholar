@@ -81,7 +81,11 @@ async def charges_paid_map(
 
 
 def _net(charge: Charge) -> float:
-    return max(charge.amount - charge.scholarship_discount, 0.0)
+    return max(charge.amount - charge.scholarship_discount - charge.condoned_amount, 0.0)
+
+
+# Public alias for routes that need a charge's collectible amount.
+charge_net = _net
 
 
 async def refresh_charge_status(session: AsyncSession, charge: Charge) -> Charge:
@@ -115,6 +119,7 @@ async def student_charges_public(session: AsyncSession, student_id: uuid.UUID) -
             description=c.description,
             amount=c.amount,
             scholarship_discount=c.scholarship_discount,
+            condoned_amount=c.condoned_amount,
             due_date=c.due_date,
             status=c.status,
             is_late_fee=c.is_late_fee,
@@ -156,12 +161,11 @@ async def active_scholarship_discount(
     amount: float,
     on: date,
     kind: ChargeConceptKind | None = None,
+    concept_id: uuid.UUID | None = None,
 ) -> float:
-    """RF-T05: best active scholarship applied to one charge amount. Becas apply
-    to colegiatura only — anything else (inscripción, a charge with no concept)
-    gets none."""
-    if kind != ChargeConceptKind.colegiatura:
-        return 0.0
+    """RF-T05: best active scholarship applied to one charge amount. A beca with
+    concept_id discounts only charges of that exact concept (e.g. inscripción);
+    a beca without one keeps the legacy behavior: colegiatura only."""
     scholarships = (
         await session.exec(
             select(Scholarship).where(
@@ -172,6 +176,11 @@ async def active_scholarship_discount(
     ).all()
     best = 0.0
     for s in scholarships:
+        if s.concept_id is not None:
+            if concept_id != s.concept_id:
+                continue
+        elif kind != ChargeConceptKind.colegiatura:
+            continue
         if s.valid_from > on or (s.valid_to and s.valid_to < on):
             continue
         discount = amount * (s.pct / 100) if s.pct is not None else (s.fixed_amount or 0.0)
@@ -350,10 +359,16 @@ async def generate_enrollment_charges(
         )
         fee = await resolve_concept(session, fee_kind, program_id, modality, institution_id)
         if fee is not None and (fee.id, term.start_date) not in existing:
+            # Only a beca explicitly scoped to this fee concept discounts it;
+            # legacy (colegiatura) becas never touch the enrollment fee.
+            fee_discount = await active_scholarship_discount(
+                session, student.id, fee.amount, term.start_date,
+                kind=fee_kind, concept_id=fee.id,
+            )
             created.append(Charge(
                 student_id=student.id, concept_id=fee.id,
                 description=f"{fee.name} — {term.name}", amount=fee.amount,
-                scholarship_discount=0.0,  # becas never apply to the enrollment fee
+                scholarship_discount=fee_discount,
                 due_date=term.start_date, term_id=term.id,
                 group_enrollment_id=enrollment.id, created_by=created_by,
             ))
@@ -367,7 +382,7 @@ async def generate_enrollment_charges(
                 continue
             discount = await active_scholarship_discount(
                 session, student.id, colegiatura.amount, due,
-                kind=ChargeConceptKind.colegiatura,
+                kind=ChargeConceptKind.colegiatura, concept_id=colegiatura.id,
             )
             created.append(Charge(
                 student_id=student.id, concept_id=colegiatura.id,
@@ -396,24 +411,27 @@ async def apply_scholarship_to_pending(
     session: AsyncSession, scholarship: Scholarship
 ) -> int:
     """When a beca is authorized after charges already exist, freeze its discount
-    onto the student's still-open colegiatura charges (RF-T05). Returns how many
-    charges changed. Caller commits."""
-    charges = (
-        await session.exec(
-            select(Charge)
-            .join(ChargeConcept, ChargeConcept.id == Charge.concept_id)
-            .where(
-                Charge.student_id == scholarship.student_id,
-                ChargeConcept.kind == ChargeConceptKind.colegiatura,
-                Charge.status.in_([ChargeStatus.pendiente, ChargeStatus.parcial]),  # type: ignore[attr-defined]
-                Charge.due_date >= scholarship.valid_from,
-            )
+    onto the student's still-open charges of the concepts it covers (RF-T05).
+    Returns how many charges changed. Caller commits."""
+    q = (
+        select(Charge, ChargeConcept.kind)
+        .join(ChargeConcept, ChargeConcept.id == Charge.concept_id)
+        .where(
+            Charge.student_id == scholarship.student_id,
+            Charge.status.in_([ChargeStatus.pendiente, ChargeStatus.parcial]),  # type: ignore[attr-defined]
+            Charge.due_date >= scholarship.valid_from,
         )
-    ).all()
+    )
+    if scholarship.concept_id is not None:
+        q = q.where(Charge.concept_id == scholarship.concept_id)
+    else:
+        q = q.where(ChargeConcept.kind == ChargeConceptKind.colegiatura)
+    rows = (await session.exec(q)).all()
     changed = 0
-    for c in charges:
+    for c, kind in rows:
         discount = await active_scholarship_discount(
-            session, c.student_id, c.amount, c.due_date, kind=ChargeConceptKind.colegiatura
+            session, c.student_id, c.amount, c.due_date,
+            kind=kind, concept_id=c.concept_id,
         )
         if abs(discount - c.scholarship_discount) > 0.005:
             c.scholarship_discount = discount
@@ -457,7 +475,7 @@ async def term_billing_summary(session: AsyncSession) -> list[dict]:
         expected = collected = 0.0
         by_concept: dict = {}
         for c in charges:
-            net = max(c.amount - c.scholarship_discount, 0.0)
+            net = _net(c)
             paid = min(paid_map.get(c.id, 0.0), net)
             expected += net
             collected += paid
@@ -541,7 +559,9 @@ async def build_account_statement(session: AsyncSession, student_id: uuid.UUID):
         )
     ).all()
     active = [c for c in charges if c.status != ChargeStatus.cancelado]
-    total_charged = round(sum(max(c.amount - c.scholarship_discount, 0) for c in active), 2)
+    total_charged = round(
+        sum(max(c.amount - c.scholarship_discount - c.condoned_amount, 0) for c in active), 2
+    )
     total_paid = round(sum(p.amount for p in payments if not p.cancelled), 2)
     pending = [c for c in active if c.balance > 0]
     today = utcnow().date()
