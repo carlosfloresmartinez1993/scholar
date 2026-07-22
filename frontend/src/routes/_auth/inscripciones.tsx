@@ -19,7 +19,7 @@ import type {
   Term,
   WizardIntakeResult,
 } from "@/api/types";
-import { CURP_RE, MX_STATES, suggestCurpPrefix } from "@/lib/curp";
+import { CURP_RE, MX_STATES, suggestCurp as suggestCurpFrom } from "@/lib/curp";
 import { formatDate, todayISO } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PhotoCapture } from "@/components/photo-capture";
@@ -383,7 +383,7 @@ function EnrollmentWizard() {
       );
       return;
     }
-    const prefix = suggestCurpPrefix({
+    const curp = suggestCurpFrom({
       firstNames: data.first_names,
       lastNameP: data.last_name_p,
       lastNameM: data.last_name_m,
@@ -391,12 +391,12 @@ function EnrollmentWizard() {
       sex: data.sex,
       stateCode: data.birth_state,
     });
-    if (!prefix) {
+    if (!curp) {
       setError("Completa nombre y apellidos para sugerir la CURP");
       return;
     }
     setError(null);
-    set({ curp: prefix });
+    set({ curp });
   }
 
   const termName = terms?.find((t) => t.id === data.termId)?.name ?? "—";
@@ -537,11 +537,10 @@ function EnrollmentWizard() {
                         ? "font-semibold text-emerald-600"
                         : "font-semibold text-destructive",
                   )}>
-                    {/* ponytail: the suggestion computes the standard 16-char
-                        prefix; the 2-char homoclave can't be derived — staff
-                        completes it from the official document */}
+                    {/* ponytail: pos 17 defaults to 0/A by birth year — only RENAPO
+                        knows real homonym collisions, staff verifies */}
                     {data.curp.length === 0
-                      ? "«Sugerir» calcula los primeros 16 caracteres; la homoclave (últimos 2) se captura del documento oficial."
+                      ? "«Sugerir» calcula la CURP completa con homoclave; verifícala contra el documento oficial."
                       : CURP_RE.test(data.curp)
                         ? "Formato de CURP válido"
                         : `Formato de CURP inválido (${data.curp.length}/18 caracteres)`}
