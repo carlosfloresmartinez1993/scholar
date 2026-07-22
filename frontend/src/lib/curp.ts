@@ -97,9 +97,12 @@ const CHECK_CHARS = "0123456789ABCDEFGHIJKLMNÑOPQRSTUVWXYZ";
 
 /** Standard CURP check digit (position 18) computed from the first 17 chars. */
 export function curpCheckDigit(first17: string): string {
+  if (first17.length !== 17 || [...first17].some((c) => !CHECK_CHARS.includes(c))) {
+    throw new Error("CURP: se requieren 17 caracteres válidos para el dígito verificador");
+  }
   let sum = 0;
   for (let i = 0; i < 17; i++) {
-    sum += Math.max(CHECK_CHARS.indexOf(first17[i]), 0) * (18 - i);
+    sum += CHECK_CHARS.indexOf(first17[i]) * (18 - i);
   }
   return String((10 - (sum % 10)) % 10);
 }
@@ -119,7 +122,8 @@ export function suggestCurp(input: {
   const am = mainWord(input.lastNameM);
   const name = mainWord(input.firstNames, true);
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.birthDate);
-  if (!ap || !name || !dateMatch || !input.stateCode) return null;
+  const stateCode = input.stateCode.trim().toUpperCase();
+  if (!ap || !name || !dateMatch || !/^[A-Z]{2}$/.test(stateCode)) return null;
   const [, yyyy, mm, dd] = dateMatch;
   const sexChar = input.sex === "M" ? "H" : "M"; // CURP: H=hombre, M=mujer
   const prefix16 = [
@@ -131,7 +135,7 @@ export function suggestCurp(input: {
     mm,
     dd,
     sexChar,
-    input.stateCode,
+    stateCode,
     firstInternalConsonant(ap),
     am ? firstInternalConsonant(am) : "X",
     firstInternalConsonant(name),

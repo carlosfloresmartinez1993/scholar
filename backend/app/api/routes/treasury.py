@@ -30,6 +30,7 @@ from app.models import (
     FiscalReceptorPublic,
     Group,
     GroupEnrollment,
+    Institution,
     GroupEnrollmentStatus,
     PlanVersion,
     Program,
@@ -537,6 +538,14 @@ async def set_scholarship_pcts(
             )
     pcts = sorted(set(round(p, 2) for p in body))
     institution = await get_default_institution(session)
+    # Row lock: serialize concurrent edits so a slower write can't interleave.
+    # ponytail: replace-the-list semantics stay last-write-wins between two
+    # admins editing at once; per-item add/remove endpoints if that ever hurts.
+    institution = (
+        await session.exec(
+            select(Institution).where(Institution.id == institution.id).with_for_update()
+        )
+    ).one()
     institution.scholarship_pcts = pcts
     session.add(institution)
     audit.record(session, actor=current_user.email, action="scholarship_pcts.updated",

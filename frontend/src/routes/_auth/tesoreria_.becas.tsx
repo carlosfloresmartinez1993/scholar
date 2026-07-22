@@ -473,7 +473,7 @@ function BecaCreateDialog({
                   El porcentaje debe ser mayor a 0 y no exceder 100%.
                 </p>
               )}
-              {customPct && !direct && !pctInvalid && (
+              {customPct && !willApply && !pctInvalid && (
                 <p className="text-xs text-muted-foreground">
                   Un porcentaje fuera de la lista preautorizada se envía como
                   solicitud.
