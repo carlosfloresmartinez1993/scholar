@@ -187,14 +187,20 @@ function receptorBlock(f: FiscalReceptor): string {
     </div>`;
 }
 
-function printHtml(inner: string) {
+/** Full printable document for a receipt/comprobante. Exported so previews and
+ * tests can render the exact same HTML the cashier prints. */
+export function receiptDocumentHtml(d: ReceiptData, fiscal?: FiscalReceptor): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${STYLE}</style></head><body>${receiptBody(d, fiscal)}</body></html>`;
+}
+
+function printHtml(docHtml: string) {
   const iframe = document.createElement("iframe");
   iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
   document.body.appendChild(iframe);
   const win = iframe.contentWindow!;
   const doc = win.document;
   doc.open();
-  doc.write(`<!doctype html><html><head><meta charset="utf-8"><style>${STYLE}</style></head><body>${inner}</body></html>`);
+  doc.write(docHtml);
   doc.close();
   const cleanup = () => setTimeout(() => iframe.remove(), 500);
   win.onafterprint = cleanup;
@@ -221,9 +227,9 @@ function printHtml(inner: string) {
 }
 
 export function printReceipt(d: ReceiptData) {
-  printHtml(receiptBody(d));
+  printHtml(receiptDocumentHtml(d));
 }
 
 export function printComprobante(d: ReceiptData, fiscal: FiscalReceptor) {
-  printHtml(receiptBody(d, fiscal));
+  printHtml(receiptDocumentHtml(d, fiscal));
 }
