@@ -64,6 +64,7 @@ export const queryKeys = {
   scholarshipReport: ["scholarship-report"] as const,
   termSummary: ["term-summary"] as const,
   fiscalProfile: (studentId: string) => ["fiscal-profile", studentId] as const,
+  fiscalReceptors: (q: string) => ["fiscal-receptors", q] as const,
   collectionReport: (from: string, to: string) =>
     ["collection-report", from, to] as const,
   aging: ["aging"] as const,

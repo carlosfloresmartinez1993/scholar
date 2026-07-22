@@ -26,6 +26,8 @@ from app.models import (
     ChargeStatus,
     FiscalProfileBase,
     FiscalProfilePublic,
+    FiscalReceptor,
+    FiscalReceptorPublic,
     Group,
     GroupEnrollment,
     GroupEnrollmentStatus,
@@ -656,6 +658,21 @@ async def reject_scholarship(
 
 # --- Fiscal profile (Caja → Facturar) ----------------------------------------------------
 
+@router.get("/fiscal-receptors")
+async def search_fiscal_receptors(
+    session: SessionDep, _: TreasuryStaff, q: str = ""
+) -> list[FiscalReceptorPublic]:
+    """Registered invoicing clients: search by RFC or razón social so recurrent
+    receptors aren't recaptured."""
+    query = select(FiscalReceptor).order_by(FiscalReceptor.razon_social).limit(10)
+    if q.strip():
+        needle = f"%{q.strip()}%"
+        query = query.where(
+            FiscalReceptor.rfc.ilike(needle) | FiscalReceptor.razon_social.ilike(needle)  # type: ignore[attr-defined]
+        )
+    return (await session.exec(query)).all()
+
+
 @router.get("/students/{student_id}/fiscal")
 async def get_fiscal_profile(
     session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID
@@ -685,6 +702,22 @@ async def upsert_fiscal_profile(
             setattr(profile, k, v)
         profile.updated_at = utcnow()
     session.add(profile)
+    # Feed the institution-wide receptor registry (one per RFC): recurrent
+    # clients — a company or parent paying for several students — get found by
+    # search next time instead of being recaptured.
+    if body.rfc.strip():
+        receptor = (
+            await session.exec(
+                select(FiscalReceptor).where(FiscalReceptor.rfc == body.rfc)
+            )
+        ).first()
+        if receptor is None:
+            session.add(FiscalReceptor(**body.model_dump()))
+        else:
+            for k, v in body.model_dump().items():
+                setattr(receptor, k, v)
+            receptor.updated_at = utcnow()
+            session.add(receptor)
     audit.record(session, actor=current_user.email, action="fiscal_profile.saved",
                  entity="student", entity_id=str(student_id), detail=body.rfc)
     await session.commit()

@@ -20,6 +20,7 @@ import type {
   Charge,
   CollectionReport,
   FiscalProfile,
+  FiscalReceptor as FiscalReceptorT,
   GroupEnrollment,
   Group,
   Institution,
@@ -1070,6 +1071,23 @@ function FacturarDialog({
   const model = form ?? profile ?? empty;
   const editing = form !== null || !profile;
 
+  // Registered receptors (one per RFC): recurrent clients fill the form in one
+  // click instead of being recaptured.
+  const [receptorQuery, setReceptorQuery] = useState("");
+  const { data: receptors } = useQuery({
+    queryKey: queryKeys.fiscalReceptors(receptorQuery),
+    queryFn: () =>
+      api<FiscalReceptorT[]>(
+        `/treasury/fiscal-receptors?q=${encodeURIComponent(receptorQuery)}`,
+      ),
+    enabled: editing && receptorQuery.trim().length >= 2,
+  });
+  const pickReceptor = (r: FiscalReceptorT) => {
+    const { id: _id, ...fields } = r;
+    setForm(fields);
+    setReceptorQuery("");
+  };
+
   const save = useMutation({
     mutationFn: () =>
       api<FiscalProfile>(`/treasury/students/${student.id}/fiscal`, {
@@ -1149,6 +1167,37 @@ function FacturarDialog({
                   save.mutate();
                 }}
               >
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    placeholder="Buscar receptor registrado (RFC o razón social)…"
+                    value={receptorQuery}
+                    onChange={(e) => setReceptorQuery(e.target.value)}
+                  />
+                  {receptorQuery.trim().length >= 2 && (
+                    <div className="absolute inset-x-0 top-full z-20 mt-1 divide-y overflow-hidden rounded-md border bg-popover shadow-lg">
+                      {receptors?.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted/50"
+                          onClick={() => pickReceptor(r)}
+                        >
+                          <span className="font-semibold">{r.razon_social}</span>
+                          <span data-numeric className="text-muted-foreground">
+                            {r.rfc}
+                          </span>
+                        </button>
+                      ))}
+                      {receptors && receptors.length === 0 && (
+                        <p className="px-3 py-3 text-sm text-muted-foreground">
+                          Sin receptores registrados con ese dato
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <div className="grid gap-2">
                   <Label>Razón social</Label>
                   <Input

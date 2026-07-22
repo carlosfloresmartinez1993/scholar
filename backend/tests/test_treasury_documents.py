@@ -393,3 +393,33 @@ async def test_porcentajes_preautorizados(client, seed):
         "valid_from": TODAY.isoformat(),
     })).json()
     assert other["status"] == "solicitada"  # off-list → request flow
+
+
+async def test_fiscal_receptor_registry(client, seed):
+    """Saving a student's fiscal data feeds the institution-wide receptor
+    registry (one per RFC) so recurrent invoicing clients are searchable."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    s1 = await make_student(client, campus_id)
+    s2 = await make_student(client, campus_id, curp="GOMA020202MBCXNS08")
+
+    fiscal = {
+        "rfc": "EMP010101AB1", "razon_social": "Empresa Pagadora SA de CV",
+        "regimen_fiscal": "601", "uso_cfdi": "G03", "email": "pagos@empresa.mx",
+        "cp": "22830", "calle": "Octava", "no_ext": "1389", "no_int": "",
+        "colonia": "Obrera", "municipio": "Ensenada", "estado": "BC", "pais": "México",
+    }
+    await client.put(f"/api/v1/treasury/students/{s1['id']}/fiscal", json=fiscal)
+    # Same payer for a second student, with an updated address.
+    await client.put(
+        f"/api/v1/treasury/students/{s2['id']}/fiscal",
+        json={**fiscal, "calle": "Novena"},
+    )
+
+    found = (await client.get("/api/v1/treasury/fiscal-receptors?q=empresa")).json()
+    assert len(found) == 1  # one registry entry per RFC, not one per student
+    assert found[0]["rfc"] == "EMP010101AB1"
+    assert found[0]["calle"] == "Novena"  # last save wins
+
+    by_rfc = (await client.get("/api/v1/treasury/fiscal-receptors?q=EMP0101")).json()
+    assert len(by_rfc) == 1

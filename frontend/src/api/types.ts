@@ -657,6 +657,24 @@ export interface FiscalProfile {
   pais: string;
 }
 
+/** Registered invoicing client (one per RFC) — reused across students. */
+export interface FiscalReceptor {
+  id: string;
+  rfc: string;
+  razon_social: string;
+  regimen_fiscal: string;
+  uso_cfdi: string;
+  email: string;
+  cp: string;
+  calle: string;
+  no_ext: string;
+  no_int: string;
+  colonia: string;
+  municipio: string;
+  estado: string;
+  pais: string;
+}
+
 export interface ScholarshipReport {
   active_students: number;
   students_with_scholarship: number;

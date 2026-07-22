@@ -150,6 +150,8 @@ from app.models.treasury import (
     ChargeStatus,
     FiscalProfileBase,
     FiscalProfilePublic,
+    FiscalReceptor,
+    FiscalReceptorPublic,
     Payment,
     PaymentAllocation,
     PaymentAllocationPublic,

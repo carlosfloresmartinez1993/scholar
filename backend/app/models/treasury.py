@@ -281,6 +281,21 @@ class StudentFiscalProfile(FiscalProfileBase, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class FiscalReceptor(FiscalProfileBase, table=True):
+    """Registro institucional de receptores de factura (empresa/padre que paga por
+    varios alumnos): un receptor por RFC, alimentado automáticamente cada vez que
+    caja guarda datos fiscales — clientes recurrentes no se recapturan."""
+    __tablename__ = "fiscal_receptors"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    rfc: str = Field(max_length=13, unique=True, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FiscalReceptorPublic(FiscalProfileBase):
+    id: uuid.UUID
+
+
 class FiscalProfilePublic(FiscalProfileBase):
     id: uuid.UUID
     student_id: uuid.UUID
