@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
+from app.api.deps import AnyStaff, CampusScope, ServiciosEscolares, SessionDep, ensure_in_scope
 from app.api.routes.catalog import get_default_institution
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -62,6 +62,7 @@ router = APIRouter(prefix="/students", tags=["students"])
 async def list_students(
     session: SessionDep,
     _: AnyStaff,
+    scope: CampusScope,
     q: str | None = None,
     status: str | None = None,
     campus_id: uuid.UUID | None = None,
@@ -69,7 +70,11 @@ async def list_students(
     offset: int = 0,
 ) -> list[StudentPublic]:
     query = select(Student).order_by(Student.full_name).limit(min(limit, 500)).offset(offset)
+    # Enforced campus scope: members only ever see their campuses' students.
+    if scope is not None:
+        query = query.where(Student.campus_id.in_(scope))  # type: ignore[attr-defined]
     if campus_id:
+        ensure_in_scope(scope, campus_id)  # a ?campus_id outside membership is 403
         query = query.where(Student.campus_id == campus_id)
     if q:
         like = f"%{q.upper()}%"
@@ -85,8 +90,9 @@ async def list_students(
 
 @router.post("", status_code=201)
 async def create_student(
-    session: SessionDep, current_user: ServiciosEscolares, body: StudentCreate
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope, body: StudentCreate
 ) -> StudentPublic:
+    ensure_in_scope(scope, body.campus_id)  # can only create in a campus you belong to
     institution = await get_default_institution(session)
     student = await create_student_core(session, institution, body, current_user.email)
     await session.commit()
@@ -95,9 +101,12 @@ async def create_student(
 
 
 @router.get("/{student_id}")
-async def get_student(session: SessionDep, _: AnyStaff, student_id: uuid.UUID) -> StudentPublic:
+async def get_student(
+    session: SessionDep, _: AnyStaff, scope: CampusScope, student_id: uuid.UUID
+) -> StudentPublic:
     student = await session.get(Student, student_id)
-    if student is None:
+    if student is None or (scope is not None and student.campus_id not in scope):
+        # out-of-scope students read as not-found (don't leak other campuses)
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
     return student
 
@@ -106,13 +115,16 @@ async def get_student(session: SessionDep, _: AnyStaff, student_id: uuid.UUID) -
 async def update_student(
     session: SessionDep,
     current_user: ServiciosEscolares,
+    scope: CampusScope,
     student_id: uuid.UUID,
     body: StudentUpdate,
 ) -> StudentPublic:
     student = await session.get(Student, student_id)
-    if student is None:
+    if student is None or (scope is not None and student.campus_id not in scope):
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
     changes = body.model_dump(exclude_unset=True)
+    if changes.get("campus_id") is not None:
+        ensure_in_scope(scope, changes["campus_id"])  # can't move into a foreign campus
     old = {k: str(getattr(student, k)) for k in changes}
     for k, v in changes.items():
         setattr(student, k, v)
@@ -345,14 +357,17 @@ async def list_group_enrollments(
 
 @router.post("/group-enrollments", status_code=201)
 async def enroll_in_group(
-    session: SessionDep, current_user: ServiciosEscolares, body: GroupEnrollmentCreate
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    body: GroupEnrollmentCreate,
 ) -> GroupEnrollmentPublic:
     student = await session.get(Student, body.student_id)
-    if student is None:
+    # Out-of-scope students are 404, matching get_student/update_student.
+    if student is None or (scope is not None and student.campus_id not in scope):
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
     group = await session.get(Group, body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, group.campus_id)
     enrollment = await enroll_student_core(
         session, current_user, student, group,
         plan_subject_ids=body.plan_subject_ids,
@@ -368,6 +383,7 @@ async def enroll_in_group(
 async def wizard_intake(
     session: SessionDep,
     current_user: ServiciosEscolares,
+    scope: CampusScope,
     body: WizardIntakeIn,
     background: BackgroundTasks,
 ) -> WizardIntakeResult:
@@ -380,6 +396,7 @@ async def wizard_intake(
     group = await session.get(Group, body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, group.campus_id)
     student = await create_student_core(session, institution, body.student, current_user.email)
     enrollment = await enroll_student_core(
         session, current_user, student, group,
@@ -404,7 +421,7 @@ async def wizard_intake(
 
 @router.post("/bulk-intake", status_code=201)
 async def bulk_intake(
-    session: SessionDep, current_user: ServiciosEscolares, body: BulkIntakeIn
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope, body: BulkIntakeIn
 ) -> BulkIntakeResult:
     """Onboard a whole cohort of NEW students into one group: create + enroll +
     auto-bill each row. Existing CURPs are rejected (enroll them via the group
@@ -414,6 +431,7 @@ async def bulk_intake(
     group = await session.get(Group, body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, group.campus_id)
     enrolled = 0
     errors: list[BulkIntakeError] = []
     seen: set[str] = set()

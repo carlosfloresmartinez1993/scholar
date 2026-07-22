@@ -69,8 +69,20 @@ class User(UserBase, table=True):
     login_code_sent_at: datetime | None = None
 
 
+class UserCampus(SQLModel, table=True):
+    """Campus membership (the scope axis, orthogonal to role). A user sees the
+    campus-tier resources of the campuses they belong to. Superusers and
+    admin_sistema are implicitly all-campus and don't need rows here — but the
+    backfill still grants them every campus so nothing is lost on downgrade."""
+    __tablename__ = "user_campuses"
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+    campus_id: uuid.UUID = Field(foreign_key="campuses.id", primary_key=True)
+
+
 class UserCreate(UserBase):
     password: str = Field(min_length=8, max_length=128)
+    # campus membership to grant (ignored for all-campus roles); None = none
+    campuses: list[uuid.UUID] | None = None
 
 
 class UserUpdate(SQLModel):
@@ -79,6 +91,8 @@ class UserUpdate(SQLModel):
     role: UserRole | None = None
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    # when provided, replaces the user's whole campus membership set
+    campuses: list[uuid.UUID] | None = None
 
 
 class UserPublic(UserBase):
@@ -88,6 +102,10 @@ class UserPublic(UserBase):
     recovery_email_verified: bool = False
     pending_recovery_email: str | None = None
     student_id: uuid.UUID | None = None
+    # campus scope (computed): the campuses this user may act on. all_campuses
+    # means role/superuser grants every campus (campuses lists them all).
+    campuses: list[uuid.UUID] = []
+    all_campuses: bool = False
 
 
 class ProfileUpdate(SQLModel):

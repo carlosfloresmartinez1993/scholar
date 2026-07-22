@@ -7,7 +7,14 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from app.api.deps import AcademicStaff, AnyStaff, ServiciosEscolares, SessionDep
+from app.api.deps import (
+    AcademicStaff,
+    AnyStaff,
+    CampusScope,
+    ensure_in_scope,
+    ServiciosEscolares,
+    SessionDep,
+)
 from app.models import (
     Campus,
     CampusCreate,
@@ -131,8 +138,19 @@ async def update_campus(
 # --- Programs ------------------------------------------------------------------
 
 @router.get("/programs")
-async def list_programs(session: SessionDep, _: AnyStaff) -> list[ProgramPublic]:
-    return (await session.exec(select(Program).order_by(Program.name))).all()
+async def list_programs(
+    session: SessionDep, _: AnyStaff, scope: CampusScope
+) -> list[ProgramPublic]:
+    q = select(Program).order_by(Program.name)
+    # Programs carry campus only via their RVOEs — a member sees programs that
+    # have at least one RVOE in a campus they belong to.
+    if scope is not None:
+        q = q.where(
+            Program.id.in_(  # type: ignore[attr-defined]
+                select(Rvoe.program_id).where(Rvoe.campus_id.in_(scope))  # type: ignore[attr-defined]
+            )
+        )
+    return (await session.exec(q)).all()
 
 
 @router.post("/programs", status_code=201)
@@ -214,9 +232,11 @@ async def list_calendar_groups(
 
 @router.get("/rvoes")
 async def list_rvoes(
-    session: SessionDep, _: AnyStaff, program_id: uuid.UUID | None = None
+    session: SessionDep, _: AnyStaff, scope: CampusScope, program_id: uuid.UUID | None = None
 ) -> list[RvoePublic]:
     q = select(Rvoe).order_by(Rvoe.created_at)
+    if scope is not None:
+        q = q.where(Rvoe.campus_id.in_(scope))  # type: ignore[attr-defined]
     if program_id:
         q = q.where(Rvoe.program_id == program_id)
     return (await session.exec(q)).all()
@@ -224,8 +244,9 @@ async def list_rvoes(
 
 @router.post("/rvoes", status_code=201)
 async def create_rvoe(
-    session: SessionDep, current_user: ServiciosEscolares, body: RvoeCreate
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope, body: RvoeCreate
 ) -> RvoePublic:
+    ensure_in_scope(scope, body.campus_id)  # RVOE lives in a specific campus
     if await session.get(Program, body.program_id) is None:
         raise HTTPException(status_code=404, detail="Programa no encontrado")
     if await session.get(Campus, body.campus_id) is None:
@@ -572,16 +593,20 @@ async def update_term(
 async def list_groups(
     session: SessionDep,
     _: AnyStaff,
+    scope: CampusScope,
     term_id: uuid.UUID | None = None,
     plan_version_id: uuid.UUID | None = None,
     campus_id: uuid.UUID | None = None,
 ) -> list[GroupPublic]:
     q = select(Group).order_by(Group.code)
+    if scope is not None:
+        q = q.where(Group.campus_id.in_(scope))  # type: ignore[attr-defined]
     if term_id:
         q = q.where(Group.term_id == term_id)
     if plan_version_id:
         q = q.where(Group.plan_version_id == plan_version_id)
     if campus_id:
+        ensure_in_scope(scope, campus_id)  # a ?campus_id outside membership is 403
         q = q.where(Group.campus_id == campus_id)
     return (await session.exec(q)).all()
 
@@ -616,9 +641,11 @@ async def _validate_promotion_source(
 
 @router.post("/groups", status_code=201)
 async def create_group(
-    session: SessionDep, current_user: AcademicStaff, body: GroupCreate
+    session: SessionDep, current_user: AcademicStaff, scope: CampusScope, body: GroupCreate
 ) -> GroupPublic:
     rvoe = await require_operable_rvoe(session, body.plan_version_id)  # RT-03
+    # campus is derived from the plan's RVOE — enforce it is one you belong to
+    ensure_in_scope(scope, rvoe.campus_id)
     if await session.get(Term, body.term_id) is None:
         raise HTTPException(status_code=404, detail="Ciclo no encontrado")
     if body.promotes_from_group_id is not None:

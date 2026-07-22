@@ -11,13 +11,21 @@ from datetime import timedelta
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, CurrentUser, SessionDep, SuperUser
+from app.api.deps import (
+    AnyStaff,
+    CurrentUser,
+    SessionDep,
+    SuperUser,
+    build_user_public,
+    build_users_public,
+)
 from app.core.security import get_password_hash, verify_password
 from app.models import (
     ProfileUpdate,
     RecoveryEmailRequest,
     RecoveryEmailVerify,
     User,
+    UserCampus,
     UserCreate,
     UserPublic,
     UserRole,
@@ -141,6 +149,20 @@ async def verify_recovery_email(
     return current_user
 
 
+async def _set_campus_membership(
+    session: SessionDep, user_id: uuid.UUID, campus_ids: list[uuid.UUID]
+) -> None:
+    """Replace a user's whole campus membership set (admin write)."""
+    existing = (
+        await session.exec(select(UserCampus).where(UserCampus.user_id == user_id))
+    ).all()
+    for row in existing:
+        await session.delete(row)
+    await session.flush()  # deletes first, or re-adding a kept campus hits the PK
+    for campus_id in dict.fromkeys(campus_ids):  # de-dupe, keep order
+        session.add(UserCampus(user_id=user_id, campus_id=campus_id))
+
+
 @router.get("")
 async def list_users(
     session: SessionDep, _: AnyStaff, role: UserRole | None = None
@@ -148,7 +170,8 @@ async def list_users(
     q = select(User).order_by(User.created_at)
     if role:
         q = q.where(User.role == role)
-    return (await session.exec(q)).all()
+    users = (await session.exec(q)).all()
+    return await build_users_public(session, list(users))
 
 
 @router.post("", status_code=201)
@@ -165,11 +188,14 @@ async def create_user(session: SessionDep, actor: SuperUser, body: UserCreate) -
         hashed_password=get_password_hash(body.password),
     )
     session.add(user)
+    await session.flush()
+    if body.campuses is not None:
+        await _set_campus_membership(session, user.id, body.campuses)
     audit.record(session, actor=actor.email, action="user.created", entity="user",
                  detail=f"{body.email} ({body.role})")
     await session.commit()
     await session.refresh(user)
-    return user
+    return await build_user_public(session, user)
 
 
 @router.patch("/{user_id}")
@@ -186,14 +212,19 @@ async def update_user(
             user.hashed_password = get_password_hash(password)
     if "email" in changes and changes["email"]:
         changes["email"] = changes["email"].lower()
+    # campuses is a membership set, not a User column — apply it separately
+    campuses = changes.pop("campuses", None)
     for k, v in changes.items():
         setattr(user, k, v)
     session.add(user)
+    if campuses is not None:
+        await _set_campus_membership(session, user.id, campuses)
+        changes["campuses"] = campuses  # for the audit detail
     audit.record(session, actor=actor.email, action="user.updated", entity="user",
                  entity_id=str(user_id), detail=", ".join(changes.keys()))
     await session.commit()
     await session.refresh(user)
-    return user
+    return await build_user_public(session, user)
 
 
 @router.delete("/{user_id}")

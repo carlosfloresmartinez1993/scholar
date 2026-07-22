@@ -16,6 +16,15 @@ const BASE_URL = "/api/v1";
 let isRefreshing = false;
 let refreshPromise: Promise<boolean> | null = null;
 
+// Active campus scope, attached as the X-Campus header on every request. Set by
+// CampusProvider; a campus id restricts the request, "__all__" (or null) means
+// the all-campus view. The backend enforces membership regardless.
+let activeCampus: string | null = null;
+
+export function setActiveCampus(value: string | null): void {
+  activeCampus = value;
+}
+
 async function attemptRefresh(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE_URL}/auth/refresh`, {
@@ -55,6 +64,7 @@ export async function api<T>(
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
+        ...(activeCampus ? { "X-Campus": activeCampus } : {}),
         ...options.headers,
       },
     });
@@ -114,6 +124,7 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     credentials: "include",
+    headers: activeCampus ? { "X-Campus": activeCampus } : undefined,
     body: form,
   });
 

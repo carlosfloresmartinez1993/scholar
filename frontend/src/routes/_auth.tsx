@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import { CommandPalette } from "@/components/command-palette";
 import { api } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
-import type { Campus, UserPublic } from "@/api/types";
+import type { UserPublic } from "@/api/types";
 import { POSITION_LABELS, ROLE_LABELS } from "@/lib/format";
 import { ALL_CAMPUSES, CampusProvider, useCampus } from "@/lib/campus-context";
 import {
@@ -318,19 +318,20 @@ function Header({ onSearch }: { onSearch: () => void }) {
 }
 
 function CampusSwitcher() {
-  const { campusId, setCampusId } = useCampus();
-  const { data: campuses } = useQuery({
-    queryKey: queryKeys.campuses,
-    queryFn: () => api<Campus[]>("/catalog/campuses"),
-  });
-  if (!campuses || campuses.length === 0) return null;
-  // A stored campus that no longer exists falls back to "todos".
-  const effective =
-    campusId === ALL_CAMPUSES || campuses.some((c) => c.id === campusId)
-      ? campusId
-      : ALL_CAMPUSES;
+  const { campusId, setCampusId, availableCampuses, canSelectAll, noCampusAccess } =
+    useCampus();
+  // Zero memberships: say so instead of silently hiding the switcher.
+  if (noCampusAccess)
+    return (
+      <span className="flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-sm text-muted-foreground">
+        <Building2 className="size-4 shrink-0" /> Sin planteles asignados
+      </span>
+    );
+  // Nothing to switch between yet (catalog still loading).
+  if (availableCampuses.length === 0) return null;
+  if (availableCampuses.length === 1 && !canSelectAll) return null;
   return (
-    <Select value={effective} onValueChange={setCampusId}>
+    <Select value={campusId} onValueChange={setCampusId}>
       <SelectTrigger
         className="w-52 gap-2"
         aria-label="Filtrar por plantel"
@@ -339,8 +340,10 @@ function CampusSwitcher() {
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={ALL_CAMPUSES}>Todos los planteles</SelectItem>
-        {campuses.map((c) => (
+        {canSelectAll && (
+          <SelectItem value={ALL_CAMPUSES}>Todos los planteles</SelectItem>
+        )}
+        {availableCampuses.map((c) => (
           <SelectItem key={c.id} value={c.id}>
             {c.name}
           </SelectItem>

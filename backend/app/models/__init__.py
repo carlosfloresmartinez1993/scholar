@@ -4,6 +4,7 @@ from app.models.user import (
     RecoveryEmailVerify,
     User,
     UserBase,
+    UserCampus,
     UserCreate,
     UserPosition,
     UserPublic,

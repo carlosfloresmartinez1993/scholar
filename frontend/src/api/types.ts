@@ -132,6 +132,10 @@ export interface UserPublic {
   is_active: boolean;
   is_superuser: boolean;
   created_at: string;
+  /** Campus ids this user may act on (all campuses when all_campuses). */
+  campuses: string[];
+  /** true for superuser / admin_sistema — every campus, no membership needed. */
+  all_campuses: boolean;
 }
 
 export interface AuditEntry {

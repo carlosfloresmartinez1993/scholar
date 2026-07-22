@@ -19,7 +19,7 @@ from fastapi import (
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, SessionDep, build_user_public
 from app.core.config import settings
 from app.core.security import (
     create_access_token,
@@ -147,7 +147,7 @@ async def login(
         await session.commit()
     _failed_logins.pop(key, None)
     _set_auth_cookies(response, str(user.id))
-    return user
+    return await build_user_public(session, user)
 
 
 @router.post("/refresh")
@@ -161,7 +161,7 @@ async def refresh(session: SessionDep, request: Request, response: Response) -> 
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     _set_auth_cookies(response, str(user.id))
-    return user
+    return await build_user_public(session, user)
 
 
 @router.post("/logout")
@@ -172,8 +172,8 @@ async def logout(response: Response) -> dict:
 
 
 @router.get("/me")
-async def me(current_user: CurrentUser) -> UserPublic:
-    return current_user
+async def me(session: SessionDep, current_user: CurrentUser) -> UserPublic:
+    return await build_user_public(session, current_user)
 
 
 from pydantic import BaseModel, Field as PydanticField  # noqa: E402
@@ -297,5 +297,5 @@ async def verify_login_code(
     _failed_logins.pop(key, None)
     _failed_logins.pop(acct_key, None)
     _set_auth_cookies(response, str(user.id))
-    return user
+    return await build_user_public(session, user)
 

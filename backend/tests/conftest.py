@@ -18,7 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.db import get_session
 from app.core.security import get_password_hash
 from app.main import app
-from app.models import Campus, Institution, User, UserRole
+from app.models import Campus, Institution, User, UserCampus, UserRole
 
 SUPERUSER_EMAIL = "admin@inue.edu.mx"
 PASSWORD = "testpassword1"
@@ -62,6 +62,11 @@ async def seed(session_factory):
                         role=role, is_superuser=is_super, hashed_password=hashed)
             session.add(user)
             users[role] = user
+        await session.flush()
+        # Mirror the migration backfill: every seeded user is a member of the
+        # seeded campus (so member-scoped enforcement doesn't lock them out).
+        for user in users.values():
+            session.add(UserCampus(user_id=user.id, campus_id=campus.id))
         await session.commit()
         for user in users.values():
             await session.refresh(user)
@@ -81,8 +86,10 @@ async def client(session_factory, seed):
     app.dependency_overrides.clear()
 
 
-async def login(client: AsyncClient, email: str = SUPERUSER_EMAIL) -> None:
+async def login(
+    client: AsyncClient, email: str = SUPERUSER_EMAIL, password: str = PASSWORD
+) -> None:
     response = await client.post(
-        "/api/v1/auth/login", data={"username": email, "password": PASSWORD}
+        "/api/v1/auth/login", data={"username": email, "password": password}
     )
     assert response.status_code == 200, response.text
