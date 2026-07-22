@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, Pencil, Plus } from "lucide-react";
+import { AlarmClock, Pencil, Plus, X } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
@@ -223,6 +223,7 @@ function ConceptosSection() {
       </div>
 
       <RecargosSection />
+      <BecaPctsCard />
       <InstitucionReciboCard />
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -399,6 +400,101 @@ function RecargosSection() {
           <AlarmClock className="size-4" />
           {run.isPending ? "Aplicando…" : "Aplicar recargos"}
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Beca percentages Dirección pre-authorizes: caja grants these instantly,
+ * anything else goes through the solicitud→autorización flow. */
+function BecaPctsCard() {
+  const queryClient = useQueryClient();
+  const { data: institution } = useQuery({
+    queryKey: queryKeys.institution,
+    queryFn: () => api<Institution>("/catalog/institution"),
+  });
+  const [newPct, setNewPct] = useState("");
+  const pcts = institution?.scholarship_pcts ?? [];
+
+  const save = useMutation({
+    mutationFn: (next: number[]) =>
+      api<number[]>("/treasury/scholarship-pcts", {
+        method: "PUT",
+        body: JSON.stringify(next),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.institution });
+      setNewPct("");
+      toast.success("Porcentajes preautorizados actualizados");
+    },
+    onError: (e) =>
+      toast.error(
+        e instanceof ApiError
+          ? e.message
+          : "Solo Dirección o Administración pueden editarlos",
+      ),
+  });
+
+  const add = () => {
+    const p = Number(newPct);
+    if (!(p > 0) || p > 100) {
+      toast.error("El porcentaje debe ser mayor a 0 y no exceder 100%");
+      return;
+    }
+    save.mutate([...pcts, p]);
+  };
+
+  return (
+    <Card className="rounded-md border-dashed">
+      <CardContent className="space-y-3 p-6">
+        <h2 className="text-lg font-bold">Porcentajes de beca preautorizados</h2>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Las becas con estos porcentajes se aplican al momento en caja, sin
+          esperar autorización. Cualquier otro porcentaje se captura como
+          solicitud y requiere el visto bueno de Dirección o Administración.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {pcts.map((p) => (
+            <Badge key={p} variant="secondary" className="gap-1 text-sm" data-numeric>
+              {p}%
+              <button
+                type="button"
+                aria-label={`Quitar ${p}%`}
+                className="ml-1 hover:text-destructive"
+                disabled={save.isPending}
+                onClick={() => save.mutate(pcts.filter((x) => x !== p))}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ))}
+          {pcts.length === 0 && (
+            <span className="text-sm text-muted-foreground">
+              Sin porcentajes preautorizados — toda beca requiere autorización.
+            </span>
+          )}
+        </div>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            add();
+          }}
+        >
+          <Input
+            type="number"
+            min={0.1}
+            max={100}
+            step="0.1"
+            placeholder="25"
+            className="w-28"
+            value={newPct}
+            onChange={(e) => setNewPct(e.target.value)}
+          />
+          <Button type="submit" variant="outline" disabled={save.isPending || !newPct}>
+            <Plus className="size-4" /> Agregar
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

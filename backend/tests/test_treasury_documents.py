@@ -363,3 +363,63 @@ async def test_beca_directa_condonacion_y_precio_congelado(client, seed):
         json={"amount": 1, "reason": "No debería"},
     )
     assert again.status_code == 409
+
+
+async def test_porcentajes_preautorizados(client, seed):
+    """Dirección pre-authorizes percentages; caja grants those becas instantly
+    (no per-scholarship sign-off), anything else stays a request."""
+    await login(client)  # superuser passes the Authorizer check
+    campus_id = str(seed["campus"].id)
+    student = await make_student(client, campus_id)
+
+    resp = await client.put("/api/v1/treasury/scholarship-pcts", json=[50, 25, 25])
+    assert resp.status_code == 200
+    assert resp.json() == [25, 50]  # deduped + sorted
+    bad = await client.put("/api/v1/treasury/scholarship-pcts", json=[120])
+    assert bad.status_code == 400
+
+    await login(client, "tesoreria@inue.edu.mx")
+    forbidden = await client.put("/api/v1/treasury/scholarship-pcts", json=[10])
+    assert forbidden.status_code == 403  # only Authorizer edits the list
+
+    ok = (await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Beca 25", "pct": 25,
+        "valid_from": TODAY.isoformat(),
+    })).json()
+    assert ok["status"] == "activa"  # pre-authorized → no wait at caja
+
+    other = (await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Beca 33", "pct": 33,
+        "valid_from": TODAY.isoformat(),
+    })).json()
+    assert other["status"] == "solicitada"  # off-list → request flow
+
+
+async def test_fiscal_receptor_registry(client, seed):
+    """Saving a student's fiscal data feeds the institution-wide receptor
+    registry (one per RFC) so recurrent invoicing clients are searchable."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    s1 = await make_student(client, campus_id)
+    s2 = await make_student(client, campus_id, curp="GOMA020202MBCXNS08")
+
+    fiscal = {
+        "rfc": "EMP010101AB1", "razon_social": "Empresa Pagadora SA de CV",
+        "regimen_fiscal": "601", "uso_cfdi": "G03", "email": "pagos@empresa.mx",
+        "cp": "22830", "calle": "Octava", "no_ext": "1389", "no_int": "",
+        "colonia": "Obrera", "municipio": "Ensenada", "estado": "BC", "pais": "México",
+    }
+    await client.put(f"/api/v1/treasury/students/{s1['id']}/fiscal", json=fiscal)
+    # Same payer for a second student, with an updated address.
+    await client.put(
+        f"/api/v1/treasury/students/{s2['id']}/fiscal",
+        json={**fiscal, "calle": "Novena"},
+    )
+
+    found = (await client.get("/api/v1/treasury/fiscal-receptors?q=empresa")).json()
+    assert len(found) == 1  # one registry entry per RFC, not one per student
+    assert found[0]["rfc"] == "EMP010101AB1"
+    assert found[0]["calle"] == "Novena"  # last save wins
+
+    by_rfc = (await client.get("/api/v1/treasury/fiscal-receptors?q=EMP0101")).json()
+    assert len(by_rfc) == 1

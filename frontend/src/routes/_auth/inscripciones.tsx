@@ -1,6 +1,6 @@
 // Inscripciones: servo-style stepper wizard (one submit at the end) + the
 // existing bulk CSV intake as a secondary tab.
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -19,7 +19,7 @@ import type {
   Term,
   WizardIntakeResult,
 } from "@/api/types";
-import { CURP_RE, MX_STATES, suggestCurpPrefix } from "@/lib/curp";
+import { CURP_RE, MX_STATES, suggestCurp as suggestCurpFrom } from "@/lib/curp";
 import { formatDate, todayISO } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PhotoCapture } from "@/components/photo-capture";
@@ -271,7 +271,11 @@ function EnrollmentWizard() {
   const campusRvoes = rvoes?.filter(
     (r) => r.program_id === data.programId && r.campus_id === data.campusId,
   );
-  const doneFlags = STEPS.map((s) => s.validate(data) === null);
+  // A step reads as "done" only once visited AND valid — permissive validators
+  // (most fields optional) would otherwise check-mark steps never opened.
+  const doneFlags = STEPS.map(
+    (s, i) => i <= maxVisited && s.validate(data) === null,
+  );
 
   function goNext() {
     const problem = STEPS[step].validate(data);
@@ -383,7 +387,7 @@ function EnrollmentWizard() {
       );
       return;
     }
-    const prefix = suggestCurpPrefix({
+    const curp = suggestCurpFrom({
       firstNames: data.first_names,
       lastNameP: data.last_name_p,
       lastNameM: data.last_name_m,
@@ -391,12 +395,12 @@ function EnrollmentWizard() {
       sex: data.sex,
       stateCode: data.birth_state,
     });
-    if (!prefix) {
+    if (!curp) {
       setError("Completa nombre y apellidos para sugerir la CURP");
       return;
     }
     setError(null);
-    set({ curp: prefix });
+    set({ curp });
   }
 
   const termName = terms?.find((t) => t.id === data.termId)?.name ?? "—";
@@ -413,50 +417,82 @@ function EnrollmentWizard() {
     .join(" ");
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[250px_1fr]">
-      {/* left vertical step list (mirrors the sidebar pattern) */}
-      <nav aria-label="Pasos de la inscripción" className="rounded-md border bg-card p-2">
+    <div className="space-y-6">
+      {/* top progress bar: step nodes joined by connectors */}
+      <div className="flex items-center px-1">
         {STEPS.map((s, i) => (
-          <button
-            key={s.label}
-            type="button"
-            onClick={() => jumpTo(i)}
-            disabled={i > maxVisited}
-            aria-current={i === step ? "step" : undefined}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-md border-l-2 border-transparent px-3 py-2 text-left text-sm font-semibold text-muted-foreground transition-colors",
-              i === step
-                ? "border-primary bg-muted font-bold text-foreground"
-                : i <= maxVisited
-                  ? "hover:bg-muted"
-                  : "opacity-50",
+          <Fragment key={s.label}>
+            {i > 0 && (
+              <div
+                aria-hidden
+                className={cn(
+                  "h-0.5 min-w-3 flex-1",
+                  i <= maxVisited ? "bg-primary" : "bg-border",
+                )}
+              />
             )}
-          >
-            <span
+            <button
+              type="button"
+              title={s.label}
+              aria-label={`Paso ${i + 1}: ${s.label}`}
+              aria-current={i === step ? "step" : undefined}
+              disabled={i > maxVisited}
+              onClick={() => jumpTo(i)}
               className={cn(
-                "flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
-                doneFlags[i] && i !== step
-                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
-                  : "bg-muted-foreground/15",
+                "flex size-8 shrink-0 items-center justify-center rounded-full border-2 text-xs font-bold transition-colors",
+                i === step
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : doneFlags[i]
+                    ? "border-primary bg-primary/15 text-foreground"
+                    : i <= maxVisited
+                      ? "border-border text-muted-foreground hover:border-primary"
+                      : "border-border text-muted-foreground opacity-50",
               )}
-              aria-hidden
+            >
+              {doneFlags[i] && i !== step ? <Check className="size-4" /> : i + 1}
+            </button>
+          </Fragment>
+        ))}
+      </div>
+
+      <div className="grid items-start gap-6 lg:grid-cols-[220px_1fr]">
+        {/* left step list — same look as the tesorería sidebar */}
+        <nav aria-label="Pasos de la inscripción" className="flex flex-col gap-1">
+          {STEPS.map((s, i) => (
+            <button
+              key={s.label}
+              type="button"
+              onClick={() => jumpTo(i)}
+              disabled={i > maxVisited}
+              className={cn(
+                "flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold transition-colors",
+                i === step
+                  ? "bg-primary/15 text-foreground"
+                  : i <= maxVisited
+                    ? "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                    : "text-muted-foreground opacity-50",
+              )}
             >
               {doneFlags[i] && i !== step ? (
-                <Check className="size-3" />
+                <Check
+                  className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+                  aria-hidden
+                />
               ) : (
-                i + 1
+                <span className="w-4 shrink-0 text-center text-xs" data-numeric aria-hidden>
+                  {i + 1}
+                </span>
               )}
-            </span>
-            <span className="truncate">{s.label}</span>
-          </button>
-        ))}
-      </nav>
+              <span className="truncate">{s.label}</span>
+            </button>
+          ))}
+        </nav>
 
-      {/* content + sticky footer */}
-      <div className="flex min-h-[480px] flex-col rounded-md border bg-card">
-        <div className="flex-1 p-6">
-          <h2 className="text-lg font-bold">{STEPS[step].label}</h2>
-          <div className="mt-4">
+        {/* content, borderless, with the nav buttons pinned at the bottom */}
+        <div className="flex min-h-[480px] flex-col">
+          <div className="flex-1">
+            <h2 className="text-lg font-bold">{STEPS[step].label}</h2>
+            <div className="mt-4">
             {step === 0 && (
               <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
                 <Field label="Apellido paterno *" id="w-app">
@@ -537,11 +573,10 @@ function EnrollmentWizard() {
                         ? "font-semibold text-emerald-600"
                         : "font-semibold text-destructive",
                   )}>
-                    {/* ponytail: the suggestion computes the standard 16-char
-                        prefix; the 2-char homoclave can't be derived — staff
-                        completes it from the official document */}
+                    {/* ponytail: pos 17 defaults to 0/A by birth year — only RENAPO
+                        knows real homonym collisions, staff verifies */}
                     {data.curp.length === 0
-                      ? "«Sugerir» calcula los primeros 16 caracteres; la homoclave (últimos 2) se captura del documento oficial."
+                      ? "«Sugerir» calcula la CURP completa con homoclave; verifícala contra el documento oficial."
                       : CURP_RE.test(data.curp)
                         ? "Formato de CURP válido"
                         : `Formato de CURP inválido (${data.curp.length}/18 caracteres)`}
@@ -947,7 +982,7 @@ function EnrollmentWizard() {
           </div>
         </div>
 
-        <div className="sticky bottom-0 flex items-center justify-between gap-4 rounded-b-md border-t bg-card px-6 py-4">
+        <div className="sticky bottom-0 flex items-center justify-between gap-4 bg-background py-4">
           <Button type="button" variant="outline" onClick={goBack}
             disabled={step === 0 || submit.isPending}>
             Anterior
@@ -979,6 +1014,7 @@ function EnrollmentWizard() {
             </Button>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

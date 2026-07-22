@@ -7,6 +7,7 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.models.common import utcnow
@@ -56,6 +57,13 @@ class InstitutionBase(SQLModel):
     late_fee_pct: float = Field(default=0.0, ge=0)
     late_fee_grace_days: int = Field(default=0, ge=0)
     block_documents_on_debt: bool = True
+    # Beca percentages pre-authorized by Dirección (RF-T05): a beca created with
+    # one of these activates immediately — no per-scholarship sign-off at caja.
+    # Edited only via PUT /treasury/scholarship-pcts (Authorizer), not the
+    # institution PATCH.
+    scholarship_pcts: list[float] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False, server_default="[]")
+    )
 
 
 class Institution(InstitutionBase, table=True):

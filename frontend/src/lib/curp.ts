@@ -1,6 +1,8 @@
-// CURP helper: RENAPO state codes + a 16-char prefix suggestion computed from
-// name / date of birth / sex / state. The 2-char homoclave cannot be derived
-// client-side, so the suggestion is always an EDITABLE prefix.
+// CURP helper: RENAPO state codes + a full 18-char suggestion computed from
+// name / date of birth / sex / state. The homoclave is included: position 17 is
+// RENAPO's homonymy differentiator — '0' (born <2000) / 'A' (>=2000) unless the
+// person collides with a homonym, so staff verify it against the official
+// document — and position 18 is the standard computable check digit.
 // ponytail: skips RENAPO's "inconvenient words" substitution list — staff can
 // correct the editable suggestion by hand.
 
@@ -90,7 +92,22 @@ function firstInternalConsonant(word: string): string {
   return "X";
 }
 
-export function suggestCurpPrefix(input: {
+// RENAPO check-digit alphabet: each char's value is its index here.
+const CHECK_CHARS = "0123456789ABCDEFGHIJKLMNÑOPQRSTUVWXYZ";
+
+/** Standard CURP check digit (position 18) computed from the first 17 chars. */
+export function curpCheckDigit(first17: string): string {
+  if (first17.length !== 17 || [...first17].some((c) => !CHECK_CHARS.includes(c))) {
+    throw new Error("CURP: se requieren 17 caracteres válidos para el dígito verificador");
+  }
+  let sum = 0;
+  for (let i = 0; i < 17; i++) {
+    sum += CHECK_CHARS.indexOf(first17[i]) * (18 - i);
+  }
+  return String((10 - (sum % 10)) % 10);
+}
+
+export function suggestCurp(input: {
   firstNames: string;
   lastNameP: string;
   lastNameM: string;
@@ -105,10 +122,11 @@ export function suggestCurpPrefix(input: {
   const am = mainWord(input.lastNameM);
   const name = mainWord(input.firstNames, true);
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.birthDate);
-  if (!ap || !name || !dateMatch || !input.stateCode) return null;
+  const stateCode = input.stateCode.trim().toUpperCase();
+  if (!ap || !name || !dateMatch || !/^[A-Z]{2}$/.test(stateCode)) return null;
   const [, yyyy, mm, dd] = dateMatch;
   const sexChar = input.sex === "M" ? "H" : "M"; // CURP: H=hombre, M=mujer
-  return [
+  const prefix16 = [
     safeChar(ap[0]),
     firstInternalVowel(ap),
     safeChar(am[0]),
@@ -117,9 +135,11 @@ export function suggestCurpPrefix(input: {
     mm,
     dd,
     sexChar,
-    input.stateCode,
+    stateCode,
     firstInternalConsonant(ap),
     am ? firstInternalConsonant(am) : "X",
     firstInternalConsonant(name),
   ].join("");
+  const differentiator = Number(yyyy) < 2000 ? "0" : "A";
+  return prefix16 + differentiator + curpCheckDigit(prefix16 + differentiator);
 }

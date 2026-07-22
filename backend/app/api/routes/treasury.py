@@ -26,8 +26,11 @@ from app.models import (
     ChargeStatus,
     FiscalProfileBase,
     FiscalProfilePublic,
+    FiscalReceptor,
+    FiscalReceptorPublic,
     Group,
     GroupEnrollment,
+    Institution,
     GroupEnrollmentStatus,
     PlanVersion,
     Program,
@@ -522,6 +525,35 @@ async def account_statement(
 
 # --- Scholarships (RF-T05) -----------------------------------------------------------------
 
+@router.put("/scholarship-pcts")
+async def set_scholarship_pcts(
+    session: SessionDep, current_user: Authorizer, body: list[float]
+) -> list[float]:
+    """Dirección pre-authorizes the beca percentages caja can grant without a
+    per-scholarship sign-off. Replaces the whole list."""
+    for p in body:
+        if not 0 < p <= 100:
+            raise HTTPException(
+                status_code=400, detail="Cada porcentaje debe ser mayor a 0 y no exceder 100%"
+            )
+    pcts = sorted(set(round(p, 2) for p in body))
+    institution = await get_default_institution(session)
+    # Row lock: serialize concurrent edits so a slower write can't interleave.
+    # ponytail: replace-the-list semantics stay last-write-wins between two
+    # admins editing at once; per-item add/remove endpoints if that ever hurts.
+    institution = (
+        await session.exec(
+            select(Institution).where(Institution.id == institution.id).with_for_update()
+        )
+    ).one()
+    institution.scholarship_pcts = pcts
+    session.add(institution)
+    audit.record(session, actor=current_user.email, action="scholarship_pcts.updated",
+                 entity="institution", entity_id=str(institution.id), detail=str(pcts))
+    await session.commit()
+    return pcts
+
+
 @router.get("/scholarships")
 async def list_scholarships(
     session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID | None = None,
@@ -559,7 +591,11 @@ async def create_scholarship(
         concept = await session.get(ChargeConcept, body.concept_id)
         if concept is None or not concept.is_active:
             raise HTTPException(status_code=404, detail="Concepto no encontrado")
-    auto_approve = current_user.is_superuser or current_user.role in (
+    institution = await get_default_institution(session)
+    # Pre-authorized percentage (set by Dirección beforehand) → no per-beca
+    # sign-off: the cashier doesn't wait for an authorization mid-process.
+    pre_authorized = any(abs(p - body.pct) < 0.001 for p in institution.scholarship_pcts)
+    auto_approve = pre_authorized or current_user.is_superuser or current_user.role in (
         UserRole.admin_sistema, UserRole.direccion
     )
     scholarship = Scholarship(
@@ -573,9 +609,10 @@ async def create_scholarship(
     if auto_approve:
         await session.flush()
         updated = await apply_scholarship_to_pending(session, scholarship)
+        how = "porcentaje preautorizado" if pre_authorized else "alta directa"
         audit.record(session, actor=current_user.email, action="scholarship.authorized",
                      entity="scholarship", entity_id=str(scholarship.id),
-                     detail=f"{body.name} — alta directa, {updated} cargos actualizados")
+                     detail=f"{body.name} — {how}, {updated} cargos actualizados")
     else:
         audit.record(session, actor=current_user.email, action="scholarship.requested",
                      entity="scholarship", entity_id=str(scholarship.id), detail=body.name)
@@ -630,6 +667,21 @@ async def reject_scholarship(
 
 # --- Fiscal profile (Caja → Facturar) ----------------------------------------------------
 
+@router.get("/fiscal-receptors")
+async def search_fiscal_receptors(
+    session: SessionDep, _: TreasuryStaff, q: str = ""
+) -> list[FiscalReceptorPublic]:
+    """Registered invoicing clients: search by RFC or razón social so recurrent
+    receptors aren't recaptured."""
+    query = select(FiscalReceptor).order_by(FiscalReceptor.razon_social).limit(10)
+    if q.strip():
+        needle = f"%{q.strip()}%"
+        query = query.where(
+            FiscalReceptor.rfc.ilike(needle) | FiscalReceptor.razon_social.ilike(needle)  # type: ignore[attr-defined]
+        )
+    return (await session.exec(query)).all()
+
+
 @router.get("/students/{student_id}/fiscal")
 async def get_fiscal_profile(
     session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID
@@ -659,6 +711,22 @@ async def upsert_fiscal_profile(
             setattr(profile, k, v)
         profile.updated_at = utcnow()
     session.add(profile)
+    # Feed the institution-wide receptor registry (one per RFC): recurrent
+    # clients — a company or parent paying for several students — get found by
+    # search next time instead of being recaptured.
+    if body.rfc.strip():
+        receptor = (
+            await session.exec(
+                select(FiscalReceptor).where(FiscalReceptor.rfc == body.rfc)
+            )
+        ).first()
+        if receptor is None:
+            session.add(FiscalReceptor(**body.model_dump()))
+        else:
+            for k, v in body.model_dump().items():
+                setattr(receptor, k, v)
+            receptor.updated_at = utcnow()
+            session.add(receptor)
     audit.record(session, actor=current_user.email, action="fiscal_profile.saved",
                  entity="student", entity_id=str(student_id), detail=body.rfc)
     await session.commit()

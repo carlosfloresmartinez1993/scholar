@@ -159,6 +159,8 @@ export interface Institution {
   late_fee_pct: number;
   late_fee_grace_days: number;
   block_documents_on_debt: boolean;
+  /** Beca percentages pre-authorized by Dirección: creating one applies instantly. */
+  scholarship_pcts: number[];
 }
 
 export interface Campus {
@@ -640,6 +642,24 @@ export interface Scholarship {
 export interface FiscalProfile {
   id: string;
   student_id: string;
+  rfc: string;
+  razon_social: string;
+  regimen_fiscal: string;
+  uso_cfdi: string;
+  email: string;
+  cp: string;
+  calle: string;
+  no_ext: string;
+  no_int: string;
+  colonia: string;
+  municipio: string;
+  estado: string;
+  pais: string;
+}
+
+/** Registered invoicing client (one per RFC) — reused across students. */
+export interface FiscalReceptor {
+  id: string;
   rfc: string;
   razon_social: string;
   regimen_fiscal: string;
