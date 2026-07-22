@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, ArrowLeft, Check, Plus, X } from "lucide-react";
+import { AlarmClock, Pencil, Plus } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
@@ -11,19 +11,13 @@ import type {
   Institution,
   Modality,
   Program,
-  Scholarship,
-  ScholarshipStatus,
-  Student,
-  UserPublic,
 } from "@/api/types";
 import {
   CONCEPT_KIND_LABELS,
-  formatDate,
   formatMoney,
   MODALITY_LABELS,
-  SCHOLARSHIP_STATUS_LABELS,
 } from "@/lib/format";
-import { usePersistedState } from "@/lib/use-persisted-state";
+import { TesoreriaLayout } from "@/components/tesoreria-nav";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -32,7 +26,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -63,50 +56,26 @@ export const Route = createFileRoute("/_auth/tesoreria_/ajustes")({
 const NONE = "__none__";
 
 function AjustesPage() {
-  // Pending-approval count surfaces on the Becas tab without opening it.
-  const { data: pendientes } = useQuery({
-    queryKey: queryKeys.scholarshipsByStatus("solicitada"),
-    queryFn: () => api<Scholarship[]>("/treasury/scholarships?status=solicitada"),
-  });
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="ghost" size="icon" asChild aria-label="Volver a Caja">
-          <Link to="/tesoreria">
-            <ArrowLeft className="size-4" />
-          </Link>
-        </Button>
-        <div>
-          <h1 className="text-3xl">Ajustes de tesorería</h1>
-          <p className="text-sm text-muted-foreground">
-            Conceptos de cobro, recargos y becas.
-          </p>
-        </div>
-      </div>
-      <Tabs defaultValue="conceptos">
-        <TabsList>
-          <TabsTrigger value="conceptos">Conceptos y recargos</TabsTrigger>
-          <TabsTrigger value="becas">
-            Becas
-            {pendientes && pendientes.length > 0 && (
-              <Badge variant="destructive" className="ml-1" data-numeric>
-                {pendientes.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="conceptos" className="mt-4">
-          <ConceptosSection />
-        </TabsContent>
-        <TabsContent value="becas" className="mt-4">
-          <BecasSection />
-        </TabsContent>
-      </Tabs>
+      <h1 className="text-3xl">Tesorería</h1>
+      <TesoreriaLayout active="ajustes">
+        <ConceptosSection />
+      </TesoreriaLayout>
     </div>
   );
 }
 
 // --- Conceptos (incluye recargos como sección) ----------------------------------------
+
+const EMPTY_FORM = {
+  name: "",
+  kind: "colegiatura" as ChargeConceptKind,
+  amount: "",
+  program_id: NONE,
+  modality: NONE,
+  is_active: true,
+};
 
 function ConceptosSection() {
   const queryClient = useQueryClient();
@@ -120,31 +89,49 @@ function ConceptosSection() {
   });
 
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    name: "",
-    kind: "colegiatura" as ChargeConceptKind,
-    amount: "",
-    program_id: NONE,
-    modality: NONE,
-    is_active: true,
-  });
+  const [editing, setEditing] = useState<ChargeConcept | null>(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  const startCreate = () => {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setOpen(true);
+  };
+  const startEdit = (c: ChargeConcept) => {
+    setEditing(c);
+    setForm({
+      name: c.name,
+      kind: c.kind,
+      amount: String(c.amount),
+      program_id: c.program_id ?? NONE,
+      modality: c.modality ?? NONE,
+      is_active: c.is_active,
+    });
+    setOpen(true);
+  };
 
   const save = useMutation({
-    mutationFn: () =>
-      api<ChargeConcept>("/treasury/concepts", {
-        method: "POST",
-        body: JSON.stringify({
-          name: form.name,
-          kind: form.kind,
-          amount: Number(form.amount),
-          program_id: form.program_id === NONE ? null : form.program_id,
-          modality: form.modality === NONE ? null : form.modality,
-          is_active: form.is_active,
-        }),
-      }),
+    mutationFn: () => {
+      const payload = {
+        name: form.name,
+        amount: Number(form.amount),
+        program_id: form.program_id === NONE ? null : form.program_id,
+        modality: form.modality === NONE ? null : form.modality,
+        is_active: form.is_active,
+      };
+      return editing
+        ? api<ChargeConcept>(`/treasury/concepts/${editing.id}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          })
+        : api<ChargeConcept>("/treasury/concepts", {
+            method: "POST",
+            body: JSON.stringify({ ...payload, kind: form.kind }),
+          });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.concepts });
-      toast.success("Concepto creado");
+      toast.success(editing ? "Concepto actualizado" : "Concepto creado");
       setOpen(false);
     },
     onError: (e) =>
@@ -156,21 +143,13 @@ function ConceptosSection() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        <Button
-          className="font-bold"
-          onClick={() => {
-            setForm({
-              name: "",
-              kind: "colegiatura",
-              amount: "",
-              program_id: NONE,
-              modality: NONE,
-              is_active: true,
-            });
-            setOpen(true);
-          }}
-        >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-xl text-sm text-muted-foreground">
+          Cada cargo congela su importe al generarse: cambiar el precio de un
+          concepto solo afecta cargos futuros, los adeudos existentes no se
+          mueven. Edita el concepto en lugar de crear uno nuevo por ciclo.
+        </p>
+        <Button className="font-bold" onClick={startCreate}>
           <Plus className="size-4" /> Nuevo concepto
         </Button>
       </div>
@@ -185,13 +164,14 @@ function ConceptosSection() {
               <TableHead>Programa</TableHead>
               <TableHead>Modalidad</TableHead>
               <TableHead>Estado</TableHead>
+              <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading &&
               [1, 2, 3].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
@@ -216,12 +196,22 @@ function ConceptosSection() {
                     {c.is_active ? "Activo" : "Inactivo"}
                   </Badge>
                 </TableCell>
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Editar ${c.name}`}
+                    onClick={() => startEdit(c)}
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
             {concepts && concepts.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={7}
                   className="py-10 text-center text-muted-foreground"
                 >
                   Sin conceptos de cobro
@@ -238,7 +228,9 @@ function ConceptosSection() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Nuevo concepto de cobro</DialogTitle>
+            <DialogTitle>
+              {editing ? `Editar: ${editing.name}` : "Nuevo concepto de cobro"}
+            </DialogTitle>
           </DialogHeader>
           <form
             className="grid gap-4"
@@ -254,7 +246,7 @@ function ConceptosSection() {
                 required
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Colegiatura licenciatura 2026"
+                placeholder="Colegiatura licenciatura"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -262,6 +254,7 @@ function ConceptosSection() {
                 <Label>Tipo</Label>
                 <Select
                   value={form.kind}
+                  disabled={!!editing}
                   onValueChange={(v) => setForm({ ...form, kind: v as ChargeConceptKind })}
                 >
                   <SelectTrigger className="w-full">
@@ -287,6 +280,11 @@ function ConceptosSection() {
                   value={form.amount}
                   onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 />
+                {editing && (
+                  <p className="text-xs text-muted-foreground">
+                    El nuevo importe aplica solo a cargos futuros.
+                  </p>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -479,181 +477,5 @@ function InstitucionReciboCard() {
         </form>
       </CardContent>
     </Card>
-  );
-}
-
-// --- Becas: bandeja de autorización ---------------------------------------------------
-
-const BECA_FILTERS: { value: ScholarshipStatus | "all"; label: string }[] = [
-  { value: "solicitada", label: "Por autorizar" },
-  { value: "activa", label: "Activas" },
-  { value: "suspendida", label: "Suspendidas" },
-  { value: "all", label: "Todas" },
-];
-
-function BecasSection() {
-  const queryClient = useQueryClient();
-  const { data: me } = useQuery({
-    queryKey: queryKeys.me,
-    queryFn: () => api<UserPublic>("/auth/me"),
-  });
-  const canAuthorize =
-    me?.is_superuser || me?.role === "admin_sistema" || me?.role === "direccion";
-  const [filter, setFilter] = usePersistedState<ScholarshipStatus | "all">(
-    "tesoreria-becas-status-v1",
-    "solicitada",
-    (v) => BECA_FILTERS.some((f) => f.value === v),
-  );
-  const [students, setStudents] = useState<Record<string, Student>>({});
-
-  const { data: scholarships, isLoading } = useQuery({
-    queryKey: queryKeys.scholarshipsByStatus(filter),
-    queryFn: async () => {
-      const qs = filter === "all" ? "" : `?status=${filter}`;
-      const list = await api<Scholarship[]>(`/treasury/scholarships${qs}`);
-      // Resolve student names lazily (small pending lists).
-      const missing = [...new Set(list.map((s) => s.student_id))].filter(
-        (id) => !students[id],
-      );
-      if (missing.length) {
-        const fetched = await Promise.all(
-          missing.map((id) =>
-            api<Student>(`/students/${id}`).catch(() => null),
-          ),
-        );
-        setStudents((prev) => {
-          const next = { ...prev };
-          for (const s of fetched) if (s) next[s.id] = s;
-          return next;
-        });
-      }
-      return list;
-    },
-  });
-
-  const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "authorize" | "reject" }) =>
-      api(`/treasury/scholarships/${id}/${action}`, { method: "POST" }),
-    onSuccess: (_d, { action }) => {
-      queryClient.invalidateQueries({ queryKey: ["scholarships"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.scholarshipReport });
-      toast.success(action === "authorize" ? "Beca autorizada" : "Beca rechazada");
-    },
-    onError: (e) =>
-      toast.error(e instanceof ApiError ? e.message : "Error"),
-  });
-
-  const value = (s: Scholarship) =>
-    s.pct != null ? `${s.pct}%` : formatMoney(s.fixed_amount);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1 rounded-md border p-1">
-          {BECA_FILTERS.map((f) => (
-            <Button
-              key={f.value}
-              size="sm"
-              variant={filter === f.value ? "default" : "ghost"}
-              onClick={() => setFilter(f.value)}
-            >
-              {f.label}
-            </Button>
-          ))}
-        </div>
-        {!canAuthorize && (
-          <p className="text-xs text-muted-foreground">
-            Solo Dirección o Administración pueden autorizar becas.
-          </p>
-        )}
-      </div>
-
-      <div className="rounded-md border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Alumno</TableHead>
-              <TableHead>Beca</TableHead>
-              <TableHead>Valor</TableHead>
-              <TableHead>Tolerancia</TableHead>
-              <TableHead>Vigencia</TableHead>
-              <TableHead>Estado</TableHead>
-              <TableHead className="text-right">Acción</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading && (
-              <TableRow>
-                <TableCell colSpan={7}>
-                  <Skeleton className="h-6 w-full" />
-                </TableCell>
-              </TableRow>
-            )}
-            {scholarships?.map((s) => (
-              <TableRow key={s.id}>
-                <TableCell className="font-semibold">
-                  {students[s.student_id]?.full_name ?? "…"}
-                  <span className="ml-2 text-xs text-muted-foreground" data-numeric>
-                    {students[s.student_id]?.enrollment_number}
-                  </span>
-                </TableCell>
-                <TableCell>{s.name}</TableCell>
-                <TableCell data-numeric className="font-semibold">
-                  {value(s)}
-                </TableCell>
-                <TableCell data-numeric>{s.tolerance_days} días</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {formatDate(s.valid_from)}
-                  {s.valid_to ? ` – ${formatDate(s.valid_to)}` : ""}
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      s.status === "activa"
-                        ? "outline"
-                        : s.status === "solicitada"
-                          ? "secondary"
-                          : "destructive"
-                    }
-                  >
-                    {SCHOLARSHIP_STATUS_LABELS[s.status]}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  {s.status === "solicitada" && canAuthorize ? (
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        size="sm"
-                        disabled={act.isPending}
-                        onClick={() => act.mutate({ id: s.id, action: "authorize" })}
-                      >
-                        <Check className="size-4" /> Autorizar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={act.isPending}
-                        onClick={() => act.mutate({ id: s.id, action: "reject" })}
-                      >
-                        <X className="size-4" /> Rechazar
-                      </Button>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-            {scholarships && scholarships.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
-                  Sin becas en este filtro
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
   );
 }

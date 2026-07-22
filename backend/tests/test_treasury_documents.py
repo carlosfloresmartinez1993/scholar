@@ -29,13 +29,16 @@ async def test_treasury_flow(client, seed):
         "name": "Colegiatura Licenciatura", "kind": "colegiatura", "amount": 2500,
     })).json()
 
-    # 50% scholarship (RF-T05): captured as a request, no discount until authorized
+    # 50% scholarship (RF-T05): captured by treasury staff it's a request, no
+    # discount until authorized (admins/superusers auto-activate instead)
+    await login(client, "tesoreria@inue.edu.mx")
     scholarship = await client.post("/api/v1/treasury/scholarships", json={
         "student_id": student["id"], "name": "Beca excelencia", "pct": 50,
         "valid_from": (TODAY - timedelta(days=90)).isoformat(),
     })
     assert scholarship.status_code == 201
     assert scholarship.json()["status"] == "solicitada"
+    await login(client)
     # becas are percentage-only now — fixed-amount-only AND mixed are both rejected
     no_pct = await client.post("/api/v1/treasury/scholarships", json={
         "student_id": student["id"], "name": "Inválida", "fixed_amount": 100,
@@ -290,3 +293,73 @@ async def test_audit_trail(client, seed):
     logs = (await client.get("/api/v1/audit")).json()
     update_entries = [l for l in logs if l["action"] == "grade.updated"]
     assert update_entries and "7.0 -> 9.0" in update_entries[0]["detail"]
+
+
+async def test_beca_directa_condonacion_y_precio_congelado(client, seed):
+    """New flows: admin-created becas activate directly and can target a concept;
+    condonaciones reduce a charge's balance; concept price edits never move
+    already-generated charges (frozen amounts)."""
+    await login(client)  # superuser
+    campus_id = str(seed["campus"].id)
+    student = await make_student(client, campus_id)
+
+    concept = (await client.post("/api/v1/treasury/concepts", json={
+        "name": "Inscripción Licenciatura", "kind": "inscripcion", "amount": 1000,
+    })).json()
+
+    # pct must be within (0, 100]
+    too_much = await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Inválida", "pct": 120,
+        "valid_from": TODAY.isoformat(),
+    })
+    assert too_much.status_code in (400, 422)
+
+    # superuser creates a concept-scoped beca → active immediately, no request step
+    beca = (await client.post("/api/v1/treasury/scholarships", json={
+        "student_id": student["id"], "name": "Beca inscripción", "pct": 50,
+        "concept_id": concept["id"],
+        "valid_from": (TODAY - timedelta(days=30)).isoformat(),
+    })).json()
+    assert beca["status"] == "activa"
+    assert beca["concept_id"] == concept["id"]
+
+    # a charge of that concept gets the frozen 50% discount
+    plan = (await client.post("/api/v1/treasury/payment-plans", json={
+        "student_id": student["id"], "concept_id": concept["id"],
+        "installments": 1, "first_due_date": TODAY.isoformat(),
+    })).json()
+    charge = plan[0]
+    assert charge["scholarship_discount"] == 500.0
+    assert charge["balance"] == 500.0
+
+    # price bump: only future charges use the new amount, the old charge is frozen
+    patched = await client.patch(
+        f"/api/v1/treasury/concepts/{concept['id']}", json={"amount": 1100}
+    )
+    assert patched.status_code == 200
+    assert patched.json()["amount"] == 1100
+    statement = (await client.get(
+        f"/api/v1/treasury/students/{student['id']}/statement"
+    )).json()
+    old = next(c for c in statement["charges"] if c["id"] == charge["id"])
+    assert old["amount"] == 1000.0 and old["balance"] == 500.0
+
+    # condonación: partial, then the rest closes the charge; over-condoning fails
+    partial = await client.post(
+        f"/api/v1/treasury/charges/{charge['id']}/condone",
+        json={"amount": 200, "reason": "Apoyo dirección"},
+    )
+    assert partial.status_code == 200
+    assert partial.json()["balance"] == 300.0
+    rest = await client.post(
+        f"/api/v1/treasury/charges/{charge['id']}/condone",
+        json={"reason": "Condonación total"},
+    )
+    assert rest.status_code == 200
+    assert rest.json()["balance"] == 0.0
+    assert rest.json()["status"] == "pagado"
+    again = await client.post(
+        f"/api/v1/treasury/charges/{charge['id']}/condone",
+        json={"amount": 1, "reason": "No debería"},
+    )
+    assert again.status_code == 409

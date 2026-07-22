@@ -106,22 +106,24 @@ const STYLE = `
   @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
+  /* Thermal print comes out faint: bold-weight body text so the RPH326B
+     rasterizes solid, legible strokes. */
   body { width: 80mm; padding: 4mm 3mm; font-family: "Courier New", monospace;
-         font-size: 11px; line-height: 1.35; color: #000; }
+         font-size: 12px; font-weight: 700; line-height: 1.35; color: #000; }
   .center { text-align: center; }
   .logo { display: block; margin: 0 auto 2px; height: 16mm; width: auto;
           filter: grayscale(1) contrast(1.4); }
   .bar { background: #000; color: #fff; padding: 1px 4px; font-weight: 700; display: inline-block; }
   .row { display: flex; justify-content: space-between; gap: 6px; }
-  .muted { color: #333; }
+  .muted { color: #000; }
   table { width: 100%; border-collapse: collapse; margin: 3px 0; }
-  th { background: #000; color: #fff; text-align: left; padding: 2px 3px; font-size: 10px; }
+  th { background: #000; color: #fff; text-align: left; padding: 2px 3px; font-size: 11px; }
   td { padding: 2px 3px; vertical-align: top; }
   .r { text-align: right; }
   hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
   .totals { margin-top: 2px; }
   .totals .row { font-weight: 700; }
-  .small { font-size: 10px; }
+  .small { font-size: 11px; }
 `;
 
 function receiptBody(d: ReceiptData, fiscal?: FiscalReceptor): string {

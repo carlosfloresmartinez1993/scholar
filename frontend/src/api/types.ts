@@ -585,6 +585,7 @@ export interface Charge {
   description: string;
   amount: number;
   scholarship_discount: number;
+  condoned_amount: number;
   due_date: string;
   status: ChargeStatus;
   is_late_fee: boolean;
@@ -628,6 +629,7 @@ export interface Scholarship {
   name: string;
   pct?: number | null;
   fixed_amount?: number | null;
+  concept_id?: string | null;
   valid_from: string;
   valid_to?: string | null;
   tolerance_days: number;

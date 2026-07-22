@@ -2,7 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BarChart3, Check, Plus, Printer, Receipt, Search, Settings } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Printer,
+  Receipt,
+  Search,
+} from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
@@ -31,6 +39,7 @@ import {
   type ReceiptData,
 } from "@/lib/receipt";
 import { PaymentDialog } from "@/components/payment-dialog";
+import { TesoreriaLayout } from "@/components/tesoreria-nav";
 import { StudentAvatar } from "@/components/student-avatar";
 import { StudentStatusBadge } from "@/components/student-status-badge";
 import { EmptyState } from "@/components/empty-state";
@@ -78,34 +87,13 @@ function useInstitution() {
   });
 }
 
-const AJUSTES_ROLES = ["admin_sistema", "direccion", "tesoreria"];
-
 function TesoreriaPage() {
-  const { data: me } = useMe();
-  const canAjustes =
-    me?.is_superuser || (me?.role !== undefined && AJUSTES_ROLES.includes(me.role));
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-3xl">Caja</h1>
-        <div className="flex gap-2">
-          {canAjustes && (
-            <>
-              <Button variant="outline" asChild>
-                <Link to="/reportes">
-                  <BarChart3 className="size-4" /> Ver reportes
-                </Link>
-              </Button>
-              <Button variant="outline" asChild>
-                <Link to="/tesoreria/ajustes">
-                  <Settings className="size-4" /> Ajustes
-                </Link>
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-      <CajaBody />
+      <h1 className="text-3xl">Tesorería</h1>
+      <TesoreriaLayout active="caja">
+        <CajaBody />
+      </TesoreriaLayout>
     </div>
   );
 }
@@ -128,7 +116,7 @@ function CajaHero() {
       ),
   });
   return (
-    <div className="rounded-md bg-primary p-6 text-primary-foreground">
+    <div className="w-full max-w-sm rounded-md bg-primary p-6 text-primary-foreground">
       <p className="text-xs font-bold uppercase tracking-wide text-primary-foreground/70">
         Cobrado hoy
       </p>
@@ -206,6 +194,8 @@ function CajaBody() {
   });
 
   const [cobrarCharge, setCobrarCharge] = useState<Charge | null | undefined>(undefined);
+  const [condonarCharge, setCondonarCharge] = useState<Charge | null>(null);
+  const [cancelPayment, setCancelPayment] = useState<Payment | null>(null);
   const [facturarPayment, setFacturarPayment] = useState<Payment | null>(null);
   // Multi-cobro: charges ticked for a single combined payment.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -238,7 +228,7 @@ function CajaBody() {
 
   const pendientes =
     statement?.charges.filter((c) => c.status !== "cancelado" && c.balance > 0) ?? [];
-  const pagos = statement?.payments.filter((p) => !p.cancelled).slice().reverse() ?? [];
+  const pagos = statement?.payments.slice().reverse() ?? [];
 
   const selectedCharges = pendientes.filter((c) => selectedIds.has(c.id));
   const selectedTotal =
@@ -258,31 +248,40 @@ function CajaBody() {
     <div className="space-y-6">
       {!student && (
         <>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <CajaHero />
-            <Card className="rounded-md">
-              <CardContent className="space-y-3 p-6">
-                <h2 className="text-lg font-bold">Cobrar a un alumno</h2>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    autoFocus
-                    className="pl-9"
-                    placeholder="Buscar por nombre o matrícula…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                </div>
-                {query.trim().length >= 2 && searchError && (
-                  <div className="flex items-center gap-3 text-sm text-destructive">
+          {/* Borderless search: results overlay the page (absolute) — no layout shift. */}
+          <div className="relative max-w-xl">
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                refetchSearch();
+              }}
+            >
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  autoFocus
+                  className="pl-9"
+                  placeholder="Cobrar a un alumno — nombre o matrícula…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <Button type="submit" aria-label="Buscar alumno">
+                <Search className="size-4" /> Buscar
+              </Button>
+            </form>
+            {query.trim().length >= 2 && (
+              <div className="absolute inset-x-0 top-full z-20 mt-1 divide-y overflow-hidden rounded-md border bg-popover shadow-lg">
+                {searchError ? (
+                  <div className="flex items-center gap-3 px-3 py-3 text-sm text-destructive">
                     No se pudo buscar alumnos.
                     <Button size="sm" variant="outline" onClick={() => refetchSearch()}>
                       Reintentar
                     </Button>
                   </div>
-                )}
-                {query.trim().length >= 2 && !searchError && (
-                  <div className="divide-y rounded-md border">
+                ) : (
+                  <>
                     {results?.map((s) => (
                       <button
                         key={s.id}
@@ -303,12 +302,15 @@ function CajaBody() {
                         Sin resultados
                       </p>
                     )}
-                  </div>
+                  </>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            )}
           </div>
           <CarteraVencidaSection />
+          <div className="flex justify-end">
+            <CajaHero />
+          </div>
         </>
       )}
 
@@ -376,12 +378,13 @@ function CajaBody() {
                     <TableHead>Concepto</TableHead>
                     <TableHead>Vence</TableHead>
                     <TableHead className="text-right">Saldo</TableHead>
+                    <TableHead className="w-28" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loadingStatement && (
                     <TableRow>
-                      <TableCell colSpan={4}>
+                      <TableCell colSpan={5}>
                         <Skeleton className="h-6 w-full" />
                       </TableCell>
                     </TableRow>
@@ -410,13 +413,31 @@ function CajaBody() {
                       <TableCell>{formatDate(c.due_date)}</TableCell>
                       <TableCell data-numeric className="text-right font-semibold">
                         {formatMoney(c.balance)}
+                        {c.condoned_amount > 0 && (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            (cond. {formatMoney(c.condoned_amount)})
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className="text-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground"
+                          onClick={() => setCondonarCharge(c)}
+                        >
+                          Condonar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
                   {!loadingStatement && pendientes.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={4}
+                        colSpan={5}
                         className="py-8 text-center text-muted-foreground"
                       >
                         Sin cargos pendientes
@@ -440,42 +461,58 @@ function CajaBody() {
                     <TableHead>Fecha</TableHead>
                     <TableHead>Método</TableHead>
                     <TableHead>Monto</TableHead>
+                    <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Recibo</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pagos.map((p) => (
-                    <TableRow key={p.id}>
+                    <TableRow key={p.id} className={p.cancelled ? "opacity-60" : ""}>
                       <TableCell data-numeric>{p.receipt_folio}</TableCell>
                       <TableCell>{formatDate(p.received_at)}</TableCell>
                       <TableCell>{PAYMENT_METHOD_LABELS[p.method]}</TableCell>
                       <TableCell data-numeric className="font-semibold">
                         {formatMoney(p.amount)}
                       </TableCell>
+                      <TableCell>
+                        <Badge variant={p.cancelled ? "destructive" : "outline"}>
+                          {p.cancelled ? "Cancelado" : "Vigente"}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => printPaymentReceipt(p)}
-                          >
-                            <Printer className="size-4" /> Recibo
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setFacturarPayment(p)}
-                          >
-                            <Receipt className="size-4" /> Facturar
-                          </Button>
-                        </div>
+                        {!p.cancelled && (
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => printPaymentReceipt(p)}
+                            >
+                              <Printer className="size-4" /> Recibo
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setFacturarPayment(p)}
+                            >
+                              <Receipt className="size-4" /> Facturar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive"
+                              onClick={() => setCancelPayment(p)}
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
                   {pagos.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={5}
+                        colSpan={6}
                         className="py-8 text-center text-muted-foreground"
                       >
                         Sin pagos registrados
@@ -516,6 +553,26 @@ function CajaBody() {
         />
       )}
 
+      {student && condonarCharge && (
+        <CondonarDialog
+          charge={condonarCharge}
+          onClose={() => setCondonarCharge(null)}
+          onDone={() =>
+            queryClient.invalidateQueries({ queryKey: queryKeys.statement(student.id) })
+          }
+        />
+      )}
+
+      {student && cancelPayment && (
+        <CancelPaymentDialog
+          payment={cancelPayment}
+          onClose={() => setCancelPayment(null)}
+          onDone={() =>
+            queryClient.invalidateQueries({ queryKey: queryKeys.statement(student.id) })
+          }
+        />
+      )}
+
       {student && facturarPayment && (
         <FacturarDialog
           student={student}
@@ -525,6 +582,159 @@ function CajaBody() {
         />
       )}
     </div>
+  );
+}
+
+// --- Condonación: forgive part/all of a charge's open balance -------------------------
+
+function CondonarDialog({
+  charge,
+  onClose,
+  onDone,
+}: {
+  charge: Charge;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [amount, setAmount] = useState(String(charge.balance));
+  const [reason, setReason] = useState("");
+
+  const condone = useMutation({
+    mutationFn: () =>
+      api<Charge>(`/treasury/charges/${charge.id}/condone`, {
+        method: "POST",
+        body: JSON.stringify({ amount: Number(amount), reason }),
+      }),
+    onSuccess: () => {
+      toast.success("Condonación aplicada");
+      onDone();
+      onClose();
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al condonar"),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Condonar: {charge.description}</DialogTitle>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            condone.mutate();
+          }}
+        >
+          <div className="grid gap-2">
+            <Label htmlFor="cond-amount">Importe a condonar</Label>
+            <Input
+              id="cond-amount"
+              type="number"
+              min={0.01}
+              max={charge.balance}
+              step="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Saldo del cargo: {formatMoney(charge.balance)}. La condonación queda
+              en auditoría y no borra los pagos ya aplicados.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cond-reason">Motivo</Label>
+            <Input
+              id="cond-reason"
+              required
+              minLength={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Autorizado por dirección…"
+            />
+          </div>
+          <DialogFooter>
+            <Button type="submit" className="font-bold" disabled={condone.isPending}>
+              {condone.isPending ? "Aplicando…" : "Condonar"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Cancelar recibo (pago) -----------------------------------------------------------
+
+function CancelPaymentDialog({
+  payment,
+  onClose,
+  onDone,
+}: {
+  payment: Payment;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState("");
+
+  const cancel = useMutation({
+    mutationFn: () =>
+      api<Payment>(
+        `/treasury/payments/${payment.id}/cancel?reason=${encodeURIComponent(reason)}`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      toast.success(`Recibo ${payment.receipt_folio} cancelado`);
+      onDone();
+      onClose();
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "Error al cancelar"),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancelar recibo · {payment.receipt_folio}</DialogTitle>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            cancel.mutate();
+          }}
+        >
+          <p className="text-sm text-muted-foreground">
+            El pago de <b data-numeric>{formatMoney(payment.amount)}</b> dejará de
+            contar en el estado de cuenta y los cargos que cubría se reabren.
+          </p>
+          <div className="grid gap-2">
+            <Label htmlFor="cp-reason">Motivo</Label>
+            <Input
+              id="cp-reason"
+              required
+              minLength={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Error de captura, devolución…"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="submit"
+              variant="destructive"
+              className="font-bold"
+              disabled={cancel.isPending}
+            >
+              {cancel.isPending ? "Cancelando…" : "Cancelar recibo"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -646,8 +856,11 @@ function StudentStrip({
 
 type AgingBucket = AgingRow["bucket"];
 
+const CARTERA_PAGE_SIZE = 5;
+
 function CarteraVencidaSection() {
   const navigate = useNavigate();
+  const [page, setPage] = useState(0);
   const { data: aging, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.aging,
     queryFn: () => api<AgingRow[]>("/treasury/reports/aging"),
@@ -692,6 +905,11 @@ function CarteraVencidaSection() {
   }, [aging]);
 
   const total = rows.reduce((sum, r) => sum + r.total, 0);
+  // 5 per page, biggest debt first; clamp so a shrinking list never strands the page.
+  const pages = Math.max(1, Math.ceil(rows.length / CARTERA_PAGE_SIZE));
+  const current = Math.min(page, pages - 1);
+  const start = current * CARTERA_PAGE_SIZE;
+  const pageRows = rows.slice(start, start + CARTERA_PAGE_SIZE);
 
   if (isError) {
     return (
@@ -743,7 +961,7 @@ function CarteraVencidaSection() {
                 </TableCell>
               </TableRow>
             )}
-            {rows.map((r) => (
+            {pageRows.map((r) => (
               <TableRow key={r.student_id}>
                 <TableCell data-numeric>{r.enrollment_number}</TableCell>
                 <TableCell className="font-semibold">{r.student_name}</TableCell>
@@ -781,6 +999,34 @@ function CarteraVencidaSection() {
             ))}
           </TableBody>
         </Table>
+        {pages > 1 && (
+          <div className="flex items-center justify-between border-t px-3 py-2 text-sm text-muted-foreground">
+            <span data-numeric>
+              {start + 1}–{Math.min(start + CARTERA_PAGE_SIZE, rows.length)} de{" "}
+              {rows.length} alumnos
+            </span>
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Página anterior"
+                disabled={current === 0}
+                onClick={() => setPage(current - 1)}
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Página siguiente"
+                disabled={current >= pages - 1}
+                onClick={() => setPage(current + 1)}
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

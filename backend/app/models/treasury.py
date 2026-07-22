@@ -42,6 +42,16 @@ class ChargeConceptCreate(ChargeConceptBase):
     pass
 
 
+class ChargeConceptUpdate(SQLModel):
+    """Partial update. Price changes only affect charges generated afterwards —
+    every existing Charge froze its amount at creation."""
+    name: str | None = Field(default=None, max_length=255)
+    amount: float | None = Field(default=None, ge=0)
+    program_id: uuid.UUID | None = None
+    modality: Modality | None = None
+    is_active: bool | None = None
+
+
 class ChargeConceptPublic(ChargeConceptBase):
     id: uuid.UUID
 
@@ -72,6 +82,8 @@ class Charge(SQLModel, table=True):
     description: str = Field(max_length=255)  # e.g. "Colegiatura septiembre 2026"
     amount: float = Field(ge=0)
     scholarship_discount: float = Field(default=0, ge=0)  # RF-T05, frozen at generation
+    condoned_amount: float = Field(default=0, ge=0)  # condonación applied at caja
+    condoned_reason: str = Field(default="", max_length=255)
     due_date: date = Field(index=True)
     status: ChargeStatus = ChargeStatus.pendiente
     is_late_fee: bool = False
@@ -102,11 +114,18 @@ class ChargePublic(SQLModel):
     description: str
     amount: float
     scholarship_discount: float
+    condoned_amount: float = 0
     due_date: date
     status: ChargeStatus
     is_late_fee: bool
     paid_amount: float = 0
     balance: float = 0
+
+
+class ChargeCondoneIn(SQLModel):
+    """Condonación: forgive part (or all) of a charge's open balance."""
+    amount: float | None = Field(default=None, gt=0)  # None = whole open balance
+    reason: str = Field(min_length=3, max_length=255)
 
 
 class PaymentPlanGenerateIn(SQLModel):
@@ -199,6 +218,9 @@ class ScholarshipBase(SQLModel):
     name: str = Field(max_length=255)  # motivo / convenio
     pct: float | None = Field(default=None, ge=0, le=100)  # either pct
     fixed_amount: float | None = Field(default=None, ge=0)  # or fixed amount per charge
+    # Concept-scoped beca (e.g. inscripción): discounts only charges of this
+    # concept. None = legacy behavior (applies to colegiatura charges).
+    concept_id: uuid.UUID | None = Field(default=None, foreign_key="charge_concepts.id")
     valid_from: date
     valid_to: date | None = None
     # Días de tolerancia tras el vencimiento del cargo con beca: si el alumno no
