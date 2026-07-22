@@ -113,11 +113,13 @@ const STYLE = `
   .center { text-align: center; }
   .logo { display: block; margin: 0 auto 2px; height: 16mm; width: auto;
           filter: grayscale(1) contrast(1.4); }
-  .bar { background: #000; color: #fff; padding: 1px 4px; font-weight: 700; display: inline-block; }
+  /* Section headers as bordered boxes with black text: the thermal driver drops
+     CSS background fills on print, so white-over-black came out invisible. */
+  .bar { border: 1.5px solid #000; padding: 1px 4px; font-weight: 700; display: inline-block; }
   .row { display: flex; justify-content: space-between; gap: 6px; }
   .muted { color: #000; }
-  table { width: 100%; border-collapse: collapse; margin: 3px 0; }
-  th { background: #000; color: #fff; text-align: left; padding: 2px 3px; font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; margin: 3px 0; border: 1.5px solid #000; }
+  th { border-bottom: 1.5px solid #000; text-align: left; padding: 2px 3px; font-size: 11px; font-weight: 700; }
   td { padding: 2px 3px; vertical-align: top; }
   .r { text-align: right; }
   hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
