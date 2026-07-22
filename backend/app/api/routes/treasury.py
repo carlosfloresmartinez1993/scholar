@@ -30,6 +30,7 @@ from app.models import (
     GroupEnrollment,
     GroupEnrollmentStatus,
     PlanVersion,
+    Program,
     Rvoe,
     Payment,
     PaymentAllocation,
@@ -101,6 +102,9 @@ async def update_concept(
     if concept is None:
         raise HTTPException(status_code=404, detail="Concepto no encontrado")
     changes = body.model_dump(exclude_unset=True)
+    if changes.get("program_id") is not None:
+        if await session.get(Program, changes["program_id"]) is None:
+            raise HTTPException(status_code=404, detail="Programa no encontrado")
     for k, v in changes.items():
         setattr(concept, k, v)
     session.add(concept)
@@ -330,7 +334,12 @@ async def condone_charge(
 ) -> ChargePublic:
     """Condonación: forgive part or all of a charge's open balance at caja,
     leaving the paid history intact (unlike cancelling the charge)."""
-    charge = await session.get(Charge, charge_id)
+    # Row lock: two concurrent condonations must accumulate, not lose an update.
+    charge = (
+        await session.exec(
+            select(Charge).where(Charge.id == charge_id).with_for_update()
+        )
+    ).first()
     if charge is None:
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
     if charge.status in (ChargeStatus.cancelado, ChargeStatus.pagado):
