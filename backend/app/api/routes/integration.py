@@ -30,11 +30,18 @@ router = APIRouter(
 
 @router.get("/terms")
 async def integration_terms(session: SessionDep) -> list[dict]:
-    """Terms + evaluation windows (RF-I01: periodos de evaluación)."""
+    """Terms + evaluation windows (RF-I01: periodos de evaluación).
+
+    `calendar_term_id` is what makes the pairing exact in the other direction:
+    the calendar knows the id of its own period and nothing about ours, so
+    without it the only way back is matching on dates — which gives up the
+    moment two periods share a window.
+    """
     terms = (await session.exec(select(Term).order_by(Term.start_date.desc()))).all()
     return [
         {
             "id": str(t.id),
+            "calendar_term_id": str(t.calendar_term_id) if t.calendar_term_id else None,
             "name": t.name,
             "period_type": t.period_type,
             "start_date": t.start_date.isoformat(),
@@ -100,7 +107,15 @@ async def integration_groups(session: SessionDep, term_id: uuid.UUID | None = No
 
 @router.get("/groups/{group_id}/enrollments")
 async def integration_group_enrollments(session: SessionDep, group_id: uuid.UUID) -> list[dict]:
-    """Students enrolled per subject of a group (RF-I02)."""
+    """Students enrolled per subject of a group (RF-I02).
+
+    `status` is the subject enrollment's (cursando/aprobada/reprobada/baja);
+    `student_status` is the person's (activo/baja_temporal/…). Both, because
+    "passed" and "still with us" are different questions and a caller deciding
+    whether a group carries into the next cuatrimestre needs the answer to both
+    — a student who passed in May and left in June is not a reason to open the
+    group again.
+    """
     if await session.get(Group, group_id) is None:
         raise HTTPException(status_code=404, detail="Group not found")
     rows = (
@@ -120,6 +135,7 @@ async def integration_group_enrollments(session: SessionDep, group_id: uuid.UUID
             "full_name": s.full_name,
             "email": s.email,
             "status": e.status,
+            "student_status": s.status,
         }
         for e, gs, s in rows
     ]
