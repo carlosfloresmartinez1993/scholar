@@ -19,6 +19,7 @@ const ACTIONS = [
   { label: "Alumnos", to: "/alumnos", hint: "Página" },
   { label: "Programas", to: "/programas", hint: "Página" },
   { label: "Grupos", to: "/grupos", hint: "Página" },
+  { label: "Egresados", to: "/egresados", hint: "Página" },
   { label: "Capturar calificaciones", to: "/calificaciones", hint: "Acción" },
   { label: "Asistencias", to: "/asistencias", hint: "Página" },
   { label: "Cobrar / Caja", to: "/tesoreria", hint: "Acción" },

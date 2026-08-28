@@ -316,6 +316,70 @@ export interface Student {
   previous_school?: string | null;
   previous_gpa?: number | null;
   enrollment_notes?: string | null;
+  /** adeudo, present only when the list was fetched with ?with_debt=true.
+   *  null means "not computed" — never render it as $0.00 */
+  balance?: number | null;
+  overdue_balance?: number | null;
+}
+
+export interface AlumniDegree {
+  kind: DegreeKind;
+  folio: string;
+  issue_date: string;
+  program_name: string;
+}
+
+/** One graduate in one program (someone who finished two programs is two rows). */
+export interface AlumniRow {
+  student_id: string;
+  enrollment_number: string;
+  full_name: string;
+  curp: string;
+  email: string;
+  campus_id: string;
+  student_status: StudentStatus;
+  has_photo: boolean;
+  plan_enrollment_id?: string | null;
+  plan_enrollment_status?: PlanEnrollmentStatus | null;
+  program_id?: string | null;
+  program_name?: string | null;
+  level?: EducationLevel | null;
+  plan_version_label?: string | null;
+  rvoe?: string | null;
+  /** derived from the last term the student was enrolled in; null when unknown */
+  egreso_term_id?: string | null;
+  egreso_term_name?: string | null;
+  egreso_date?: string | null;
+  titulado: boolean;
+  degree?: AlumniDegree | null;
+}
+
+export interface AlumniTermBucket {
+  term_id?: string | null;
+  term_name: string;
+  end_date?: string | null;
+  egresados: number;
+  titulados: number;
+}
+
+export interface AlumniProgramBucket {
+  program_id?: string | null;
+  program_name: string;
+  level?: EducationLevel | null;
+  egresados: number;
+  titulados: number;
+}
+
+export interface AlumniStats {
+  /** distinct students, not rows */
+  egresados: number;
+  titulados: number;
+  titulacion_pct: number;
+  rows: number;
+  sin_periodo: number;
+  sin_plan: number;
+  by_term: AlumniTermBucket[];
+  by_program: AlumniProgramBucket[];
 }
 
 export interface RelativeIn {

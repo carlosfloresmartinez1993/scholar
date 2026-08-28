@@ -202,6 +202,11 @@ class StudentPublic(StudentBase):
     created_at: datetime
     # the file itself is served by GET /students/{id}/photo (path never leaks)
     has_photo: bool = False
+    # Adeudo, filled only when the caller asks for it (?with_debt=true) — computing
+    # it costs two extra grouped queries. None means "not computed", which the UI
+    # must not draw as $0.00: a student with no charges really does owe nothing.
+    balance: float | None = None
+    overdue_balance: float | None = None
 
 
 # --- Bulk cohort intake: create + enroll many new students into one group -------
