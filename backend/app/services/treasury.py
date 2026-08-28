@@ -4,6 +4,7 @@ allocation (RF-T03)."""
 import uuid
 from datetime import date, timedelta
 
+from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -153,6 +154,132 @@ async def has_blocking_debt(session: AsyncSession, student: Student) -> bool:
     if institution is None or not institution.block_documents_on_debt:
         return False
     return await overdue_balance(session, student.id) > 0
+
+
+# --- Batched debt (students list: one column, not one query per student) ---------
+
+# Paid-per-charge as two grouped derived tables instead of correlated subqueries:
+# a payment either points at one charge (Payment.charge_id) or is split across
+# several (PaymentAllocation). Both shapes are collectible money, and a cancelled
+# payment is neither.
+def _paid_subqueries():
+    direct = (
+        select(
+            Payment.charge_id.label("charge_id"),
+            func.sum(Payment.amount).label("paid"),
+        )
+        .where(
+            Payment.cancelled == False,  # noqa: E712
+            Payment.charge_id.is_not(None),  # type: ignore[union-attr]
+        )
+        .group_by(Payment.charge_id)
+        .subquery()
+    )
+    allocated = (
+        select(
+            PaymentAllocation.charge_id.label("charge_id"),
+            func.sum(PaymentAllocation.amount).label("paid"),
+        )
+        .join(Payment, Payment.id == PaymentAllocation.payment_id)  # type: ignore[arg-type]
+        .where(Payment.cancelled == False)  # noqa: E712
+        .group_by(PaymentAllocation.charge_id)
+        .subquery()
+    )
+    return direct, allocated
+
+
+def _open_balance_by_student(
+    overdue_before: date | None = None,
+    nonzero_only: bool = False,
+    ids_only: bool = False,
+):
+    """Per-student sum of what is still collectible, as ONE grouped select.
+
+    Mirrors `_net` minus paid, floored at zero per charge — a charge overpaid by
+    a rounding cent must not cancel out another charge's real debt. Pass
+    `overdue_before` (today) to count only charges already past due: that is the
+    figure RF-T07 blocks documents on. Cancelled charges are never collectible.
+    `nonzero_only` drops students whose sum rounds to nothing and `ids_only`
+    narrows the select to one column, so the pair can be used as a debtors filter
+    inside `IN (...)`.
+    """
+    direct, allocated = _paid_subqueries()
+    paid = func.coalesce(direct.c.paid, 0.0) + func.coalesce(allocated.c.paid, 0.0)
+    net = Charge.amount - Charge.scholarship_discount - Charge.condoned_amount
+    open_amount = net - paid
+    # CASE, not GREATEST/MAX(a,b): the two-argument form is spelled differently
+    # in Postgres and SQLite, and the test suite runs on SQLite.
+    collectible = case((open_amount > 0, open_amount), else_=0.0)
+
+    columns = (
+        (Charge.student_id,) if ids_only else (Charge.student_id, func.sum(collectible))
+    )
+    stmt = (
+        select(*columns)
+        .select_from(Charge)
+        .outerjoin(direct, direct.c.charge_id == Charge.id)
+        .outerjoin(allocated, allocated.c.charge_id == Charge.id)
+        .where(Charge.status != ChargeStatus.cancelado)
+        .group_by(Charge.student_id)
+    )
+    if overdue_before is not None:
+        stmt = stmt.where(Charge.due_date < overdue_before)
+    if nonzero_only:
+        # half a cent — the same tolerance refresh_charge_status uses to call a
+        # charge settled, so a charge it reads as paid never makes a debtor.
+        stmt = stmt.having(func.sum(collectible) > 0.005)
+    return stmt
+
+
+async def students_debt_map(
+    session: AsyncSession,
+    student_ids: list[uuid.UUID],
+    today: date | None = None,
+) -> dict[uuid.UUID, tuple[float, float]]:
+    """(balance, overdue_balance) per student in two queries for the whole page.
+
+    `overdue_balance()` is one query per charge, so the students list cannot call
+    it per row — 200 students would be thousands of round-trips. Students with no
+    charges are absent from the map; the caller reads them as zero.
+    """
+    if not student_ids:
+        return {}
+    today = today or utcnow().date()
+    totals = dict(
+        (
+            await session.exec(
+                _open_balance_by_student().where(
+                    Charge.student_id.in_(student_ids)  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+    )
+    overdue = dict(
+        (
+            await session.exec(
+                _open_balance_by_student(overdue_before=today).where(
+                    Charge.student_id.in_(student_ids)  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+    )
+    return {
+        sid: (round(float(totals.get(sid, 0.0)), 2), round(float(overdue.get(sid, 0.0)), 2))
+        for sid in student_ids
+    }
+
+
+def overdue_debtor_ids_select(today: date | None = None):
+    """Sub-select of student ids with a non-zero overdue balance.
+
+    Returned as a select (not a list of ids) so callers can drop it straight into
+    `Student.id.in_(...)`: the filter has to run BEFORE the list's LIMIT, or
+    "solo con adeudo" would only be true of whichever page happened to load.
+    """
+    today = today or utcnow().date()
+    return _open_balance_by_student(
+        overdue_before=today, nonzero_only=True, ids_only=True
+    )
 
 
 async def active_scholarship_discount(

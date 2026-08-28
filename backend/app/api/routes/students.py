@@ -12,7 +12,14 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, CampusScope, ServiciosEscolares, SessionDep, ensure_in_scope
+from app.api.deps import (
+    AnyStaff,
+    CampusScope,
+    ServiciosEscolares,
+    SessionDep,
+    can_read_debt,
+    ensure_in_scope,
+)
 from app.api.routes.catalog import get_default_institution
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -47,7 +54,7 @@ from app.models import (
     WizardIntakeIn,
     WizardIntakeResult,
 )
-from app.services import audit, calendar
+from app.services import audit, calendar, treasury
 from app.services.academics import require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import create_student_core, enroll_student_core
@@ -61,14 +68,28 @@ router = APIRouter(prefix="/students", tags=["students"])
 @router.get("")
 async def list_students(
     session: SessionDep,
-    _: AnyStaff,
+    current_user: AnyStaff,
     scope: CampusScope,
     q: str | None = None,
     status: str | None = None,
     campus_id: uuid.UUID | None = None,
+    with_debt: bool = False,
+    only_debtors: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> list[StudentPublic]:
+    """`with_debt` adds each student's balance and overdue balance (two extra
+    grouped queries for the whole page, not one per row); `only_debtors` keeps
+    just those with an overdue balance — filtered inside the query, before the
+    LIMIT, so it means "debtors in the institution" and not "debtors on this
+    page".
+
+    Both are gated: the list itself is AnyStaff, which includes docente, and a
+    teacher can read a student's balance nowhere else in the system."""
+    if (with_debt or only_debtors) and not can_read_debt(current_user):
+        raise HTTPException(
+            status_code=403, detail="No tienes acceso a la información de adeudo"
+        )
     query = select(Student).order_by(Student.full_name).limit(min(limit, 500)).offset(offset)
     # Enforced campus scope: members only ever see their campuses' students.
     if scope is not None:
@@ -85,7 +106,20 @@ async def list_students(
         )
     if status:
         query = query.where(Student.status == status)
-    return (await session.exec(query)).all()
+    if only_debtors:
+        query = query.where(
+            Student.id.in_(treasury.overdue_debtor_ids_select())  # type: ignore[attr-defined]
+        )
+    students = (await session.exec(query)).all()
+    if not with_debt:
+        return students
+    debts = await treasury.students_debt_map(session, [s.id for s in students])
+    out: list[StudentPublic] = []
+    for student in students:
+        public = StudentPublic.model_validate(student, from_attributes=True)
+        public.balance, public.overdue_balance = debts.get(student.id, (0.0, 0.0))
+        out.append(public)
+    return out
 
 
 @router.post("", status_code=201)

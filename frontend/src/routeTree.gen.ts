@@ -21,6 +21,7 @@ import { Route as AuthPeriodosRouteImport } from './routes/_auth/periodos'
 import { Route as AuthPerfilRouteImport } from './routes/_auth/perfil'
 import { Route as AuthInscripcionesRouteImport } from './routes/_auth/inscripciones'
 import { Route as AuthGruposRouteImport } from './routes/_auth/grupos'
+import { Route as AuthEgresadosRouteImport } from './routes/_auth/egresados'
 import { Route as AuthCalificacionesRouteImport } from './routes/_auth/calificaciones'
 import { Route as AuthAuditoriaRouteImport } from './routes/_auth/auditoria'
 import { Route as AuthAsistenciasRouteImport } from './routes/_auth/asistencias'
@@ -88,6 +89,11 @@ const AuthGruposRoute = AuthGruposRouteImport.update({
   path: '/grupos',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthEgresadosRoute = AuthEgresadosRouteImport.update({
+  id: '/egresados',
+  path: '/egresados',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthCalificacionesRoute = AuthCalificacionesRouteImport.update({
   id: '/calificaciones',
   path: '/calificaciones',
@@ -132,6 +138,7 @@ export interface FileRoutesByFullPath {
   '/asistencias': typeof AuthAsistenciasRoute
   '/auditoria': typeof AuthAuditoriaRoute
   '/calificaciones': typeof AuthCalificacionesRoute
+  '/egresados': typeof AuthEgresadosRoute
   '/grupos': typeof AuthGruposRoute
   '/inscripciones': typeof AuthInscripcionesRoute
   '/perfil': typeof AuthPerfilRoute
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/asistencias': typeof AuthAsistenciasRoute
   '/auditoria': typeof AuthAuditoriaRoute
   '/calificaciones': typeof AuthCalificacionesRoute
+  '/egresados': typeof AuthEgresadosRoute
   '/grupos': typeof AuthGruposRoute
   '/inscripciones': typeof AuthInscripcionesRoute
   '/perfil': typeof AuthPerfilRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/_auth/asistencias': typeof AuthAsistenciasRoute
   '/_auth/auditoria': typeof AuthAuditoriaRoute
   '/_auth/calificaciones': typeof AuthCalificacionesRoute
+  '/_auth/egresados': typeof AuthEgresadosRoute
   '/_auth/grupos': typeof AuthGruposRoute
   '/_auth/inscripciones': typeof AuthInscripcionesRoute
   '/_auth/perfil': typeof AuthPerfilRoute
@@ -196,6 +205,7 @@ export interface FileRouteTypes {
     | '/asistencias'
     | '/auditoria'
     | '/calificaciones'
+    | '/egresados'
     | '/grupos'
     | '/inscripciones'
     | '/perfil'
@@ -215,6 +225,7 @@ export interface FileRouteTypes {
     | '/asistencias'
     | '/auditoria'
     | '/calificaciones'
+    | '/egresados'
     | '/grupos'
     | '/inscripciones'
     | '/perfil'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/_auth/asistencias'
     | '/_auth/auditoria'
     | '/_auth/calificaciones'
+    | '/_auth/egresados'
     | '/_auth/grupos'
     | '/_auth/inscripciones'
     | '/_auth/perfil'
@@ -342,6 +354,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthGruposRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/egresados': {
+      id: '/_auth/egresados'
+      path: '/egresados'
+      fullPath: '/egresados'
+      preLoaderRoute: typeof AuthEgresadosRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/calificaciones': {
       id: '/_auth/calificaciones'
       path: '/calificaciones'
@@ -399,6 +418,7 @@ interface AuthRouteChildren {
   AuthAsistenciasRoute: typeof AuthAsistenciasRoute
   AuthAuditoriaRoute: typeof AuthAuditoriaRoute
   AuthCalificacionesRoute: typeof AuthCalificacionesRoute
+  AuthEgresadosRoute: typeof AuthEgresadosRoute
   AuthGruposRoute: typeof AuthGruposRoute
   AuthInscripcionesRoute: typeof AuthInscripcionesRoute
   AuthPerfilRoute: typeof AuthPerfilRoute
@@ -418,6 +438,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthAsistenciasRoute: AuthAsistenciasRoute,
   AuthAuditoriaRoute: AuthAuditoriaRoute,
   AuthCalificacionesRoute: AuthCalificacionesRoute,
+  AuthEgresadosRoute: AuthEgresadosRoute,
   AuthGruposRoute: AuthGruposRoute,
   AuthInscripcionesRoute: AuthInscripcionesRoute,
   AuthPerfilRoute: AuthPerfilRoute,

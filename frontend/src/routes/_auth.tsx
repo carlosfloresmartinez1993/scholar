@@ -20,6 +20,7 @@ import {
   Banknote,
   UserCog,
   ScrollText,
+  Award,
   LogOut,
   Building2,
   Search,
@@ -82,6 +83,7 @@ const NAV_GROUPS = [
       },
       { to: "/programas", label: "Programas", icon: Landmark },
       { to: "/grupos", label: "Grupos", icon: Users },
+      { to: "/egresados", label: "Egresados", icon: Award },
     ],
   },
   {

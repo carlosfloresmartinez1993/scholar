@@ -165,3 +165,10 @@ from app.models.treasury import (
     ScholarshipStatus,
     StudentFiscalProfile,
 )
+from app.models.alumni import (
+    AlumniDegree,
+    AlumniProgramBucket,
+    AlumniRow,
+    AlumniStats,
+    AlumniTermBucket,
+)

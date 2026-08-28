@@ -20,8 +20,10 @@ export const queryKeys = {
     ["group-billing-status", groupId] as const,
   promoteCyclePreview: ["promote-cycle-preview"] as const,
 
-  students: (q?: string, campusId?: string) =>
-    ["students", q ?? "", campusId ?? "all"] as const,
+  students: (q?: string, campusId?: string, filters?: string) =>
+    ["students", q ?? "", campusId ?? "all", filters ?? ""] as const,
+  alumni: (filters: string) => ["alumni", filters] as const,
+  alumniStats: (filters: string) => ["alumni-stats", filters] as const,
   student: (id: string) => ["student", id] as const,
   planEnrollments: (studentId: string) =>
     ["plan-enrollments", studentId] as const,

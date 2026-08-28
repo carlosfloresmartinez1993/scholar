@@ -85,6 +85,17 @@ TeacherOrAcademic = Annotated[
     User, Depends(require_roles(*STAFF_ACADEMIC, UserRole.docente))
 ]
 
+# Roles that may already see a NAMED student's balance: tesorería through the
+# statement (TreasuryStaff), academic staff through the expediente, which
+# carries overdue_balance. UserRole.docente is deliberately absent from both, so
+# it is absent here — a teacher can read the students list, and that list must
+# not become the one place a teacher learns what every student owes.
+STAFF_FINANCIAL = STAFF_ACADEMIC + (UserRole.tesoreria,)
+
+
+def can_read_debt(user: User) -> bool:
+    return user.is_superuser or user.role in STAFF_FINANCIAL
+
 
 async def get_current_student_user(
     current_user: Annotated[User, Depends(get_current_user)],
