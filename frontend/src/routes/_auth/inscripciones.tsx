@@ -1,15 +1,17 @@
 // Inscripciones: servo-style stepper wizard (one submit at the end) + the
-// existing bulk CSV intake as a secondary tab.
+// bulk intake (servoescolar.mx export / CSV / paste) as a secondary tab.
 import { Fragment, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ClipboardList, Plus, Trash2, Wand2 } from "lucide-react";
-import { api, ApiError, bulkIntake } from "@/api/client";
+import { api, ApiError, bulkIntake, parseRoster } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
   BulkIntakeResult,
   BulkIntakeRow,
+  RosterField,
+  RosterParseResult,
   Campus,
   Group,
   PlanVersion,
@@ -19,6 +21,7 @@ import type {
   Term,
   WizardIntakeResult,
 } from "@/api/types";
+import { ROSTER_FIELDS } from "@/api/types";
 import { CURP_RE, MX_STATES, suggestCurp as suggestCurpFrom } from "@/lib/curp";
 import { formatDate, todayISO } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -1054,10 +1057,30 @@ function SummaryRow({
   );
 }
 
-// ============================ Alta masiva (CSV) ==============================
+// ============================ Alta masiva (archivo / pegado) ==================
+// Two sources feed the same roster: a file (servoescolar.mx .xlsx export or any
+// .xlsx/.csv) parsed by the backend into a column grid + detected mapping that
+// staff can fix by hand, or text pasted from Excel in the legacy positional
+// layout (CURP, Nombre, Email), parsed locally so typing stays instant.
 
 const PREVIEW_CAP = 50;
 const MAX_ROWS = 1000; // mirrors the backend cap on bulk-intake rows
+const NONE = "__none__"; // Radix Select rejects "" as an item value
+
+const ROSTER_FIELD_LABELS: Record<RosterField, string> = {
+  curp: "CURP",
+  enrollment_number: "Matrícula (se conserva)",
+  full_name: "Nombre completo",
+  first_names: "Nombre(s)",
+  last_name_p: "Apellido paterno",
+  last_name_m: "Apellido materno",
+  email: "Correo",
+  phone: "Teléfono",
+  sex: "Sexo",
+  birth_date: "Fecha de nacimiento",
+};
+
+type RosterMapping = RosterParseResult["mapping"];
 
 // ponytail: names containing a comma break comma-separated parsing
 // (curp,nombre,email). Paste from Excel (tab-separated) to avoid it.
@@ -1082,6 +1105,33 @@ function parseRows(text: string): BulkIntakeRow[] {
     });
   });
   return rows;
+}
+
+function rowsFromRoster(rows: string[][], mapping: RosterMapping): BulkIntakeRow[] {
+  const cell = (row: string[], field: RosterField): string | undefined => {
+    const col = mapping[field];
+    return col == null ? undefined : (row[col] ?? "").trim();
+  };
+  return rows.map((row) => {
+    const out: BulkIntakeRow = {
+      curp: cell(row, "curp") ?? "",
+      full_name: cell(row, "full_name") ?? "",
+      email: cell(row, "email") ?? "",
+    };
+    for (const field of ROSTER_FIELDS) {
+      if (field === "curp" || field === "full_name" || field === "email") continue;
+      const value = cell(row, field);
+      if (value) out[field] = value; // blank cells mean "not provided"
+    }
+    return out;
+  });
+}
+
+function displayName(row: BulkIntakeRow): string {
+  return (
+    row.full_name ||
+    [row.first_names, row.last_name_p, row.last_name_m].filter(Boolean).join(" ")
+  );
 }
 
 function BulkTab() {
@@ -1185,10 +1235,53 @@ function BulkIntake({
   options: SharedOptions;
 }) {
   const [raw, setRaw] = useState("");
+  const [roster, setRoster] = useState<RosterParseResult | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [mapping, setMapping] = useState<RosterMapping | null>(null);
   const [result, setResult] = useState<BulkIntakeResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const rows = useMemo(() => parseRows(raw), [raw]);
+  const rows = useMemo(
+    () => (roster && mapping ? rowsFromRoster(roster.rows, mapping) : parseRows(raw)),
+    [roster, mapping, raw],
+  );
+
+  // in file mode the mapping must at least identify a CURP and some name
+  const mappingProblem = useMemo(() => {
+    if (!roster || !mapping) return null;
+    if (mapping.curp == null) return "Asigne la columna de CURP.";
+    const hasName =
+      mapping.full_name != null ||
+      mapping.first_names != null ||
+      mapping.last_name_p != null;
+    if (!hasName) return "Asigne el nombre completo o nombre(s) y apellidos.";
+    return null;
+  }, [roster, mapping]);
+
+  const parse = useMutation({
+    mutationFn: (file: File) => parseRoster(file, file.name),
+    onSuccess: (parsed, file) => {
+      setRoster(parsed);
+      setMapping(parsed.mapping);
+      setFileName(file.name);
+      setRaw("");
+      setResult(null);
+      if (parsed.header_row === null) {
+        toast.info("Sin encabezado reconocido: se asumió CURP, Nombre, Email");
+      }
+      if (parsed.truncated) {
+        toast.warning(`El archivo excede ${MAX_ROWS} filas; solo se cargaron las primeras`);
+      }
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiError ? e.message : "No se pudo leer el archivo"),
+  });
+
+  function clearFile() {
+    setRoster(null);
+    setMapping(null);
+    setFileName("");
+  }
 
   const submit = useMutation({
     mutationFn: () => bulkIntake({ group_id: group.id, rows, ...options }),
@@ -1197,12 +1290,21 @@ function BulkIntake({
       if (r.errors.length === 0) {
         toast.success(`${r.enrolled} alumnos inscritos`);
         setRaw(""); // all done — clear the editor
+        clearFile();
+        return;
+      }
+      toast.warning(`${r.enrolled} inscritos · ${r.errors.length} con error`);
+      // keep ONLY the failed rows so a resubmit doesn't re-send the ones that
+      // already succeeded (which would come back as "ya existe")
+      const failedIdx = r.errors.map((e) => e.row - 1);
+      if (roster) {
+        setRoster({
+          ...roster,
+          rows: failedIdx.map((i) => roster.rows[i]).filter(Boolean),
+        });
       } else {
-        toast.warning(`${r.enrolled} inscritos · ${r.errors.length} con error`);
-        // keep ONLY the failed rows so a resubmit doesn't re-send the ones that
-        // already succeeded (which would come back as "ya existe")
-        const failed = r.errors
-          .map((e) => rows[e.row - 1])
+        const failed = failedIdx
+          .map((i) => rows[i])
           .filter((row): row is BulkIntakeRow => Boolean(row))
           .map((row) => [row.curp, row.full_name, row.email].join("\t"));
         setRaw(failed.join("\n"));
@@ -1211,23 +1313,33 @@ function BulkIntake({
     onError: () => toast.error("Error en la carga masiva"),
   });
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setRaw(await file.text());
+    parse.mutate(file);
     if (fileRef.current) fileRef.current.value = "";
   }
 
   const truncated = rows.length > PREVIEW_CAP;
+  const showMatricula = rows.some((r) => r.enrollment_number);
+  const canSubmit =
+    !submit.isPending &&
+    !parse.isPending && // rows still point at the previous file while it parses
+    rows.length > 0 &&
+    rows.length <= MAX_ROWS &&
+    mappingProblem === null;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Carga masiva</CardTitle>
         <CardDescription>
-          Un alumno por línea: <code>CURP, Nombre, Email</code> (email opcional).
-          Acepta separación por tabulador o coma. Pegue desde Excel o cargue un
-          archivo .csv. Se omiten líneas vacías y una fila de encabezado «CURP».
+          Cargue la exportación de alumnos de servoescolar.mx (.xlsx) o cualquier
+          archivo .xlsx/.csv con encabezados (CURP, Matrícula, Apellido paterno,
+          Apellido materno, Nombre(s), Correo, Teléfono, Sexo, Fecha de
+          nacimiento, en cualquier orden). También puede pegar líneas{" "}
+          <code>CURP, Nombre, Email</code> desde Excel. Si el archivo trae
+          matrícula, se conserva.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1235,20 +1347,93 @@ function BulkIntake({
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={onFile}
+            disabled={parse.isPending}
             className="text-sm file:mr-3 file:rounded-md file:border file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-semibold"
           />
+          {parse.isPending && (
+            <span className="text-sm text-muted-foreground">Leyendo archivo…</span>
+          )}
+          {roster && (
+            <>
+              <span className="text-sm">
+                <span className="font-semibold">{fileName}</span>
+                {" · "}
+                {roster.rows.length} filas
+                {" · "}
+                {roster.header_row === null
+                  ? "sin encabezado (CURP, Nombre, Email)"
+                  : "encabezado detectado"}
+              </span>
+              <Button variant="ghost" size="sm" onClick={clearFile}>
+                Quitar archivo
+              </Button>
+            </>
+          )}
         </div>
-        <Textarea
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          rows={8}
-          placeholder={
-            "XAXX010101HDFXXX01\tJuan Pérez López\tjuan@correo.com\nXEXX020202MDFXXX02\tMaría Ruiz"
-          }
-          className="font-mono text-sm"
-        />
+
+        {/* what the file lost stays on screen: a toast is gone by the time the
+            operator reviews the preview and reads «1000 filas» as the whole file */}
+        {roster?.truncated && (
+          <p className="text-sm font-semibold text-destructive">
+            El archivo excede {MAX_ROWS} filas: solo se cargaron las primeras{" "}
+            {MAX_ROWS}. Divida el archivo para cargar el resto.
+          </p>
+        )}
+        {roster != null && roster.skipped > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Se omitieron {roster.skipped} filas sin CURP ni nombre (títulos, totales
+            o filas incompletas). Revise el mapeo de columnas si esperaba más
+            alumnos.
+          </p>
+        )}
+
+        {roster && mapping ? (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold">Columnas del archivo</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {ROSTER_FIELDS.map((field) => (
+                <div key={field} className="space-y-1">
+                  <Label className="text-xs" htmlFor={`map-${field}`}>
+                    {ROSTER_FIELD_LABELS[field]}
+                  </Label>
+                  <Select
+                    value={mapping[field] == null ? NONE : String(mapping[field])}
+                    onValueChange={(v) =>
+                      setMapping({ ...mapping, [field]: v === NONE ? null : Number(v) })
+                    }
+                  >
+                    <SelectTrigger className="h-8" id={`map-${field}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>— Sin asignar —</SelectItem>
+                      {roster.columns.map((name, i) => (
+                        <SelectItem key={i} value={String(i)}>
+                          {i + 1}. {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+            {mappingProblem && (
+              <p className="text-sm font-semibold text-destructive">{mappingProblem}</p>
+            )}
+          </div>
+        ) : (
+          <Textarea
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            rows={8}
+            placeholder={
+              "XAXX010101HDFXXX01\tJuan Pérez López\tjuan@correo.com\nXEXX020202MDFXXX02\tMaría Ruiz"
+            }
+            className="font-mono text-sm"
+          />
+        )}
 
         {rows.length > 0 && (
           <div className="space-y-2">
@@ -1267,6 +1452,7 @@ function BulkIntake({
                   <TableRow>
                     <TableHead className="w-12">#</TableHead>
                     <TableHead>CURP</TableHead>
+                    {showMatricula && <TableHead>Matrícula</TableHead>}
                     <TableHead>Nombre</TableHead>
                     <TableHead>Email</TableHead>
                   </TableRow>
@@ -1276,7 +1462,12 @@ function BulkIntake({
                     <TableRow key={i}>
                       <TableCell data-numeric>{i + 1}</TableCell>
                       <TableCell className="font-mono">{r.curp}</TableCell>
-                      <TableCell>{r.full_name}</TableCell>
+                      {showMatricula && (
+                        <TableCell className="font-mono">
+                          {r.enrollment_number || "—"}
+                        </TableCell>
+                      )}
+                      <TableCell>{displayName(r) || "—"}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {r.email || "—"}
                       </TableCell>
@@ -1291,9 +1482,7 @@ function BulkIntake({
         <div>
           <Button
             className="font-bold"
-            disabled={
-              submit.isPending || rows.length === 0 || rows.length > MAX_ROWS
-            }
+            disabled={!canSubmit}
             onClick={() => submit.mutate()}
           >
             {submit.isPending

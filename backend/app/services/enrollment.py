@@ -31,12 +31,23 @@ from app.services.academics import (
 )
 from app.services.treasury import generate_enrollment_charges
 
+MAX_MATRICULA_LEN = 32  # Student.enrollment_number column width
+MAX_FOLIO_NUMBER = 2_147_483_647  # folio_counters.last_number is an int4
+
 
 async def create_student_core(
-    session: AsyncSession, institution: Institution, body: StudentCreate, actor: str
+    session: AsyncSession,
+    institution: Institution,
+    body: StudentCreate,
+    actor: str,
+    *,
+    enrollment_number: str | None = None,
 ) -> Student:
     """Create a student with a row-locked matrícula (RT-09). Rejects a duplicate
-    CURP. Caller commits."""
+    CURP. Caller commits.
+
+    enrollment_number keeps an existing matrícula (a servoescolar.mx migration)
+    instead of allocating one; it must be unique within the institution."""
     dup = (
         await session.exec(
             select(Student).where(
@@ -46,12 +57,16 @@ async def create_student_core(
     ).first()
     if dup:
         raise HTTPException(status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)")
+    prefix = institution.short_name[:4].upper()
+    if enrollment_number is not None:
+        return await _create_with_matricula(
+            session, institution, body, actor, enrollment_number.strip().upper(), prefix
+        )
     # matrícula: institution prefix + per-institution sequence. The counter is
     # row-locked once it exists; the FIRST-ever create has no row to lock, so two
     # concurrent first creates can both seed it and collide on the unique
     # constraint. Do the allocation in a SAVEPOINT and retry once: the loser's
     # savepoint rolls back and the retry finds + locks the winner's counter.
-    prefix = institution.short_name[:4].upper()
     student: Student | None = None
     for attempt in range(2):
         try:
@@ -67,9 +82,11 @@ async def create_student_core(
                     )
                 ).first()
                 if counter is None:
-                    # Seed from the highest numeric suffix across existing matrículas
-                    # (parse the trailing digits, not a fixed 6-char slice, so 7+
-                    # digit or prefix-changed matrículas don't reuse a number).
+                    # Seed from the highest number across matrículas of OUR OWN
+                    # series (prefix + digits, parsed whole so 7+ digit ones don't
+                    # reuse a number). A matrícula kept from an import (Servo's are
+                    # bare numbers like 20210123) is not one of ours and must not
+                    # shift the series.
                     existing = (
                         await session.exec(
                             select(Student.enrollment_number).where(
@@ -80,7 +97,7 @@ async def create_student_core(
                     numbers = [
                         int(m.group(1))
                         for n in existing
-                        if (m := re.search(r"(\d+)$", n or ""))
+                        if (m := re.fullmatch(rf"{re.escape(prefix)}(\d+)", n or ""))
                     ]
                     counter = FolioCounter(
                         institution_id=institution.id, series="MAT",
@@ -121,6 +138,90 @@ async def create_student_core(
     assert student is not None
     audit.record(session, actor=actor, action="student.created",
                  entity="student", entity_id=str(student.id), detail=student.curp)
+    await session.flush()
+    return student
+
+
+async def _create_with_matricula(
+    session: AsyncSession,
+    institution: Institution,
+    body: StudentCreate,
+    actor: str,
+    enrollment_number: str,
+    prefix: str,
+) -> Student:
+    """Create keeping a given matrícula. If it looks like one of ours
+    (prefix + digits) the MAT counter is pushed past it so later allocations
+    can't collide with it."""
+    if not enrollment_number:
+        raise HTTPException(status_code=422, detail="Matrícula vacía")
+    if len(enrollment_number) > MAX_MATRICULA_LEN:
+        # the column is VARCHAR(32) and a table model skips pydantic validation,
+        # so without this a mis-mapped column would be a DB error mid-batch
+        raise HTTPException(
+            status_code=422,
+            detail=f"Matrícula demasiado larga (máx. {MAX_MATRICULA_LEN} caracteres)",
+        )
+    dup = (
+        await session.exec(
+            select(Student).where(
+                Student.institution_id == institution.id,
+                Student.enrollment_number == enrollment_number,
+            )
+        )
+    ).first()
+    if dup:
+        raise HTTPException(
+            status_code=409, detail=f"Ya existe un alumno con la matrícula {enrollment_number}"
+        )
+    try:
+        async with session.begin_nested():
+            if m := re.fullmatch(rf"{re.escape(prefix)}(\d+)", enrollment_number):
+                number = int(m.group(1))
+                counter = (
+                    await session.exec(
+                        select(FolioCounter)
+                        .where(
+                            FolioCounter.institution_id == institution.id,
+                            FolioCounter.series == "MAT",
+                        )
+                        .with_for_update()
+                    )
+                ).first()
+                if counter is None:
+                    # create the series here instead of leaving it to the next
+                    # allocation's lazy seed, so both paths agree on what counts
+                    # as one of ours (and the int4 guard below always applies)
+                    counter = FolioCounter(
+                        institution_id=institution.id, series="MAT", last_number=0
+                    )
+                if counter.last_number < number <= MAX_FOLIO_NUMBER:
+                    counter.last_number = number
+                session.add(counter)
+            student = Student(
+                **body.model_dump(exclude={"relatives"}),
+                institution_id=institution.id,
+                enrollment_number=enrollment_number,
+            )
+            session.add(student)
+            await session.flush()
+            for relative in body.relatives:
+                session.add(StudentRelative(student_id=student.id, **relative.model_dump()))
+    except IntegrityError as e:
+        msg = str(e.orig).lower()
+        if "curp" in msg:
+            raise HTTPException(
+                status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)"
+            ) from e
+        if "matricula" in msg or "enrollment_number" in msg:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ya existe un alumno con la matrícula {enrollment_number}",
+            ) from e
+        raise
+    audit.record(session, actor=actor, action="student.created",
+                 entity="student", entity_id=str(student.id),
+                 detail=f"{student.curp} (matrícula conservada)")
     await session.flush()
     return student
 
