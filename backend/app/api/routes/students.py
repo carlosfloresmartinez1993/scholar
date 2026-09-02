@@ -34,6 +34,7 @@ from app.models import (
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,
     PlanEnrollmentCreate,
+    RosterParseResult,
     PlanEnrollmentPublic,
     PlanVersion,
     Program,
@@ -61,6 +62,7 @@ from app.services.enrollment import create_student_core, enroll_student_core
 from app.services.files import save_upload
 from app.services.portal import credentials_email, grant_portal_access
 from app.services.promotion import promote_cycle
+from app.services.roster_import import normalize_date, normalize_sex, parse_roster
 
 router = APIRouter(prefix="/students", tags=["students"])
 
@@ -453,6 +455,33 @@ async def wizard_intake(
     )
 
 
+def _opt(value: str | None) -> str | None:
+    """Blank roster cells mean 'not provided', not an empty value."""
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+ROSTER_MAX_BYTES = 10 * 1024 * 1024
+
+
+@router.post("/bulk-intake/parse")
+async def parse_bulk_intake_file(
+    _: ServiciosEscolares, file: UploadFile
+) -> RosterParseResult:
+    """Parse a roster export (servoescolar.mx .xlsx, or any .xlsx/.csv) into a
+    cell grid plus the detected column→field mapping, without touching the DB.
+    The UI previews it, lets staff fix the mapping, then posts the rows to
+    /bulk-intake."""
+    data = await file.read(ROSTER_MAX_BYTES + 1)
+    if len(data) > ROSTER_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx. 10 MB)")
+    if not data:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    return RosterParseResult(**parse_roster(data, file.filename, file.content_type))
+
+
 @router.post("/bulk-intake", status_code=201)
 async def bulk_intake(
     session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope, body: BulkIntakeIn
@@ -482,10 +511,17 @@ async def bulk_intake(
             async with session.begin_nested():
                 student_in = StudentCreate(
                     curp=curp, full_name=row.full_name.strip(),
-                    email=row.email.strip(), campus_id=group.campus_id,
+                    email=row.email.strip(), phone=(row.phone or "").strip(),
+                    first_names=_opt(row.first_names),
+                    last_name_p=_opt(row.last_name_p),
+                    last_name_m=_opt(row.last_name_m),
+                    sex=normalize_sex(row.sex),
+                    birth_date=normalize_date(row.birth_date),
+                    campus_id=group.campus_id,
                 )
                 student = await create_student_core(
-                    session, institution, student_in, current_user.email
+                    session, institution, student_in, current_user.email,
+                    enrollment_number=_opt(row.enrollment_number),
                 )
                 await enroll_student_core(
                     session, current_user, student, group,

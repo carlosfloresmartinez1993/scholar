@@ -33,10 +33,18 @@ from app.services.treasury import generate_enrollment_charges
 
 
 async def create_student_core(
-    session: AsyncSession, institution: Institution, body: StudentCreate, actor: str
+    session: AsyncSession,
+    institution: Institution,
+    body: StudentCreate,
+    actor: str,
+    *,
+    enrollment_number: str | None = None,
 ) -> Student:
     """Create a student with a row-locked matrícula (RT-09). Rejects a duplicate
-    CURP. Caller commits."""
+    CURP. Caller commits.
+
+    enrollment_number keeps an existing matrícula (a servoescolar.mx migration)
+    instead of allocating one; it must be unique within the institution."""
     dup = (
         await session.exec(
             select(Student).where(
@@ -46,12 +54,16 @@ async def create_student_core(
     ).first()
     if dup:
         raise HTTPException(status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)")
+    prefix = institution.short_name[:4].upper()
+    if enrollment_number is not None:
+        return await _create_with_matricula(
+            session, institution, body, actor, enrollment_number.strip().upper(), prefix
+        )
     # matrícula: institution prefix + per-institution sequence. The counter is
     # row-locked once it exists; the FIRST-ever create has no row to lock, so two
     # concurrent first creates can both seed it and collide on the unique
     # constraint. Do the allocation in a SAVEPOINT and retry once: the loser's
     # savepoint rolls back and the retry finds + locks the winner's counter.
-    prefix = institution.short_name[:4].upper()
     student: Student | None = None
     for attempt in range(2):
         try:
@@ -121,6 +133,77 @@ async def create_student_core(
     assert student is not None
     audit.record(session, actor=actor, action="student.created",
                  entity="student", entity_id=str(student.id), detail=student.curp)
+    await session.flush()
+    return student
+
+
+async def _create_with_matricula(
+    session: AsyncSession,
+    institution: Institution,
+    body: StudentCreate,
+    actor: str,
+    enrollment_number: str,
+    prefix: str,
+) -> Student:
+    """Create keeping a given matrícula. If it looks like one of ours
+    (prefix + digits) the MAT counter is pushed past it so later allocations
+    can't collide with it."""
+    if not enrollment_number:
+        raise HTTPException(status_code=422, detail="Matrícula vacía")
+    dup = (
+        await session.exec(
+            select(Student).where(
+                Student.institution_id == institution.id,
+                Student.enrollment_number == enrollment_number,
+            )
+        )
+    ).first()
+    if dup:
+        raise HTTPException(
+            status_code=409, detail=f"Ya existe un alumno con la matrícula {enrollment_number}"
+        )
+    try:
+        async with session.begin_nested():
+            if m := re.fullmatch(rf"{re.escape(prefix)}(\d+)", enrollment_number):
+                counter = (
+                    await session.exec(
+                        select(FolioCounter)
+                        .where(
+                            FolioCounter.institution_id == institution.id,
+                            FolioCounter.series == "MAT",
+                        )
+                        .with_for_update()
+                    )
+                ).first()
+                if counter is not None and counter.last_number < int(m.group(1)):
+                    counter.last_number = int(m.group(1))
+                    session.add(counter)
+                # no counter yet: the first allocation seeds itself from the max
+                # trailing digits across students, which now includes this one
+            student = Student(
+                **body.model_dump(exclude={"relatives"}),
+                institution_id=institution.id,
+                enrollment_number=enrollment_number,
+            )
+            session.add(student)
+            await session.flush()
+            for relative in body.relatives:
+                session.add(StudentRelative(student_id=student.id, **relative.model_dump()))
+    except IntegrityError as e:
+        msg = str(e.orig).lower()
+        if "curp" in msg:
+            raise HTTPException(
+                status_code=409, detail="Ya existe un alumno con esa CURP (RT-09)"
+            ) from e
+        if "matricula" in msg or "enrollment_number" in msg:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ya existe un alumno con la matrícula {enrollment_number}",
+            ) from e
+        raise
+    audit.record(session, actor=actor, action="student.created",
+                 entity="student", entity_id=str(student.id),
+                 detail=f"{student.curp} (matrícula conservada)")
     await session.flush()
     return student
 

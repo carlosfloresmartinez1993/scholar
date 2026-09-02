@@ -60,6 +60,7 @@ from app.models.student import (
     BulkIntakeIn,
     BulkIntakeResult,
     BulkIntakeRow,
+    RosterParseResult,
     GroupEnrollment,
     GroupEnrollmentCreate,
     GroupEnrollmentKind,

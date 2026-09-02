@@ -14,7 +14,9 @@ timetable-engine), con el que se integrará vía la API de integración.
   evaluación configurable, ciclos escolares y grupos.
 - **Alumnos** — registro por CURP (RT-09), inscripción a plan (fija el RVOE del
   historial, RF-C04), inscripción a grupo/materias con validación de seriación
-  (RF-C07), exportación SEP de inscritos/reinscritos (RT-10).
+  (RF-C07), exportación SEP de inscritos/reinscritos (RT-10), alta masiva
+  desde una exportación de servoescolar.mx (.xlsx/.csv con encabezados en
+  cualquier orden; conserva la matrícula si viene en el archivo).
 - **Calificaciones** — captura por docente asignado dentro de la ventana
   habilitada (RF-C01), calificación final ponderada, actas con folio (RF-C03),
   kardex y avance curricular (RF-C05/C08), libro de títulos (RF-C09).

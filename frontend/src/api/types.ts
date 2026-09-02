@@ -431,6 +431,37 @@ export interface BulkIntakeRow {
   curp: string;
   full_name: string;
   email: string;
+  // optional columns of a servoescolar.mx export
+  enrollment_number?: string;
+  first_names?: string;
+  last_name_p?: string;
+  last_name_m?: string;
+  phone?: string;
+  sex?: string;
+  birth_date?: string;
+}
+
+// Intake fields a roster column can feed (order = how the UI lists them)
+export const ROSTER_FIELDS = [
+  "curp",
+  "enrollment_number",
+  "full_name",
+  "first_names",
+  "last_name_p",
+  "last_name_m",
+  "email",
+  "phone",
+  "sex",
+  "birth_date",
+] as const;
+export type RosterField = (typeof ROSTER_FIELDS)[number];
+
+export interface RosterParseResult {
+  columns: string[];
+  mapping: Record<RosterField, number | null>;
+  rows: string[][];
+  header_row: number | null;
+  truncated: boolean;
 }
 
 export interface BulkIntakeError {

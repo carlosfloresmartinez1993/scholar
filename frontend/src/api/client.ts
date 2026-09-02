@@ -1,6 +1,7 @@
 import type {
   BulkIntakeResult,
   BulkIntakeRow,
+  RosterParseResult,
   CalendarGroup,
   CalendarProgram,
   CalendarTerm,
@@ -189,6 +190,12 @@ export const promoteCycle = (dryRun: boolean) =>
   });
 
 // --- Onboarding (Inscripciones) ---------------------------------------------
+
+export const parseRoster = (file: File | Blob, filename: string) => {
+  const form = new FormData();
+  form.append("file", file, filename);
+  return apiUpload<RosterParseResult>("/students/bulk-intake/parse", form);
+};
 
 export const bulkIntake = (body: {
   group_id: string;

@@ -215,8 +215,19 @@ class BulkIntakeRow(SQLModel):
     # plain str (validated when built into a StudentCreate, so bad rows are reported
     # instead of failing the whole request)
     curp: str
-    full_name: str
+    # full_name may be empty when the split name is given (Servo exports carry
+    # Apellido paterno / Apellido materno / Nombre(s) as separate columns)
+    full_name: str = ""
     email: str = ""
+    # --- optional columns of a servoescolar.mx export ---
+    # existing matrícula to keep instead of assigning a new one (migration)
+    enrollment_number: str | None = None
+    first_names: str | None = None
+    last_name_p: str | None = None
+    last_name_m: str | None = None
+    phone: str | None = None
+    sex: str | None = None  # F/M or Femenino/Masculino… normalized on intake
+    birth_date: str | None = None  # ISO or dd/mm/yyyy, normalized on intake
 
 
 class BulkIntakeIn(SQLModel):
@@ -236,6 +247,16 @@ class BulkIntakeError(SQLModel):
 class BulkIntakeResult(SQLModel):
     enrolled: int
     errors: list[BulkIntakeError]
+
+
+class RosterParseResult(SQLModel):
+    """A parsed roster file: the raw cell grid plus which column feeds each
+    intake field (None = not detected; the UI lets staff pick one)."""
+    columns: list[str]
+    mapping: dict[str, int | None]
+    rows: list[list[str]]
+    header_row: int | None  # None = no header recognized, positional layout assumed
+    truncated: bool  # more rows than the bulk-intake cap; only the first cap kept
 
 
 class PlanEnrollmentStatus(str, Enum):
