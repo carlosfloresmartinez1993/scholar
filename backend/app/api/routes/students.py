@@ -22,7 +22,7 @@ from app.api.deps import (
 )
 from app.api.routes.catalog import get_default_institution
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.models import (
     BulkIntakeError,
@@ -515,7 +515,7 @@ async def bulk_intake(
                     first_names=_opt(row.first_names),
                     last_name_p=_opt(row.last_name_p),
                     last_name_m=_opt(row.last_name_m),
-                    sex=normalize_sex(row.sex),
+                    sex=normalize_sex(row.sex, curp),
                     birth_date=normalize_date(row.birth_date),
                     campus_id=group.campus_id,
                 )
@@ -539,6 +539,12 @@ async def bulk_intake(
         except (HTTPException, ValidationError, ValueError) as e:
             detail = e.detail if isinstance(e, HTTPException) else str(e)
             errors.append(BulkIntakeError(row=i, curp=curp, detail=detail))
+        except SQLAlchemyError:
+            # any other DB-level rejection (a value too long for its column…):
+            # the SAVEPOINT rolled this row back, so it must not take the batch
+            errors.append(BulkIntakeError(
+                row=i, curp=curp, detail="La fila fue rechazada por la base de datos",
+            ))
     audit.record(
         session, actor=current_user.email, action="bulk_intake.completed",
         entity="group", entity_id=str(group.id),

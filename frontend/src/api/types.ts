@@ -462,6 +462,7 @@ export interface RosterParseResult {
   rows: string[][];
   header_row: number | null;
   truncated: boolean;
+  skipped: number;
 }
 
 export interface BulkIntakeError {

@@ -4,9 +4,15 @@ carrying the split name, sexo, fecha de nacimiento and a preserved matrícula.""
 import io
 from datetime import datetime
 
+from fastapi import HTTPException
 from openpyxl import Workbook
 
-from app.services.roster_import import normalize_date, normalize_sex, parse_roster
+from app.services.roster_import import (
+    MAX_COLS,
+    normalize_date,
+    normalize_sex,
+    parse_roster,
+)
 from tests.conftest import login
 from tests.test_academic_flow import build_catalog
 from tests.test_bulk_intake import VALID
@@ -26,11 +32,11 @@ def servo_xlsx() -> bytes:
         "Sexo", "Fecha de Nacimiento", "Correo Electrónico", "Teléfono",
     ])
     ws.append([
-        "20210123", "MARTÍNEZ", "RAMÍREZ", "ANA SOFÍA", VALID[0],
+        "20210123", "MARTÍNEZ", "RAMÍREZ", "ANA SOFÍA", VALID[1],
         "Femenino", datetime(2001, 3, 5), "ana@correo.mx", 6461234567.0,
     ])
     ws.append([
-        "20210124", "LÓPEZ", "", "JUAN", VALID[1],
+        "20210124", "LÓPEZ", "", "JUAN", VALID[0],
         "Masculino", datetime(2002, 11, 20), "", None,
     ])
     ws.append(["Total de alumnos: 2"])
@@ -98,6 +104,94 @@ def test_normalizers():
             raise AssertionError("expected ValueError")
 
 
+def test_sexo_hm_is_read_against_the_curp():
+    """H/M (Hombre/Mujer) columns are as common as F/M here, so a bare 'M' is
+    read from the CURP instead of being assumed Masculino."""
+    hombre, mujer = VALID[0], VALID[1]  # CURP[10] = H / M
+    assert normalize_sex("H", hombre) == "M"
+    assert normalize_sex("M", mujer) == "F"  # H/M file: M = Mujer
+    assert normalize_sex("M", hombre) == "M"  # F/M file: M = Masculino
+    assert normalize_sex("M") == "M"  # no CURP to decide: the F/M convention
+    try:
+        normalize_sex("Femenino", hombre)  # the column contradicts the CURP
+    except ValueError as e:
+        assert "CURP" in str(e)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_full_name_column_is_not_replaced_by_the_given_names_one():
+    data = f"Alumno,Nombres,CURP\nMARTÍNEZ RAMÍREZ ANA,ANA,{VALID[0]}\n".encode()
+    parsed = parse_roster(data, "alumnos.csv")
+    assert parsed["mapping"]["full_name"] == 0
+    assert parsed["mapping"]["first_names"] == 1
+
+
+def test_semicolon_csv_under_a_title_block():
+    """csv.Sniffer can't read a ';' grid with a ragged title row above it, and
+    reading it as one comma column loses every column but the first."""
+    text = (
+        "Instituto Universitario Ensenada\n"
+        "Alumnos inscritos;Ciclo: 2026-3\n"
+        "Matrícula;Apellido Paterno;Nombre(s);CURP;Correo\n"
+        f"20210123;MARTÍNEZ;ANA;{VALID[0]};ana@correo.mx\n"
+    )
+    parsed = parse_roster(text.encode(), "inscritos.csv")
+    assert parsed["mapping"]["curp"] == 3
+    assert parsed["rows"] == [["20210123", "MARTÍNEZ", "ANA", VALID[0], "ana@correo.mx"]]
+
+
+def test_cr_only_csv_and_unreadable_xlsx_are_400_not_500():
+    # Excel's "CSV (Macintosh)" uses lone CRs
+    parsed = parse_roster(f"CURP,Nombre\r{VALID[0]},Juan\r".encode(), "mac.csv")
+    assert parsed["rows"] == [[VALID[0], "Juan"]]
+    corrupt = ((b"PK\x03\x04" + b"basura" * 20, "roto.xlsx"), (b"no soy un zip", "x.xlsx"))
+    for data, name in corrupt:
+        try:
+            parse_roster(data, name)
+        except HTTPException as e:
+            assert e.status_code == 400
+        else:
+            raise AssertionError("expected HTTPException 400")
+
+
+def test_zero_padded_numeric_matricula_keeps_its_padding():
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Matrícula", "CURP", "Nombre"])
+    ws.append([12345, VALID[0], "Juan"])
+    ws.cell(row=2, column=1).number_format = "00000000"
+    buf = io.BytesIO()
+    wb.save(buf)
+    parsed = parse_roster(buf.getvalue(), "inscritos.xlsx")
+    assert parsed["rows"][0][0] == "00012345"
+
+
+def test_rows_without_an_identified_name_are_counted_not_hidden():
+    """Only the CURP header is recognized here, so a row whose CURP is blank is
+    dropped — the count says so instead of the file silently losing students."""
+    data = (
+        "CURP,Nombre del alumno(a),Correo\n"
+        f"{VALID[0]},PEDRO RUIZ,p@x.mx\n"
+        ",JUAN LÓPEZ,j@x.mx\n"
+    ).encode()
+    parsed = parse_roster(data, "alumnos.csv")
+    assert len(parsed["rows"]) == 1
+    assert parsed["skipped"] == 1
+
+
+def test_wide_sheet_is_capped_while_reading():
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["CURP", "Nombre"] + [f"Extra {i}" for i in range(400)])
+    ws.append([VALID[0], "Juan"] + ["x"] * 400)
+    buf = io.BytesIO()
+    wb.save(buf)
+    parsed = parse_roster(buf.getvalue(), "ancho.xlsx")
+    assert len(parsed["columns"]) == MAX_COLS
+    assert all(len(row) == MAX_COLS for row in parsed["rows"])
+
+
 async def test_parse_endpoint_and_xls_rejection(client, seed):
     await login(client)
     res = await client.post(
@@ -126,13 +220,13 @@ async def test_bulk_intake_servo_rows_keep_matricula_and_split_name(client, seed
 
     rows = [
         {  # full Servo row
-            "curp": VALID[0], "enrollment_number": "20210123",
+            "curp": VALID[1], "enrollment_number": "20210123",
             "first_names": "Ana Sofía", "last_name_p": "Martínez", "last_name_m": "Ramírez",
             "email": "ana@correo.mx", "phone": "6461234567",
             "sex": "Femenino", "birth_date": "05/03/2001",
         },
         {  # same matrícula again -> rejected, the row before is untouched
-            "curp": VALID[1], "enrollment_number": "20210123", "full_name": "Juan López",
+            "curp": VALID[0], "enrollment_number": "20210123", "full_name": "Juan López",
         },
         {  # bad sexo -> reported, not silently stored
             "curp": VALID[2], "full_name": "Pedro Ruiz", "sex": "X",
@@ -146,7 +240,7 @@ async def test_bulk_intake_servo_rows_keep_matricula_and_split_name(client, seed
     assert "Sexo" in by_row[3]
 
     students = (await client.get("/api/v1/students?limit=200")).json()
-    ana = next(s for s in students if s["curp"] == VALID[0])
+    ana = next(s for s in students if s["curp"] == VALID[1])
     assert ana["enrollment_number"] == "20210123"
     assert ana["full_name"] == "Ana Sofía Martínez Ramírez"
     assert ana["last_name_p"] == "Martínez"
@@ -176,3 +270,43 @@ async def test_preserved_our_style_matricula_bumps_counter(client, seed):
     nxt = (await client.post("/api/v1/students", json={
         "curp": VALID[2], "full_name": "Siguiente", "campus_id": campus_id})).json()
     assert nxt["enrollment_number"] == "INUE000051"
+
+
+async def test_imported_foreign_matricula_does_not_shift_the_series(client, seed):
+    """The migration order: import the Servo roster into a fresh institution,
+    then register the first new student. A Servo matrícula (a bare number) is
+    not of our series, so it must not seed the MAT counter."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+
+    res = (await client.post("/api/v1/students/bulk-intake", json={
+        "group_id": catalog["group"]["id"],
+        "rows": [{"curp": VALID[0], "full_name": "Migrado", "enrollment_number": "20210123"}],
+    })).json()
+    assert res["errors"] == []
+
+    nxt = (await client.post("/api/v1/students", json={
+        "curp": VALID[1], "full_name": "Primero", "campus_id": campus_id})).json()
+    assert nxt["enrollment_number"] == "INUE000001"
+
+
+async def test_over_long_matricula_is_one_bad_row_not_a_failed_batch(client, seed):
+    """A column mis-mapped to «Matrícula» exceeds the 32-char column; that row is
+    reported and the good rows of the same request still land."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+
+    res = (await client.post("/api/v1/students/bulk-intake", json={
+        "group_id": catalog["group"]["id"],
+        "rows": [
+            {"curp": VALID[0], "full_name": "Buena"},
+            {"curp": VALID[1], "full_name": "Larga",
+             "enrollment_number": "ANA SOFÍA MARTÍNEZ RAMÍREZ DE LA TORRE"},
+        ],
+    })).json()
+    assert res["enrolled"] == 1
+    assert "Matrícula demasiado larga" in res["errors"][0]["detail"]
+    students = (await client.get("/api/v1/students?limit=200")).json()
+    assert {s["curp"] for s in students} == {VALID[0]}

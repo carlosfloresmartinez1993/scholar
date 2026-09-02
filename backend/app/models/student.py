@@ -220,7 +220,10 @@ class BulkIntakeRow(SQLModel):
     full_name: str = ""
     email: str = ""
     # --- optional columns of a servoescolar.mx export ---
-    # existing matrícula to keep instead of assigning a new one (migration)
+    # existing matrícula to keep instead of assigning a new one (migration).
+    # Length is checked while creating the student, so an over-long cell (a
+    # column mis-mapped to Matrícula) is reported as one bad row, not a 422 for
+    # the whole batch.
     enrollment_number: str | None = None
     first_names: str | None = None
     last_name_p: str | None = None
@@ -257,6 +260,7 @@ class RosterParseResult(SQLModel):
     rows: list[list[str]]
     header_row: int | None  # None = no header recognized, positional layout assumed
     truncated: bool  # more rows than the bulk-intake cap; only the first cap kept
+    skipped: int  # rows dropped as noise (blank in every identified name/CURP column)
 
 
 class PlanEnrollmentStatus(str, Enum):

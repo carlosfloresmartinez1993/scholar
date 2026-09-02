@@ -1324,6 +1324,7 @@ function BulkIntake({
   const showMatricula = rows.some((r) => r.enrollment_number);
   const canSubmit =
     !submit.isPending &&
+    !parse.isPending && // rows still point at the previous file while it parses
     rows.length > 0 &&
     rows.length <= MAX_ROWS &&
     mappingProblem === null;
@@ -1372,20 +1373,38 @@ function BulkIntake({
           )}
         </div>
 
+        {/* what the file lost stays on screen: a toast is gone by the time the
+            operator reviews the preview and reads «1000 filas» as the whole file */}
+        {roster?.truncated && (
+          <p className="text-sm font-semibold text-destructive">
+            El archivo excede {MAX_ROWS} filas: solo se cargaron las primeras{" "}
+            {MAX_ROWS}. Divida el archivo para cargar el resto.
+          </p>
+        )}
+        {roster != null && roster.skipped > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Se omitieron {roster.skipped} filas sin CURP ni nombre (títulos, totales
+            o filas incompletas). Revise el mapeo de columnas si esperaba más
+            alumnos.
+          </p>
+        )}
+
         {roster && mapping ? (
           <div className="space-y-2">
             <p className="text-sm font-semibold">Columnas del archivo</p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {ROSTER_FIELDS.map((field) => (
                 <div key={field} className="space-y-1">
-                  <Label className="text-xs">{ROSTER_FIELD_LABELS[field]}</Label>
+                  <Label className="text-xs" htmlFor={`map-${field}`}>
+                    {ROSTER_FIELD_LABELS[field]}
+                  </Label>
                   <Select
                     value={mapping[field] == null ? NONE : String(mapping[field])}
                     onValueChange={(v) =>
                       setMapping({ ...mapping, [field]: v === NONE ? null : Number(v) })
                     }
                   >
-                    <SelectTrigger className="h-8">
+                    <SelectTrigger className="h-8" id={`map-${field}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

@@ -31,6 +31,9 @@ from app.services.academics import (
 )
 from app.services.treasury import generate_enrollment_charges
 
+MAX_MATRICULA_LEN = 32  # Student.enrollment_number column width
+MAX_FOLIO_NUMBER = 2_147_483_647  # folio_counters.last_number is an int4
+
 
 async def create_student_core(
     session: AsyncSession,
@@ -79,9 +82,11 @@ async def create_student_core(
                     )
                 ).first()
                 if counter is None:
-                    # Seed from the highest numeric suffix across existing matrículas
-                    # (parse the trailing digits, not a fixed 6-char slice, so 7+
-                    # digit or prefix-changed matrículas don't reuse a number).
+                    # Seed from the highest number across matrículas of OUR OWN
+                    # series (prefix + digits, parsed whole so 7+ digit ones don't
+                    # reuse a number). A matrícula kept from an import (Servo's are
+                    # bare numbers like 20210123) is not one of ours and must not
+                    # shift the series.
                     existing = (
                         await session.exec(
                             select(Student.enrollment_number).where(
@@ -92,7 +97,7 @@ async def create_student_core(
                     numbers = [
                         int(m.group(1))
                         for n in existing
-                        if (m := re.search(r"(\d+)$", n or ""))
+                        if (m := re.fullmatch(rf"{re.escape(prefix)}(\d+)", n or ""))
                     ]
                     counter = FolioCounter(
                         institution_id=institution.id, series="MAT",
@@ -150,6 +155,13 @@ async def _create_with_matricula(
     can't collide with it."""
     if not enrollment_number:
         raise HTTPException(status_code=422, detail="Matrícula vacía")
+    if len(enrollment_number) > MAX_MATRICULA_LEN:
+        # the column is VARCHAR(32) and a table model skips pydantic validation,
+        # so without this a mis-mapped column would be a DB error mid-batch
+        raise HTTPException(
+            status_code=422,
+            detail=f"Matrícula demasiado larga (máx. {MAX_MATRICULA_LEN} caracteres)",
+        )
     dup = (
         await session.exec(
             select(Student).where(
@@ -165,6 +177,7 @@ async def _create_with_matricula(
     try:
         async with session.begin_nested():
             if m := re.fullmatch(rf"{re.escape(prefix)}(\d+)", enrollment_number):
+                number = int(m.group(1))
                 counter = (
                     await session.exec(
                         select(FolioCounter)
@@ -175,11 +188,16 @@ async def _create_with_matricula(
                         .with_for_update()
                     )
                 ).first()
-                if counter is not None and counter.last_number < int(m.group(1)):
-                    counter.last_number = int(m.group(1))
-                    session.add(counter)
-                # no counter yet: the first allocation seeds itself from the max
-                # trailing digits across students, which now includes this one
+                if counter is None:
+                    # create the series here instead of leaving it to the next
+                    # allocation's lazy seed, so both paths agree on what counts
+                    # as one of ours (and the int4 guard below always applies)
+                    counter = FolioCounter(
+                        institution_id=institution.id, series="MAT", last_number=0
+                    )
+                if counter.last_number < number <= MAX_FOLIO_NUMBER:
+                    counter.last_number = number
+                session.add(counter)
             student = Student(
                 **body.model_dump(exclude={"relatives"}),
                 institution_id=institution.id,
