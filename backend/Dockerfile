@@ -4,8 +4,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-RUN uv venv && uv pip install .
+# Instala las versiones fijadas en uv.lock (las mismas que en desarrollo y
+# tests); `uv pip install .` resolvía cada build a las más nuevas.
+ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
 
