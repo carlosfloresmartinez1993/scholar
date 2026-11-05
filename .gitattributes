@@ -1,0 +1,2 @@
+# Scripts de shell siempre con LF: con CRLF, sh falla dentro de los contenedores Linux.
+*.sh text eol=lf
