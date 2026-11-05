@@ -19,9 +19,8 @@ services:
     region: oregon
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    # Igual que el CMD del Dockerfile, pero con 1 worker (el plan gratuito tiene
-    # poca memoria) y escuchando en IPv4, que es lo que usa Render.
-    dockerCommand: sh -c "alembic upgrade head && python -m app.initial_data && fastapi run --workers 1 --host 0.0.0.0 --port ${PORT:-10000}"
+    # migraciones + datos iniciales + servidor con 1 worker (ver el script)
+    dockerCommand: sh render-start.sh
     healthCheckPath: /api/v1/healthz/
     buildFilter:
       paths:
