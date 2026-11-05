@@ -1,0 +1,85 @@
+# Entorno de PRUEBAS temporales en Render (Blueprint). Producción sigue en Railway.
+# Render crea con este archivo la base de datos, el backend y el frontend.
+# No cargar aquí datos reales de alumnos: el servicio queda expuesto a internet.
+
+databases:
+  - name: scholar-db
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+    databaseName: scholar
+    user: scholar
+    ipAllowList: [] # sin acceso externo: solo los servicios de Render la ven
+
+services:
+  - type: web
+    name: scholar-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    # Igual que el CMD del Dockerfile, pero con 1 worker (el plan gratuito tiene
+    # poca memoria) y escuchando en IPv4, que es lo que usa Render.
+    dockerCommand: sh -c "alembic upgrade head && python -m app.initial_data && fastapi run --workers 1 --host 0.0.0.0 --port ${PORT:-10000}"
+    healthCheckPath: /api/v1/healthz/
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      - key: ENVIRONMENT
+        value: development
+      - key: POSTGRES_SERVER
+        fromDatabase:
+          name: scholar-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: scholar-db
+          property: port
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: scholar-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: scholar-db
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: scholar-db
+          property: database
+      # fuera de ENVIRONMENT=local el backend no arranca con "changethis"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: INTEGRATION_API_KEY
+        generateValue: true
+      # se capturan en el panel de Render al crear el Blueprint
+      - key: FIRST_SUPERUSER
+        sync: false
+      - key: FIRST_SUPERUSER_PASSWORD
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+  - type: web
+    name: scholar-frontend
+    runtime: static
+    buildCommand: cd frontend && corepack enable && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: ./frontend/dist
+    buildFilter:
+      paths:
+        - frontend/**
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+    routes:
+      # El frontend llama a /api/v1 en su mismo dominio; Render lo reenvía al backend.
+      # Si Render le asigna otra URL al backend, corregir aquí el destino.
+      - type: rewrite
+        source: /api/*
+        destination: https://scholar-backend.onrender.com/api/*
+      # aplicación de una sola página: cualquier otra ruta sirve index.html
+      - type: rewrite
+        source: /*
+        destination: /index.html
