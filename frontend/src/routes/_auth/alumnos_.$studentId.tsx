@@ -82,7 +82,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { PaymentDialog } from "@/components/payment-dialog";
-import { SearchableSelect } from "@/components/searchable-select";
 import { StudentAvatar } from "@/components/student-avatar";
 import { StudentPhotoDialog } from "@/components/student-photo-dialog";
 import { StudentStatusBadge } from "@/components/student-status-badge";
@@ -1181,7 +1180,6 @@ function usePlanVersionLabels(): Map<string, string> {
 }
 
 function AcademicoTab({ student }: { student: Student }) {
-  const queryClient = useQueryClient();
   const planVersionLabels = usePlanVersionLabels();
 
   const { data: enrollments, isLoading } = useQuery({
@@ -1222,55 +1220,14 @@ function AcademicoTab({ student }: { student: Student }) {
         }
       : null;
 
-  // Inscribir a plan
-  const [open, setOpen] = useState(false);
-  const [newPlanId, setNewPlanId] = useState("");
-  const [startTermId, setStartTermId] = useState("");
-
-  const enroll = useMutation({
-    mutationFn: () =>
-      api(`/students/plan-enrollments`, {
-        method: "POST",
-        body: JSON.stringify({
-          student_id: student.id,
-          plan_version_id: newPlanId,
-          start_term_id: startTermId,
-        }),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.planEnrollments(student.id),
-      });
-      queryClient.invalidateQueries({ queryKey: ["kardex", student.id] });
-      toast.success("Alumno inscrito al plan");
-      setOpen(false);
-    },
-    onError: (e) =>
-      toast.error(e instanceof ApiError ? e.message : "Error al inscribir"),
-  });
-
   const termName = (id: string) => terms?.find((t) => t.id === id)?.name ?? "—";
-  const planOptions = [...planVersionLabels.entries()].map(([value, label]) => ({
-    value,
-    label,
-  }));
 
+  // The plan enrollment is created by enrolling into a group (Grupos or
+  // Inscripciones); there is no standalone "inscribir a plan" here on purpose.
   return (
     <div className="space-y-6">
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">Planes de estudio</h2>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setNewPlanId("");
-              setStartTermId(terms?.find((t) => t.is_open)?.id ?? "");
-              setOpen(true);
-            }}
-          >
-            <Plus className="size-4" /> Inscribir a plan
-          </Button>
-        </div>
+        <h2 className="text-xl font-bold">Planes de estudio</h2>
         <div className="rounded-md border bg-card">
           <Table>
             <TableHeader>
@@ -1448,55 +1405,6 @@ function AcademicoTab({ student }: { student: Student }) {
           )}
         </section>
       )}
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Inscribir a plan de estudios</DialogTitle>
-          </DialogHeader>
-          <form
-            className="grid gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              enroll.mutate();
-            }}
-          >
-            <div className="grid gap-2">
-              <Label>Plan de estudios</Label>
-              <SearchableSelect
-                value={newPlanId}
-                onChange={setNewPlanId}
-                options={planOptions}
-                placeholder="Seleccione un plan"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Ciclo de inicio</Label>
-              <Select value={startTermId} onValueChange={setStartTermId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccione un ciclo" />
-                </SelectTrigger>
-                <SelectContent>
-                  {terms?.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <DialogFooter>
-              <Button
-                type="submit"
-                className="font-bold"
-                disabled={enroll.isPending || !newPlanId || !startTermId}
-              >
-                {enroll.isPending ? "Inscribiendo…" : "Inscribir"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
