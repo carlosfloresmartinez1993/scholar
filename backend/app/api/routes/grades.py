@@ -106,6 +106,7 @@ async def grade_grid(
                 "enrollment_number": s.enrollment_number,
                 "status": e.status,
                 "final_grade": e.final_grade,
+                "attempt_number": e.attempt_number,  # > 1: recursamiento
                 "grades": {
                     str(c.id): grade_map.get((e.id, c.id)) for c in components
                 },

@@ -53,11 +53,21 @@ async def test_add_subject_rules(client, seed):
     student = await enroll_student(client, campus_id, catalog["group"]["id"])
     group_id = catalog["group"]["id"]
 
-    # DER201 is seriada with DER101, still in progress
-    blocked = await add_subjects(client, student["id"], group_id, [catalog["subject_b"]["id"]])
+    # never ahead of the group's cuatrimestre: DER201 is 2.º, the group is 1.º
+    later = await add_subjects(client, student["id"], group_id, [catalog["subject_b"]["id"]],
+                               override_prerequisites=True)
+    assert later.status_code == 409
+    assert "posterior" in later.json()["detail"]
+
+    # DER102 (1.º) is seriada with DER101, still in progress
+    seriada = (await client.post("/api/v1/catalog/plan-subjects", json={
+        "plan_version_id": catalog["plan"]["id"], "code": "DER102", "name": "Historia",
+        "period_number": 1, "credits": 6, "prerequisite_ids": [catalog["subject_a"]["id"]],
+    })).json()
+    blocked = await add_subjects(client, student["id"], group_id, [seriada["id"]])
     assert blocked.status_code == 409
     assert "Seriación" in blocked.json()["detail"]
-    allowed = await add_subjects(client, student["id"], group_id, [catalog["subject_b"]["id"]],
+    allowed = await add_subjects(client, student["id"], group_id, [seriada["id"]],
                                  override_prerequisites=True)
     assert allowed.status_code == 201, allowed.text
 
@@ -136,3 +146,39 @@ async def test_students_of_the_groups_carrera(client, seed):
     })).json()
     assert {s["id"] for s in listed} == {derecho["id"], other_rvoe["id"]}
     assert len((await client.get("/api/v1/students")).json()) == 4  # unfiltered: everyone
+
+
+async def test_retake_an_earlier_failed_subject(client, seed):
+    """In a later cuatrimestre the student retakes a failed earlier subject: it is
+    the next attempt, and the capture grid flags it as recursamiento."""
+    from tests.test_student_kardex import group_in_new_term
+
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])  # DER101
+    parcial = (await client.post("/api/v1/catalog/evaluation-components", json={
+        "plan_subject_id": catalog["subject_a"]["id"], "kind": "parcial",
+        "label": "Final", "weight_pct": 100,
+    })).json()
+    await client.patch(f"/api/v1/catalog/terms/{catalog['term']['id']}",
+                       json={"grade_capture_open": True})
+    first = (await client.get(f"/api/v1/students/{student['id']}/subject-enrollments")).json()[0]
+    await client.post("/api/v1/grades/capture", json={
+        "subject_enrollment_id": first["id"], "component_id": parcial["id"], "value": 4,
+    })  # reprobada
+
+    group2 = await group_in_new_term(client, catalog["plan"]["id"], 2, "LD-2A")
+    enrolled = await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": group2["id"],
+        "override_prerequisites": True,  # DER201 needs DER101, failed
+    })
+    assert enrolled.status_code == 201, enrolled.text
+    retake = await add_subjects(client, student["id"], group2["id"], [catalog["subject_a"]["id"]])
+    assert retake.status_code == 201, retake.text
+    assert retake.json()[0]["attempt_number"] == 2
+
+    gs = next(x for x in (await client.get(f"/api/v1/catalog/groups/{group2['id']}/subjects")).json()
+              if x["plan_subject_id"] == catalog["subject_a"]["id"])
+    grid = (await client.get(f"/api/v1/grades/group-subjects/{gs['id']}/grid")).json()
+    assert grid["rows"][0]["attempt_number"] == 2

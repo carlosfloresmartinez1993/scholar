@@ -1258,8 +1258,9 @@ function AddSubjectsDialog({
         <DialogHeader>
           <DialogTitle>Agregar materias a {student.name}</DialogTitle>
           <DialogDescription>
-            Materias del plan que cursará en el grupo {group.code}. Si el grupo
-            aún no imparte alguna, se agrega al grupo. No genera cargos.
+            Materias del plan hasta el cuatrimestre del grupo ({group.period_number}.º)
+            que cursará en {group.code}; una anterior que tenga reprobada queda como
+            recursamiento. Si el grupo aún no la imparte, se agrega. No genera cargos.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -1279,16 +1280,18 @@ function AddSubjectsDialog({
                   </p>
                   {subjects.map((s) => {
                     const taken = student.planSubjectIds.has(s.id);
+                    // never ahead of the group's cuatrimestre
+                    const later = s.period_number > group.period_number;
                     return (
                       <label
                         key={s.id}
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-sm",
-                          taken ? "text-muted-foreground" : "hover:bg-muted",
+                          taken || later ? "text-muted-foreground" : "hover:bg-muted",
                         )}
                       >
                         <Checkbox
-                          disabled={taken}
+                          disabled={taken || later}
                           checked={taken || subjectIds.includes(s.id)}
                           onCheckedChange={(v) =>
                             setSubjectIds(
@@ -1306,6 +1309,9 @@ function AddSubjectsDialog({
                           <Badge variant="secondary" className="ml-auto">
                             Inscrita
                           </Badge>
+                        )}
+                        {later && !taken && (
+                          <span className="ml-auto text-xs">Cuatrimestre posterior</span>
                         )}
                       </label>
                     );

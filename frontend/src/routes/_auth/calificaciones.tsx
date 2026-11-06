@@ -260,6 +260,11 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
               <TableCell data-numeric>{row.enrollment_number}</TableCell>
               <TableCell className="font-semibold">
                 {row.student_name}
+                {row.attempt_number > 1 && (
+                  <Badge variant="outline" className="ml-2">
+                    Recursamiento
+                  </Badge>
+                )}
               </TableCell>
               {grid.components.map((c) => {
                 const current = row.grades[c.id];

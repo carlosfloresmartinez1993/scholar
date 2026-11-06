@@ -354,8 +354,10 @@ async def add_subjects_core(
 ) -> list[SubjectEnrollment]:
     """Add plan subjects to a student already enrolled in the group, at any point of
     the term (a materia missing from the plan or the group, a late addition, a
-    recursamiento). Any subject of the group's plan is accepted; one the group does
-    not teach yet is added to it (teacher unassigned). No new group enrollment, so
+    recursamiento). Subjects of the group's plan up to the group's cuatrimestre are
+    accepted, never later ones; an earlier one already failed becomes a
+    recursamiento (next attempt). One the group does not teach yet is added to it
+    (teacher unassigned). No new group enrollment, so
     nothing is billed. Caller commits."""
     if not plan_subject_ids:
         raise HTTPException(status_code=400, detail="Seleccione al menos una materia")
@@ -385,6 +387,13 @@ async def add_subjects_core(
         s.plan_version_id != group.plan_version_id for s in subjects
     ):
         raise HTTPException(status_code=400, detail="Alguna materia no pertenece al plan del grupo")
+
+    later = [s.name for s in subjects if s.period_number > group.period_number]
+    if later:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{', '.join(later)}: es de un cuatrimestre posterior al del grupo",
+        )
 
     added = []
     for subject in sorted(subjects, key=lambda s: (s.period_number, s.code)):

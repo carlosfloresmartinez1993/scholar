@@ -514,6 +514,7 @@ export interface GradeGridRow {
   enrollment_number: string;
   status: SubjectEnrollmentStatus;
   final_grade?: number | null;
+  attempt_number: number; // > 1: recursamiento
   /** component_id -> value (null when not captured) */
   grades: Record<string, number | null>;
 }
