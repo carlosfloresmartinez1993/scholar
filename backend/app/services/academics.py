@@ -22,6 +22,7 @@ from app.models import (
     PlanEnrollmentStatus,
     PlanSubject,
     PlanVersion,
+    Program,
     Rvoe,
     Student,
     StudentPlanEnrollment,
@@ -151,51 +152,61 @@ async def curricular_progress(
     }
 
 
-async def student_kardex(session: AsyncSession, student_id: uuid.UUID) -> dict:
-    """One kárdex per student across every plan/RVOE they have been enrolled in.
+async def student_kardex(
+    session: AsyncSession, student_id: uuid.UUID, program_id: uuid.UUID | None = None
+) -> dict:
+    """One kárdex per student and carrera, across every plan/RVOE of that carrera.
 
-    Rows are every subject enrollment (each attempt, each plan) plus the subjects of
-    the current plan not yet taken. Each row carries the RVOE it was taken under, so
-    a plan/RVOE change shows up as the RVOE changing between rows. Progress is
-    measured against the current plan: the inscrito one that started last."""
+    Rows are every subject enrollment (each attempt, each plan of the carrera) plus
+    the subjects of the current plan not yet taken. A period (cuatrimestre) is studied
+    under a single RVOE: the one of its earliest subject actually taken there, or the
+    current plan's if nothing was taken yet. Rows of another RVOE in that period are
+    dropped unless they were actually studied (they duplicate it: pendientes or
+    convalidaciones of the new plan). Progress is measured against the current plan:
+    the inscrito one that started last. A student with two carreras has one kárdex
+    each; `program_id` picks it (default: the carrera of the current plan)."""
     plan_enrollments = (
         await session.exec(
-            select(StudentPlanEnrollment, Term)
+            select(StudentPlanEnrollment, Term, Rvoe, Program)
             .join(Term, Term.id == StudentPlanEnrollment.start_term_id)
+            .join(PlanVersion, PlanVersion.id == StudentPlanEnrollment.plan_version_id)
+            .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+            .join(Program, Program.id == Rvoe.program_id)
             .where(StudentPlanEnrollment.student_id == student_id)
         )
     ).all()
     if not plan_enrollments:
-        return {"current_plan_version_id": None, "period_type": None, "rows": [], "progress": None}
-    current, _ = max(
-        plan_enrollments,
-        key=lambda pe_term: (pe_term[0].status == PlanEnrollmentStatus.inscrito, pe_term[1].start_date),
-    )
+        return {"program_id": None, "programs": [], "current_plan_version_id": None,
+                "period_type": None, "periods": [], "rows": [], "progress": None}
+
+    def recency(row):
+        return (row[0].status == PlanEnrollmentStatus.inscrito, row[1].start_date)
+
+    programs: dict[uuid.UUID, str] = {}
+    for _, _, _, program in sorted(plan_enrollments, key=recency, reverse=True):
+        programs.setdefault(program.id, program.name)
+    if program_id not in programs:
+        program_id = next(iter(programs))
+    plan_enrollments = [row for row in plan_enrollments if row[3].id == program_id]
+    current, _, current_rvoe, _ = max(plan_enrollments, key=recency)
     current_plan = await session.get(PlanVersion, current.plan_version_id)
 
     taken = (
         await session.exec(
-            select(SubjectEnrollment, PlanSubject, Group, Term, Campus)
+            select(SubjectEnrollment, PlanSubject, Group, Term, Campus, Rvoe)
             .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
             .join(PlanSubject, PlanSubject.id == GroupSubject.plan_subject_id)
+            .join(PlanVersion, PlanVersion.id == PlanSubject.plan_version_id)
+            .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
             .join(Group, Group.id == GroupSubject.group_id)
             .join(Term, Term.id == Group.term_id)
             .join(Campus, Campus.id == Group.campus_id)
-            .where(SubjectEnrollment.student_id == student_id)
+            .where(SubjectEnrollment.student_id == student_id, Rvoe.program_id == program_id)
         )
     ).all()
-
-    plan_ids = {pe.plan_version_id for pe, _ in plan_enrollments} | {ps.plan_version_id for _, ps, *_ in taken}
-    rvoe_by_plan = {
-        plan.id: rvoe.agreement_number
-        for plan, rvoe in (
-            await session.exec(
-                select(PlanVersion, Rvoe)
-                .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
-                .where(PlanVersion.id.in_(plan_ids))  # type: ignore[attr-defined]
-            )
-        ).all()
-    }
+    rvoe_by_plan = {subject.plan_version_id: rvoe.agreement_number for _, subject, *_, rvoe in taken}
+    rvoe_by_plan[current.plan_version_id] = current_rvoe.agreement_number
+    taken = [row[:5] for row in taken]
 
     # grade breakdown: CF from the counting components, E1/E2 from extraordinario
     # and título de suficiencia
@@ -293,10 +304,29 @@ async def student_kardex(session: AsyncSession, student_id: uuid.UUID) -> dict:
         })
 
     rows.sort(key=lambda r: (r["period_number"], r["term_start"] or "9999-12-31", r["code"], r["attempt_number"] or 0))
+
+    def studied(r: dict) -> bool:
+        return r["subject_enrollment_id"] is not None and r["recognition"] is None
+
+    by_period: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_period[r["period_number"]].append(r)
+    periods, visible, previous = [], [], None
+    for number in sorted(by_period):
+        period_rows = by_period[number]
+        first_studied = next((r for r in period_rows if studied(r)), None)  # rows are by term
+        rvoe = first_studied["rvoe"] if first_studied else current_rvoe.agreement_number
+        periods.append({"period_number": number, "rvoe": rvoe, "rvoe_changed": rvoe != previous})
+        previous = rvoe
+        visible.extend(r for r in period_rows if r["rvoe"] == rvoe or studied(r))
+
     return {
+        "program_id": str(program_id),
+        "programs": [{"id": str(pid), "name": name} for pid, name in programs.items()],
         "current_plan_version_id": str(current.plan_version_id),
         "period_type": current_plan.period_type if current_plan else None,
-        "rows": rows,
+        "periods": periods,
+        "rows": visible,
         "progress": await curricular_progress(session, student_id, current.plan_version_id),
     }
 

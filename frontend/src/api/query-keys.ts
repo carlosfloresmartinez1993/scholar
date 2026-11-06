@@ -36,7 +36,8 @@ export const queryKeys = {
   actas: (groupSubjectId: string) => ["actas", groupSubjectId] as const,
   kardex: (studentId: string, planVersionId: string) =>
     ["kardex", studentId, planVersionId] as const,
-  studentKardex: (studentId: string) => ["kardex", studentId] as const,
+  studentKardex: (studentId: string, programId?: string | null) =>
+    ["kardex", studentId, programId ?? "vigente"] as const,
 
   sessions: (groupSubjectId: string) => ["sessions", groupSubjectId] as const,
   sessionRecords: (sessionId: string) => ["session-records", sessionId] as const,

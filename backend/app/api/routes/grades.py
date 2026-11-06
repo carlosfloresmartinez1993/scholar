@@ -329,12 +329,14 @@ async def kardex(
 
 
 @router.get("/students/{student_id}/kardex-completo")
-async def full_kardex(session: SessionDep, _: AnyStaff, student_id: uuid.UUID) -> dict:
-    """One kárdex across every plan/RVOE of the student (see student_kardex)."""
+async def full_kardex(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID, program_id: uuid.UUID | None = None
+) -> dict:
+    """One kárdex per carrera across every plan/RVOE of it (see student_kardex)."""
     student = await session.get(Student, student_id)
     if student is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
-    return {"student_id": str(student_id), **await student_kardex(session, student_id)}
+    return {"student_id": str(student_id), **await student_kardex(session, student_id, program_id)}
 
 
 # --- Degree registry (RF-C09) ---------------------------------------------------------

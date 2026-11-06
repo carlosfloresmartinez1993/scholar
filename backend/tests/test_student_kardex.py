@@ -71,52 +71,95 @@ async def test_kardex_lists_pending_subjects_and_grade_breakdown(client, seed):
     assert k["progress"]["total_subjects"] == 2
 
 
+async def new_plan(client: AsyncClient, program_id: str, campus_id: str, agreement: str,
+                   subjects: list[tuple[str, int]]) -> dict:
+    rvoe = (await client.post("/api/v1/catalog/rvoes", json={
+        "program_id": program_id, "campus_id": campus_id, "agreement_number": agreement,
+        "authority": "estatal", "modality": "escolarizada", "issue_date": "2027-01-10",
+    })).json()
+    plan = (await client.post("/api/v1/catalog/plan-versions", json={
+        "rvoe_id": rvoe["id"], "version_label": "2027", "period_type": "cuatrimestral",
+        "periods_count": 9, "min_attendance_pct": 80,
+    })).json()
+    for code, period in subjects:
+        await client.post("/api/v1/catalog/plan-subjects", json={
+            "plan_version_id": plan["id"], "code": code, "name": f"Materia {code}",
+            "period_number": period, "credits": 7,
+        })
+    return plan
+
+
+async def group_in_new_term(client: AsyncClient, plan_id: str, period: int, code: str) -> dict:
+    term = (await client.post("/api/v1/catalog/terms", json={
+        "name": f"2027-{code}", "period_type": "cuatrimestral",
+        "start_date": "2027-01-05", "end_date": "2027-04-30",
+    })).json()
+    return (await client.post("/api/v1/catalog/groups", json={
+        "code": code, "period_number": period, "plan_version_id": plan_id, "term_id": term["id"],
+    })).json()
+
+
 async def test_kardex_spans_rvoe_change(client, seed):
-    """Plan/RVOE change: one kárdex, each row with the RVOE it was taken under;
-    pending subjects and progress come from the new (current) plan only."""
+    """Plan/RVOE change: one kárdex; each cuatrimestre under a single RVOE (the one
+    it was studied under), flagged where it changes. Pending subjects and progress
+    come from the new (current) plan."""
     await login(client)
     campus_id = str(seed["campus"].id)
     catalog = await build_catalog(client, campus_id)
-    student = await enroll_student(client, campus_id, catalog["group"]["id"])
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])  # DER101, 1.º
 
-    rvoe2 = (await client.post("/api/v1/catalog/rvoes", json={
-        "program_id": catalog["program"]["id"], "campus_id": campus_id,
-        "agreement_number": "20270002", "authority": "estatal",
-        "modality": "escolarizada", "issue_date": "2027-01-10",
-    })).json()
-    plan2 = (await client.post("/api/v1/catalog/plan-versions", json={
-        "rvoe_id": rvoe2["id"], "version_label": "2027", "period_type": "cuatrimestral",
-        "periods_count": 9, "min_attendance_pct": 80,
-    })).json()
-    for code, period in [("LIAS101", 1), ("LIAS202", 2)]:
-        await client.post("/api/v1/catalog/plan-subjects", json={
-            "plan_version_id": plan2["id"], "code": code, "name": f"Materia {code}",
-            "period_number": period, "credits": 7,
-        })
-    term2 = (await client.post("/api/v1/catalog/terms", json={
-        "name": "2027-1", "period_type": "cuatrimestral",
-        "start_date": "2027-01-05", "end_date": "2027-04-30",
-    })).json()
-    group2 = (await client.post("/api/v1/catalog/groups", json={
-        "code": "LD2-1A", "period_number": 1, "plan_version_id": plan2["id"],
-        "term_id": term2["id"],
-    })).json()
+    plan2 = await new_plan(client, catalog["program"]["id"], campus_id, "20270002",
+                           [("LIAS101", 1), ("LIAS201", 2), ("LIAS301", 3)])
+    group3 = await group_in_new_term(client, plan2["id"], 3, "LD2-3A")
     moved = await client.post("/api/v1/students/group-enrollments", json={
-        "student_id": student["id"], "group_id": group2["id"],
+        "student_id": student["id"], "group_id": group3["id"],
     })
     assert moved.status_code == 201, moved.text
 
     k = await kardex(client, student["id"])
     assert k["current_plan_version_id"] == plan2["id"]
-    by_code = {r["code"]: r for r in k["rows"]}
-    assert set(by_code) == {"DER101", "LIAS101", "LIAS202"}  # DER201: old plan, never taken
-    assert by_code["DER101"]["rvoe"] == "20260001"
-    assert by_code["LIAS101"]["rvoe"] == "20270002"
-    assert by_code["LIAS101"]["status"] == "cursando"
-    assert by_code["LIAS202"]["status"] == "pendiente"
-    # same period, older term first: the RVOE change reads top to bottom
-    assert [r["code"] for r in k["rows"]][:2] == ["DER101", "LIAS101"]
-    assert k["progress"]["total_subjects"] == 2
+    # 1.º studied under the old RVOE: the new plan's pending LIAS101 would duplicate it
+    assert [r["code"] for r in k["rows"]] == ["DER101", "LIAS201", "LIAS301"]
+    statuses = {r["code"]: r["status"] for r in k["rows"]}
+    assert statuses == {"DER101": "cursando", "LIAS201": "pendiente", "LIAS301": "cursando"}
+    assert k["periods"] == [
+        {"period_number": 1, "rvoe": "20260001", "rvoe_changed": True},
+        {"period_number": 2, "rvoe": "20270002", "rvoe_changed": True},
+        {"period_number": 3, "rvoe": "20270002", "rvoe_changed": False},
+    ]
+    assert k["progress"]["total_subjects"] == 3
+
+
+async def test_kardex_one_per_carrera(client, seed):
+    """Two carreras at once: a separate kárdex each, picked with program_id."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])
+
+    program2 = (await client.post("/api/v1/catalog/programs", json={
+        "code": "LP", "name": "Licenciatura en Psicología", "level": "licenciatura",
+    })).json()
+    plan_p = await new_plan(client, program2["id"], campus_id, "20270009", [("PSI101", 1)])
+    group_p = await group_in_new_term(client, plan_p["id"], 1, "LP-1A")
+    second = await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": group_p["id"],
+    })
+    assert second.status_code == 201, second.text
+
+    k = await kardex(client, student["id"])  # default: carrera of the latest plan
+    assert {p["name"] for p in k["programs"]} == {"Licenciatura en Derecho", "Licenciatura en Psicología"}
+    assert k["program_id"] == program2["id"]
+    assert [r["code"] for r in k["rows"]] == ["PSI101"]
+
+    response = await client.get(
+        f"/api/v1/grades/students/{student['id']}/kardex-completo",
+        params={"program_id": catalog["program"]["id"]},
+    )
+    derecho = response.json()
+    assert derecho["program_id"] == catalog["program"]["id"]
+    assert [r["code"] for r in derecho["rows"]] == ["DER101", "DER201"]
+    assert derecho["current_plan_version_id"] == catalog["plan"]["id"]
 
 
 async def test_kardex_marks_recognition_groups(client, seed):

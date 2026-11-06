@@ -1,15 +1,7 @@
 // Printable kárdex (historial académico). Mirrors lib/receipt.ts: renders HTML
 // into a hidden iframe and drives window.print() — no PDF lib, no dependencies.
 // Uses a full letter page instead of the 80mm thermal layout.
-import {
-  grade,
-  groupByPeriod,
-  isRetake,
-  periodHeading,
-  RECOGNITION_COLUMNS,
-  recognitionCell,
-  statusLabel,
-} from "@/lib/kardex";
+import { kardexCells, kardexHeaders, kardexSections, showE2 } from "@/lib/kardex";
 import type { StudentKardex } from "@/api/types";
 
 export interface KardexPrintData {
@@ -43,36 +35,32 @@ const STYLE = `
   th { background: #000; color: #fff; text-align: left; padding: 4px 6px; font-size: 10px; }
   td { padding: 3px 6px; border-bottom: 1px solid #ccc; }
   td.period { background: #eee; font-weight: bold; border-bottom: 1px solid #999; }
+  td.period span { float: right; font-size: 10px; }
   .r { text-align: right; }
   .totals { margin-top: 10px; font-size: 11px; }
   .totals span { display: inline-block; margin-right: 24px; }
   .foot { margin-top: 18px; font-size: 10px; color: #555; }
 `;
 
-const COLUMNS = 13;
+// columns after Asignatura are numeric except the last (Estatus)
+const isNumeric = (i: number, total: number) => i === 2 || (i >= 5 && i < total - 1);
 
 function body(d: KardexPrintData): string {
   const p = d.kardex.progress;
-  const rows = groupByPeriod(d.kardex.rows)
+  const withE2 = showE2(d.kardex);
+  const headers = kardexHeaders(withE2);
+  const rows = kardexSections(d.kardex)
     .map(
-      ([n, periodRows]) =>
-        `<tr><td class="period" colspan="${COLUMNS}">${esc(periodHeading(d.kardex.period_type, n))}</td></tr>` +
-        periodRows
+      (s) =>
+        `<tr><td class="period" colspan="${headers.length}">${esc(s.heading)}` +
+        (s.rvoe ? `<span>${esc(s.rvoe)}</span>` : "") +
+        `</td></tr>` +
+        s.rows
           .map(
             (r) =>
-              `<tr>
-                <td>${esc(r.code)}</td>
-                <td>${esc(r.name)}</td>
-                <td class="r">${r.credits}</td>
-                <td>${esc(r.term_name ?? "")}</td>
-                <td>${esc(r.group_code ?? "")}</td>
-                <td>${esc(r.rvoe)}</td>
-                <td class="r">${grade(r.cf)}</td>
-                <td class="r">${grade(r.e1)}</td>
-                <td class="r">${grade(r.e2)}</td>
-                ${RECOGNITION_COLUMNS.map((c) => `<td class="r">${recognitionCell(r, c.kind)}</td>`).join("")}
-                <td>${esc(statusLabel(r))}${isRetake(r) ? " (recursamiento)" : ""}</td>
-              </tr>`,
+              `<tr>${kardexCells(r, withE2)
+                .map((cell, i) => `<td${isNumeric(i, headers.length) ? ' class="r"' : ""}>${esc(cell)}</td>`)
+                .join("")}</tr>`,
           )
           .join(""),
     )
@@ -88,13 +76,9 @@ function body(d: KardexPrintData): string {
     </div>
     <table>
       <thead>
-        <tr>
-          <th>Clave</th><th>Asignatura</th><th>Créd.</th><th>Ciclo</th><th>Grupo</th>
-          <th>RVOE</th><th>CF</th><th>E1</th><th>E2</th><th>EQ</th><th>REV</th>
-          <th>CONV</th><th>Estatus</th>
-        </tr>
+        <tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>
       </thead>
-      <tbody>${rows || `<tr><td colspan="${COLUMNS}">Sin historial académico</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="${headers.length}">Sin historial académico</td></tr>`}</tbody>
     </table>
     ${
       p

@@ -590,10 +590,20 @@ export interface StudentKardexRow {
   recognition: RecognitionKind | null; // acreditada por EQ / REV / CONV
 }
 
+export interface StudentKardexPeriod {
+  period_number: number;
+  rvoe: string; // el RVOE con que se cursó ese periodo (uno solo por periodo)
+  rvoe_changed: boolean; // distinto al del periodo anterior: se muestra en el encabezado
+}
+
+// un kárdex por carrera; `programs` lista las del alumno si estudia más de una
 export interface StudentKardex {
   student_id: string;
+  program_id: string | null;
+  programs: { id: string; name: string }[];
   current_plan_version_id: string | null;
   period_type: PeriodType | null;
+  periods: StudentKardexPeriod[];
   rows: StudentKardexRow[];
   progress: CurricularProgress | null;
 }

@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   BadgeDollarSign,
   CalendarDays,
+  Download,
   Camera as CameraIcon,
   Check,
   Eye,
@@ -48,11 +49,11 @@ import type {
 } from "@/api/types";
 import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
+import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import {
   grade,
-  groupByPeriod,
   isRetake,
-  periodHeading,
+  kardexSections,
   RECOGNITION_COLUMNS,
   recognitionCell,
   statusLabel,
@@ -1197,13 +1198,29 @@ function AcademicoTab({ student }: { student: Student }) {
     queryFn: () => api<Institution>("/catalog/institution"),
   });
 
-  // one kárdex across every plan/RVOE; progress is against the current plan
+  // one kárdex per carrera across all its plans/RVOE; progress is against the
+  // carrera's current plan. Default carrera: the one of the current plan.
+  const [programId, setProgramId] = useState<string | null>(null);
   const { data: kardex, isLoading: loadingKardex } = useQuery({
-    queryKey: queryKeys.studentKardex(student.id),
+    queryKey: queryKeys.studentKardex(student.id, programId),
     queryFn: () =>
-      api<StudentKardex>(`/grades/students/${student.id}/kardex-completo`),
+      api<StudentKardex>(
+        `/grades/students/${student.id}/kardex-completo` +
+          (programId ? `?program_id=${programId}` : ""),
+      ),
+    placeholderData: (previous) => previous,
   });
   const currentPlanId = kardex?.current_plan_version_id ?? null;
+  const kardexPrintData = () =>
+    kardex && currentPlanId
+      ? {
+          institutionName: institution?.name ?? "INUE",
+          studentName: student.full_name,
+          enrollmentNumber: student.enrollment_number,
+          planLabel: planVersionLabels.get(currentPlanId) ?? currentPlanId,
+          kardex,
+        }
+      : null;
 
   // Inscribir a plan
   const [open, setOpen] = useState(false);
@@ -1224,9 +1241,7 @@ function AcademicoTab({ student }: { student: Student }) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.planEnrollments(student.id),
       });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.studentKardex(student.id),
-      });
+      queryClient.invalidateQueries({ queryKey: ["kardex", student.id] });
       toast.success("Alumno inscrito al plan");
       setOpen(false);
     },
@@ -1320,25 +1335,54 @@ function AcademicoTab({ student }: { student: Student }) {
 
       {(loadingKardex || currentPlanId) && (
         <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold">Kárdex</h2>
-            <Button
-              variant="outline"
-              disabled={!kardex}
-              onClick={() =>
-                kardex &&
-                currentPlanId &&
-                printKardex({
-                  institutionName: institution?.name ?? "INUE",
-                  studentName: student.full_name,
-                  enrollmentNumber: student.enrollment_number,
-                  planLabel: planVersionLabels.get(currentPlanId) ?? currentPlanId,
-                  kardex,
-                })
-              }
-            >
-              <Printer className="size-4" /> Imprimir kárdex
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-xl font-bold">Kárdex</h2>
+              {kardex && kardex.programs.length > 1 && (
+                <Select
+                  value={kardex.program_id ?? ""}
+                  onValueChange={(v) => setProgramId(v)}
+                >
+                  <SelectTrigger className="w-72" aria-label="Carrera">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {kardex.programs.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={!kardex}
+                onClick={() => {
+                  const data = kardexPrintData();
+                  if (data) printKardex(data);
+                }}
+              >
+                <Printer className="size-4" /> Imprimir
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!kardex}
+                onClick={async () => {
+                  const data = kardexPrintData();
+                  if (!data) return;
+                  try {
+                    await downloadKardexPdf(data);
+                  } catch {
+                    toast.error("No se pudo generar el PDF");
+                  }
+                }}
+              >
+                <Download className="size-4" /> Descargar PDF
+              </Button>
+            </div>
           </div>
           {loadingKardex && <Skeleton className="h-40 w-full rounded-md" />}
           {kardex?.progress && (
@@ -1475,11 +1519,11 @@ function KardexStatusBadge({ row }: { row: StudentKardexRow }) {
   );
 }
 
-// One table, a heading row per plan period; each row says which RVOE it was taken
-// under, so a plan change reads as the RVOE column changing.
+// One table, a heading row per plan period. A period is studied under one RVOE; it
+// is shown at the right of the heading only where it changes (and on the first).
 function KardexTable({ kardex }: { kardex: StudentKardex }) {
   const showE2 = kardex.rows.some((r) => r.e2 != null);
-  const columns = 11 + (showE2 ? 1 : 0) + RECOGNITION_COLUMNS.length;
+  const columns = 10 + (showE2 ? 1 : 0) + RECOGNITION_COLUMNS.length;
   return (
     <div className="rounded-md border bg-card">
       <Table>
@@ -1490,7 +1534,6 @@ function KardexTable({ kardex }: { kardex: StudentKardex }) {
             <TableHead className="text-right">Créd.</TableHead>
             <TableHead>Ciclo</TableHead>
             <TableHead>Grupo</TableHead>
-            <TableHead>RVOE</TableHead>
             <TableHead className="text-right">CF</TableHead>
             <TableHead className="text-right">E1</TableHead>
             {showE2 && <TableHead className="text-right">E2</TableHead>}
@@ -1503,11 +1546,18 @@ function KardexTable({ kardex }: { kardex: StudentKardex }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {groupByPeriod(kardex.rows).map(([period, rows]) => (
+          {kardexSections(kardex).map(({ period, heading, rvoe, rows }) => (
             <Fragment key={period}>
               <TableRow className="bg-muted/60 hover:bg-muted/60">
-                <TableCell colSpan={columns} className="font-bold">
-                  {periodHeading(kardex.period_type, period)}
+                <TableCell colSpan={columns}>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-bold">{heading}</span>
+                    {rvoe && (
+                      <span data-numeric className="text-xs font-semibold">
+                        {rvoe}
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
               {rows.map((r) => (
@@ -1522,9 +1572,6 @@ function KardexTable({ kardex }: { kardex: StudentKardex }) {
                   </TableCell>
                   <TableCell data-numeric>{r.term_name ?? ""}</TableCell>
                   <TableCell data-numeric>{r.group_code ?? ""}</TableCell>
-                  <TableCell data-numeric className="text-xs">
-                    {r.rvoe}
-                  </TableCell>
                   <TableCell data-numeric className="text-right font-semibold">
                     {grade(r.cf)}
                   </TableCell>
