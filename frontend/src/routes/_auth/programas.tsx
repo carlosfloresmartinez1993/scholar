@@ -33,6 +33,7 @@ import {
   RVOE_STATUS_LABELS,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { REPLACES_FINAL, weighsInFinal } from "@/lib/evaluation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1350,11 +1351,6 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
 
 // --- Evaluation components ------------------------------------------------------
 
-// extraordinario / título de suficiencia replace the final grade (backend
-// REPLACEMENT_KINDS): no weight, never "cuenta para final"
-const REPLACES_FINAL: EvaluationKind[] = ["extraordinario", "titulo_suficiencia"];
-const weighsInFinal = (c: EvaluationComponent) =>
-  c.counts_towards_final && !REPLACES_FINAL.includes(c.kind);
 
 function ComponentsDialog({
   subject,
@@ -1379,7 +1375,7 @@ function ComponentsDialog({
     sequence: 1,
     counts_towards_final: true,
   });
-  const replacesFinal = REPLACES_FINAL.includes(form.kind);
+  const isReplacement = REPLACES_FINAL.includes(form.kind);
 
   const add = useMutation({
     mutationFn: () =>
@@ -1531,7 +1527,7 @@ function ComponentsDialog({
                 max={100}
                 step="0.1"
                 required
-                disabled={replacesFinal}
+                disabled={isReplacement}
                 value={form.weight_pct}
                 onChange={(e) =>
                   setForm({ ...form, weight_pct: Number(e.target.value) })
@@ -1554,7 +1550,7 @@ function ComponentsDialog({
             <label className="flex items-center gap-2 pb-2 text-sm font-medium">
               <Checkbox
                 checked={form.counts_towards_final}
-                disabled={replacesFinal}
+                disabled={isReplacement}
                 onCheckedChange={(v) =>
                   setForm({ ...form, counts_towards_final: v === true })
                 }

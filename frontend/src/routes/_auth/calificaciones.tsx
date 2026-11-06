@@ -6,6 +6,12 @@ import { Eye, FileSignature, FileText, NotebookPen } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import { useAcademicSelector } from "@/components/academic-selector";
+import {
+  canCaptureReplacement,
+  ordinaryGrade,
+  replacesFinal,
+  weighsInFinal,
+} from "@/lib/evaluation";
 import type {
   ActaKind,
   GradeActa,
@@ -144,9 +150,22 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
     },
   });
 
+  // the row's values with unsaved edits applied, to know its ordinario live
+  const rowValues = (row: GradeGrid["rows"][number]) =>
+    Object.fromEntries(
+      (grid?.components ?? []).map((c) => {
+        const key = `${row.subject_enrollment_id}:${c.id}`;
+        const raw = key in edits ? edits[key] : null;
+        return [c.id, raw == null ? row.grades[c.id] : raw === "" ? null : Number(raw)];
+      }),
+    );
+  const rowOrdinary = (row: GradeGrid["rows"][number]) =>
+    ordinaryGrade(grid?.components ?? [], rowValues(row));
+
   const save = () => {
     const items: { subject_enrollment_id: string; component_id: string; value: number }[] = [];
     let hadEmpty = false;
+    let droppedExtra = false;
     for (const [key, raw] of Object.entries(edits)) {
       if (raw === "") {
         hadEmpty = true; // no delete-grade endpoint: an emptied cell can't be saved
@@ -158,7 +177,16 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
         return;
       }
       const [subject_enrollment_id, component_id] = key.split(":");
+      const component = grid?.components.find((c) => c.id === component_id);
+      const row = grid?.rows.find((r) => r.subject_enrollment_id === subject_enrollment_id);
+      if (component && row && replacesFinal(component) && !canCaptureReplacement(rowOrdinary(row))) {
+        droppedExtra = true; // the ordinario was fixed up to a pass: no extraordinario
+        continue;
+      }
       items.push({ subject_enrollment_id, component_id, value });
+    }
+    if (droppedExtra) {
+      toast.warning("Se omitieron extraordinarios de alumnos que aprobaron el ordinario");
     }
     if (!items.length) {
       toast.error("No hay calificaciones para guardar");
@@ -212,8 +240,9 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
                 <span title={EVALUATION_KIND_LABELS[c.kind]}>
                   {c.label}
                   <span className="block text-xs font-normal text-muted-foreground">
-                    {c.weight_pct}%
-                    {!c.counts_towards_final && " · no cuenta"}
+                    {replacesFinal(c)
+                      ? "solo si reprobó"
+                      : `${c.weight_pct}%${weighsInFinal(c) ? "" : " · no cuenta"}`}
                   </span>
                 </span>
               </TableHead>
@@ -223,7 +252,10 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {grid.rows.map((row) => (
+          {grid.rows.map((row) => {
+            const ordinary = rowOrdinary(row);
+            const extraOpen = canCaptureReplacement(ordinary);
+            return (
             <TableRow key={row.subject_enrollment_id}>
               <TableCell data-numeric>{row.enrollment_number}</TableCell>
               <TableCell className="font-semibold">
@@ -233,6 +265,7 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
                 const current = row.grades[c.id];
                 const key = `${row.subject_enrollment_id}:${c.id}`;
                 const edited = key in edits;
+                const locked = replacesFinal(c) && !extraOpen;
                 return (
                   <TableCell key={c.id} className="text-center">
                     <Input
@@ -242,10 +275,17 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
                       step="0.1"
                       value={edited ? edits[key] : (current ?? "")}
                       aria-label={`${c.label} de ${row.student_name}`}
+                      title={
+                        locked
+                          ? ordinary == null
+                            ? "Captura primero las calificaciones ordinarias"
+                            : `Aprobó el ordinario (${ordinary}); no aplica`
+                          : undefined
+                      }
                       className={`mx-auto h-8 w-20 text-center ${
                         edited ? "ring-2 ring-primary/40" : ""
                       }`}
-                      disabled={saveBatch.isPending}
+                      disabled={saveBatch.isPending || locked}
                       onChange={(e) =>
                         setEdits((prev) => ({ ...prev, [key]: e.target.value }))
                       }
@@ -270,7 +310,8 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
                 </Badge>
               </TableCell>
             </TableRow>
-          ))}
+            );
+          })}
           {grid.rows.length === 0 && (
             <TableRow>
               <TableCell

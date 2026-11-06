@@ -40,6 +40,18 @@ PASSING_GRADE = 6.0
 RECOGNITION_SUFFIXES = {"-EQ": "eq", "-REV": "rev", "-CONV": "conv"}
 
 
+def ordinary_grade(
+    components: list[EvaluationComponent], captured: dict[uuid.UUID, float]
+) -> float | None:
+    """Weighted grade of the components that weigh in the final (the ordinario, CF),
+    rounded to one decimal; None until every one of them is captured."""
+    weighing = [c for c in components if c.weighs_in_final]
+    total = sum(c.weight_pct for c in weighing)
+    if not weighing or total <= 0 or any(c.id not in captured for c in weighing):
+        return None
+    return round(sum(captured[c.id] * c.weight_pct for c in weighing) / total, 1)
+
+
 def recognition_kind(group_code: str) -> str | None:
     code = group_code.upper()
     return next((kind for suffix, kind in RECOGNITION_SUFFIXES.items() if code.endswith(suffix)), None)
@@ -243,11 +255,8 @@ async def student_kardex(
         values = captured.get(enrollment.id, {})
         cf = None
         if recognition is None:
-            if components and all(c.id in values for c in components):
-                weight = sum(c.weight_pct for c in components)
-                if weight > 0:
-                    cf = round(sum(values[c.id] * c.weight_pct for c in components) / weight, 1)
-            elif not values:
+            cf = ordinary_grade(components, values)
+            if cf is None and not values:
                 # history loaded without component grades: the final grade is the ordinario
                 cf = enrollment.final_grade
         extra = kind_values.get(enrollment.id, {})
