@@ -711,25 +711,26 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
     })),
   });
   const enrolled = useMemo(() => {
-    const byId = new Map<
-      string,
-      { student_id: string; name: string; enrollment_number: string; subjects: number }
-    >();
-    for (const q of gridQueries) {
+    const byId = new Map<string, EnrolledStudent>();
+    gridQueries.forEach((q, i) => {
+      const planSubjectId = groupSubjects?.[i]?.plan_subject_id;
       for (const row of q.data?.rows ?? []) {
-        const existing = byId.get(row.student_id);
-        if (existing) existing.subjects += 1;
-        else
-          byId.set(row.student_id, {
-            student_id: row.student_id,
-            name: row.student_name,
-            enrollment_number: row.enrollment_number,
-            subjects: 1,
-          });
+        const student =
+          byId.get(row.student_id) ??
+          byId
+            .set(row.student_id, {
+              student_id: row.student_id,
+              name: row.student_name,
+              enrollment_number: row.enrollment_number,
+              planSubjectIds: new Set<string>(),
+            })
+            .get(row.student_id)!;
+        if (planSubjectId) student.planSubjectIds.add(planSubjectId);
       }
-    }
+    });
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [gridQueries]);
+  }, [gridQueries, groupSubjects]);
+  const [addingTo, setAddingTo] = useState<EnrolledStudent | null>(null);
 
   function invalidateGrids() {
     for (const gs of groupSubjects ?? []) {
@@ -859,6 +860,7 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
                 <TableHead>Matrícula</TableHead>
                 <TableHead>Nombre</TableHead>
                 <TableHead>Materias inscritas</TableHead>
+                <TableHead className="w-44" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -869,14 +871,23 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
                   </TableCell>
                   <TableCell className="font-semibold">{s.name}</TableCell>
                   <TableCell data-numeric>
-                    {s.subjects} / {(groupSubjects ?? []).length}
+                    {s.planSubjectIds.size} / {(groupSubjects ?? []).length}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setAddingTo(s)}
+                    >
+                      <Plus className="size-4" /> Agregar materias
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
               {enrolled.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={3}
+                    colSpan={4}
                     className="py-8 text-center text-muted-foreground"
                   >
                     Sin alumnos inscritos
@@ -938,6 +949,22 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
         planSubjects={planSubjects ?? []}
         teachers={teachers ?? []}
       />
+
+      {addingTo && (
+        <AddSubjectsDialog
+          group={group}
+          student={addingTo}
+          planSubjects={planSubjects ?? []}
+          onClose={() => setAddingTo(null)}
+          onDone={() => {
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.groupSubjects(group.id),
+            });
+            invalidateGrids();
+            queryClient.invalidateQueries({ queryKey: ["kardex", addingTo.student_id] });
+          }}
+        />
+      )}
 
       <EnrollDialog
         key={group.id}
@@ -1169,6 +1196,156 @@ function GroupSubjectDialog({
   );
 }
 
+interface EnrolledStudent {
+  student_id: string;
+  name: string;
+  enrollment_number: string;
+  planSubjectIds: Set<string>; // materias that student takes in this group
+}
+
+// Add plan subjects to a student already in the group, at any point of the term.
+// Any materia of the group's plan can be picked; one the group doesn't teach yet is
+// added to it. No new inscripción, so nothing is billed.
+function AddSubjectsDialog({
+  group,
+  student,
+  planSubjects,
+  onClose,
+  onDone,
+}: {
+  group: Group;
+  student: EnrolledStudent;
+  planSubjects: PlanSubject[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [subjectIds, setSubjectIds] = useState<string[]>([]);
+  const [override, setOverride] = useState(false);
+
+  const add = useMutation({
+    mutationFn: () =>
+      api(`/students/group-enrollments/subjects`, {
+        method: "POST",
+        body: JSON.stringify({
+          student_id: student.student_id,
+          group_id: group.id,
+          plan_subject_ids: subjectIds,
+          override_prerequisites: override,
+        }),
+      }),
+    onSuccess: () => {
+      onDone();
+      toast.success(
+        subjectIds.length === 1 ? "Materia agregada" : "Materias agregadas",
+      );
+      onClose();
+    },
+    onError: (e) =>
+      toast.error(
+        e instanceof ApiError ? `No se pudo agregar: ${e.message}` : "Error al agregar",
+        { duration: 8000 },
+      ),
+  });
+
+  const byPeriod = new Map<number, PlanSubject[]>();
+  for (const s of planSubjects) {
+    byPeriod.set(s.period_number, [...(byPeriod.get(s.period_number) ?? []), s]);
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Agregar materias a {student.name}</DialogTitle>
+          <DialogDescription>
+            Materias del plan hasta el cuatrimestre del grupo ({group.period_number}.º)
+            que cursará en {group.code}; una anterior que tenga reprobada queda como
+            recursamiento. Si el grupo aún no la imparte, se agrega. No genera cargos.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            add.mutate();
+          }}
+        >
+          <div className="max-h-72 space-y-3 overflow-y-auto rounded-md border p-2">
+            {[...byPeriod.entries()]
+              .sort(([a], [b]) => a - b)
+              .map(([period, subjects]) => (
+                <div key={period} className="space-y-1">
+                  <p className="px-2 text-xs font-bold text-muted-foreground">
+                    Periodo {period}
+                  </p>
+                  {subjects.map((s) => {
+                    const taken = student.planSubjectIds.has(s.id);
+                    // never ahead of the group's cuatrimestre
+                    const later = s.period_number > group.period_number;
+                    return (
+                      <label
+                        key={s.id}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1 text-sm",
+                          taken || later ? "text-muted-foreground" : "hover:bg-muted",
+                        )}
+                      >
+                        <Checkbox
+                          disabled={taken || later}
+                          checked={taken || subjectIds.includes(s.id)}
+                          onCheckedChange={(v) =>
+                            setSubjectIds(
+                              v === true
+                                ? [...subjectIds, s.id]
+                                : subjectIds.filter((id) => id !== s.id),
+                            )
+                          }
+                        />
+                        <span className="font-semibold" data-numeric>
+                          {s.code}
+                        </span>
+                        <span className="truncate">{s.name}</span>
+                        {taken && (
+                          <Badge variant="secondary" className="ml-auto">
+                            Inscrita
+                          </Badge>
+                        )}
+                        {later && !taken && (
+                          <span className="ml-auto text-xs">Cuatrimestre posterior</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              ))}
+          </div>
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted-foreground">
+              Opciones avanzadas
+            </summary>
+            <label className="mt-2 flex items-center gap-2 font-medium">
+              <Checkbox
+                checked={override}
+                onCheckedChange={(v) => setOverride(v === true)}
+              />
+              Omitir validación de seriación (autorización especial)
+            </label>
+          </details>
+          <DialogFooter>
+            <Button
+              type="submit"
+              className="font-bold"
+              disabled={add.isPending || subjectIds.length === 0}
+            >
+              {add.isPending ? "Agregando…" : "Agregar"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function EnrollDialog({
   open,
   onOpenChange,
@@ -1189,11 +1366,15 @@ function EnrollDialog({
   const [override, setOverride] = useState(false);
   const [waiveEnrollmentFee, setWaiveEnrollmentFee] = useState(false);
 
-  // only students of the group's campus can enroll (Servo Plantel key)
+  // only students of the group's campus (Servo Plantel key) and carrera: a student
+  // always enters with a group, so everyone who may enroll here is already in it
   const { data: students } = useQuery({
-    queryKey: ["students", "by-campus", group.campus_id],
+    queryKey: ["students", "by-campus", group.campus_id, "carrera", group.plan_version_id],
     queryFn: () =>
-      api<Student[]>(`/students?limit=1000&campus_id=${group.campus_id}`),
+      api<Student[]>(
+        `/students?limit=1000&campus_id=${group.campus_id}` +
+          `&carrera_of_plan_version_id=${group.plan_version_id}`,
+      ),
     enabled: open,
   });
 
@@ -1239,8 +1420,10 @@ function EnrollDialog({
         <DialogHeader>
           <DialogTitle>Inscribir alumno a {group.code}</DialogTitle>
           <DialogDescription>
-            Se validará la seriación y que el RVOE del plan esté vigente. Si no
-            selecciona materias se inscribirá a todas.
+            Solo aparecen alumnos de la carrera del grupo; los de nuevo ingreso
+            se inscriben desde «Inscripciones». Se validará la seriación y que el
+            RVOE del plan esté vigente. Si no selecciona materias se inscribirá a
+            todas.
           </DialogDescription>
         </DialogHeader>
         <form

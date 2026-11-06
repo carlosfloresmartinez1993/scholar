@@ -514,6 +514,7 @@ export interface GradeGridRow {
   enrollment_number: string;
   status: SubjectEnrollmentStatus;
   final_grade?: number | null;
+  attempt_number: number; // > 1: recursamiento
   /** component_id -> value (null when not captured) */
   grades: Record<string, number | null>;
 }
@@ -562,6 +563,50 @@ export interface Kardex {
   plan_version_id: string;
   rows: KardexRow[];
   progress: CurricularProgress;
+}
+
+// Kárdex único del alumno (todas sus materias, de todos sus planes/RVOE)
+export type RecognitionKind = "eq" | "rev" | "conv";
+
+export interface StudentKardexRow {
+  row_id: string;
+  subject_enrollment_id: string | null; // null = materia del plan aún no cursada
+  plan_subject_id: string;
+  plan_version_id: string;
+  rvoe: string;
+  code: string;
+  name: string;
+  period_number: number;
+  credits: number;
+  term_name: string | null;
+  term_start: string | null;
+  group_code: string | null;
+  campus_name: string | null;
+  attempt_number: number | null;
+  status: SubjectEnrollmentStatus | "pendiente";
+  final_grade: number | null;
+  cf: number | null; // ordinario (componentes que cuentan para la final)
+  e1: number | null; // extraordinario
+  e2: number | null; // título de suficiencia
+  recognition: RecognitionKind | null; // acreditada por EQ / REV / CONV
+}
+
+export interface StudentKardexPeriod {
+  period_number: number;
+  rvoe: string; // el RVOE con que se cursó ese periodo (uno solo por periodo)
+  rvoe_changed: boolean; // distinto al del periodo anterior: se muestra en el encabezado
+}
+
+// un kárdex por carrera; `programs` lista las del alumno si estudia más de una
+export interface StudentKardex {
+  student_id: string;
+  program_id: string | null;
+  programs: { id: string; name: string }[];
+  current_plan_version_id: string | null;
+  period_type: PeriodType | null;
+  periods: StudentKardexPeriod[];
+  rows: StudentKardexRow[];
+  progress: CurricularProgress | null;
 }
 
 export interface DegreeRecord {

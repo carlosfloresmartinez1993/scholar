@@ -33,6 +33,7 @@ from app.models.catalog import (
     PeriodType,
     PlanSubject,
     PlanSubjectCreate,
+    PlanSubjectUpdate,
     PlanSubjectPublic,
     PlanVersion,
     PlanVersionCreate,
@@ -63,6 +64,7 @@ from app.models.student import (
     RosterParseResult,
     GroupEnrollment,
     GroupEnrollmentCreate,
+    GroupEnrollmentSubjectsAdd,
     GroupEnrollmentKind,
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,
@@ -98,6 +100,7 @@ from app.models.grades import (
     Grade,
     GradeActa,
     GradeActaPublic,
+    REPLACEMENT_KINDS,
     GradeCaptureIn,
     GradePublic,
 )

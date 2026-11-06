@@ -31,6 +31,7 @@ from app.models import (
     Group,
     GroupEnrollment,
     GroupEnrollmentCreate,
+    GroupEnrollmentSubjectsAdd,
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,
     PlanEnrollmentCreate,
@@ -58,7 +59,7 @@ from app.models import (
 from app.services import audit, calendar, treasury
 from app.services.academics import require_operable_rvoe
 from app.services.email import send_email
-from app.services.enrollment import create_student_core, enroll_student_core
+from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
 from app.services.files import save_upload
 from app.services.portal import credentials_email, grant_portal_access
 from app.services.promotion import promote_cycle
@@ -75,12 +76,18 @@ async def list_students(
     q: str | None = None,
     status: str | None = None,
     campus_id: uuid.UUID | None = None,
+    carrera_of_plan_version_id: uuid.UUID | None = None,
     with_debt: bool = False,
     only_debtors: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> list[StudentPublic]:
-    """`with_debt` adds each student's balance and overdue balance (two extra
+    """`carrera_of_plan_version_id` keeps the students enrolled in any plan of that
+    plan's carrera (any of its RVOE): enrolling into a group only offers students
+    of the group's carrera. A new student always arrives with a group, through
+    Inscripciones, so nobody is left out.
+
+    `with_debt` adds each student's balance and overdue balance (two extra
     grouped queries for the whole page, not one per row); `only_debtors` keeps
     just those with an overdue balance — filtered inside the query, before the
     LIMIT, so it means "debtors in the institution" and not "debtors on this
@@ -108,6 +115,19 @@ async def list_students(
         )
     if status:
         query = query.where(Student.status == status)
+    if carrera_of_plan_version_id:
+        plan = await session.get(PlanVersion, carrera_of_plan_version_id)
+        rvoe = plan and await session.get(Rvoe, plan.rvoe_id)
+        if rvoe is None:
+            raise HTTPException(status_code=404, detail="Plan de estudios no encontrado")
+        query = query.where(
+            Student.id.in_(  # type: ignore[attr-defined]
+                select(StudentPlanEnrollment.student_id)
+                .join(PlanVersion, PlanVersion.id == StudentPlanEnrollment.plan_version_id)
+                .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+                .where(Rvoe.program_id == rvoe.program_id)
+            )
+        )
     if only_debtors:
         query = query.where(
             Student.id.in_(treasury.overdue_debtor_ids_select())  # type: ignore[attr-defined]
@@ -413,6 +433,30 @@ async def enroll_in_group(
     await session.commit()
     await session.refresh(enrollment)
     return enrollment
+
+
+@router.post("/group-enrollments/subjects", status_code=201)
+async def add_subjects_to_group_enrollment(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    body: GroupEnrollmentSubjectsAdd,
+) -> list[SubjectEnrollmentPublic]:
+    """Add plan subjects to a student already enrolled in the group (no billing)."""
+    student = await session.get(Student, body.student_id)
+    if student is None or (scope is not None and student.campus_id not in scope):
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    group = await session.get(Group, body.group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, group.campus_id)
+    added = await add_subjects_core(
+        session, current_user, student, group,
+        plan_subject_ids=body.plan_subject_ids,
+        override_prerequisites=body.override_prerequisites,
+    )
+    await session.commit()
+    for subject_enrollment in added:
+        await session.refresh(subject_enrollment)
+    return added
 
 
 @router.post("/intake", status_code=201)

@@ -2,6 +2,7 @@
 kardex and curricular progress (RF-C05/C06/C08), attendance right-to-exam
 (RF-A02/A05)."""
 import uuid
+from collections import defaultdict
 
 from fastapi import HTTPException
 from sqlmodel import func, select
@@ -10,21 +11,50 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models import (
     AttendanceRecord,
     AttendanceStatus,
+    Campus,
     ClassSession,
+    EvaluationComponent,
+    EvaluationKind,
+    Grade,
     Group,
     GroupEnrollment,
     GroupSubject,
+    PlanEnrollmentStatus,
     PlanSubject,
     PlanVersion,
+    Program,
     Rvoe,
     Student,
     StudentPlanEnrollment,
     SubjectEnrollment,
     SubjectEnrollmentStatus,
     SubjectPrerequisite,
+    Term,
 )
 
 PASSING_GRADE = 6.0
+
+# Subjects acreditadas por equivalencia / revalidación / convalidación live in an
+# internal group whose code ends with the kind (e.g. "ARQ-014-EQ"); their grade is
+# the authority's, not one captured through evaluation components.
+RECOGNITION_SUFFIXES = {"-EQ": "eq", "-REV": "rev", "-CONV": "conv"}
+
+
+def ordinary_grade(
+    components: list[EvaluationComponent], captured: dict[uuid.UUID, float]
+) -> float | None:
+    """Weighted grade of the components that weigh in the final (the ordinario, CF),
+    rounded to one decimal; None until every one of them is captured."""
+    weighing = [c for c in components if c.weighs_in_final]
+    total = sum(c.weight_pct for c in weighing)
+    if not weighing or total <= 0 or any(c.id not in captured for c in weighing):
+        return None
+    return round(sum(captured[c.id] * c.weight_pct for c in weighing) / total, 1)
+
+
+def recognition_kind(group_code: str) -> str | None:
+    code = group_code.upper()
+    return next((kind for suffix, kind in RECOGNITION_SUFFIXES.items() if code.endswith(suffix)), None)
 
 
 async def require_operable_rvoe(session: AsyncSession, plan_version_id: uuid.UUID) -> Rvoe:
@@ -131,6 +161,182 @@ async def curricular_progress(
         "credit_progress_pct": round(earned_credits / total_credits * 100, 1) if total_credits else 0.0,
         "gpa": gpa,
         "eligible_for_degree": total_subjects > 0 and len(passed) == total_subjects,
+    }
+
+
+async def student_kardex(
+    session: AsyncSession, student_id: uuid.UUID, program_id: uuid.UUID | None = None
+) -> dict:
+    """One kárdex per student and carrera, across every plan/RVOE of that carrera.
+
+    Rows are every subject enrollment (each attempt, each plan of the carrera) plus
+    the subjects of the current plan not yet taken. A period (cuatrimestre) is studied
+    under a single RVOE: the one of its earliest subject actually taken there, or the
+    current plan's if nothing was taken yet. Rows of another RVOE in that period are
+    dropped unless they were actually studied (they duplicate it: pendientes or
+    convalidaciones of the new plan). Progress is measured against the current plan:
+    the inscrito one that started last. A student with two carreras has one kárdex
+    each; `program_id` picks it (default: the carrera of the current plan)."""
+    plan_enrollments = (
+        await session.exec(
+            select(StudentPlanEnrollment, Term, Rvoe, Program)
+            .join(Term, Term.id == StudentPlanEnrollment.start_term_id)
+            .join(PlanVersion, PlanVersion.id == StudentPlanEnrollment.plan_version_id)
+            .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+            .join(Program, Program.id == Rvoe.program_id)
+            .where(StudentPlanEnrollment.student_id == student_id)
+        )
+    ).all()
+    if not plan_enrollments:
+        return {"program_id": None, "programs": [], "current_plan_version_id": None,
+                "period_type": None, "periods": [], "rows": [], "progress": None}
+
+    def recency(row):
+        return (row[0].status == PlanEnrollmentStatus.inscrito, row[1].start_date)
+
+    programs: dict[uuid.UUID, str] = {}
+    for _, _, _, program in sorted(plan_enrollments, key=recency, reverse=True):
+        programs.setdefault(program.id, program.name)
+    if program_id not in programs:
+        program_id = next(iter(programs))
+    plan_enrollments = [row for row in plan_enrollments if row[3].id == program_id]
+    current, _, current_rvoe, _ = max(plan_enrollments, key=recency)
+    current_plan = await session.get(PlanVersion, current.plan_version_id)
+
+    taken = (
+        await session.exec(
+            select(SubjectEnrollment, PlanSubject, Group, Term, Campus, Rvoe)
+            .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+            .join(PlanSubject, PlanSubject.id == GroupSubject.plan_subject_id)
+            .join(PlanVersion, PlanVersion.id == PlanSubject.plan_version_id)
+            .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+            .join(Group, Group.id == GroupSubject.group_id)
+            .join(Term, Term.id == Group.term_id)
+            .join(Campus, Campus.id == Group.campus_id)
+            .where(SubjectEnrollment.student_id == student_id, Rvoe.program_id == program_id)
+        )
+    ).all()
+    rvoe_by_plan = {subject.plan_version_id: rvoe.agreement_number for _, subject, *_, rvoe in taken}
+    rvoe_by_plan[current.plan_version_id] = current_rvoe.agreement_number
+    taken = [row[:5] for row in taken]
+
+    # grade breakdown: CF from the counting components, E1/E2 from extraordinario
+    # and título de suficiencia
+    counting: dict[uuid.UUID, list[EvaluationComponent]] = defaultdict(list)
+    subject_ids = {ps.id for _, ps, *_ in taken}
+    if subject_ids:
+        for c in (
+            await session.exec(
+                select(EvaluationComponent).where(
+                    EvaluationComponent.plan_subject_id.in_(subject_ids)  # type: ignore[attr-defined]
+                )
+            )
+        ).all():
+            if c.weighs_in_final:
+                counting[c.plan_subject_id].append(c)
+    captured: dict[uuid.UUID, dict[uuid.UUID, float]] = defaultdict(dict)
+    kind_values: dict[uuid.UUID, dict[EvaluationKind, float]] = defaultdict(dict)
+    enrollment_ids = [se.id for se, *_ in taken]
+    if enrollment_ids:
+        for grade, component in (
+            await session.exec(
+                select(Grade, EvaluationComponent)
+                .join(EvaluationComponent, EvaluationComponent.id == Grade.component_id)
+                .where(Grade.subject_enrollment_id.in_(enrollment_ids))  # type: ignore[attr-defined]
+            )
+        ).all():
+            captured[grade.subject_enrollment_id][component.id] = grade.value
+            kind_values[grade.subject_enrollment_id][component.kind] = grade.value
+
+    rows = []
+    for enrollment, subject, group, term, campus in taken:
+        recognition = recognition_kind(group.code)
+        components = counting.get(subject.id, [])
+        values = captured.get(enrollment.id, {})
+        cf = None
+        if recognition is None:
+            cf = ordinary_grade(components, values)
+            if cf is None and not values:
+                # history loaded without component grades: the final grade is the ordinario
+                cf = enrollment.final_grade
+        extra = kind_values.get(enrollment.id, {})
+        rows.append({
+            "row_id": str(enrollment.id),
+            "subject_enrollment_id": str(enrollment.id),
+            "plan_subject_id": str(subject.id),
+            "plan_version_id": str(subject.plan_version_id),
+            "rvoe": rvoe_by_plan.get(subject.plan_version_id, ""),
+            "code": subject.code,
+            "name": subject.name,
+            "period_number": subject.period_number,
+            "credits": subject.credits,
+            "term_name": term.name,
+            "term_start": term.start_date.isoformat(),
+            "group_code": group.code,
+            "campus_name": campus.name,
+            "attempt_number": enrollment.attempt_number,
+            "status": enrollment.status,
+            "final_grade": enrollment.final_grade,
+            "cf": cf,
+            "e1": extra.get(EvaluationKind.extraordinario),
+            "e2": extra.get(EvaluationKind.titulo_suficiencia),
+            "recognition": recognition,
+        })
+
+    taken_subjects = {subject.id for _, subject, *_ in taken}
+    for subject in (
+        await session.exec(select(PlanSubject).where(PlanSubject.plan_version_id == current.plan_version_id))
+    ).all():
+        if subject.id in taken_subjects:
+            continue
+        rows.append({
+            "row_id": f"pendiente:{subject.id}",
+            "subject_enrollment_id": None,
+            "plan_subject_id": str(subject.id),
+            "plan_version_id": str(subject.plan_version_id),
+            "rvoe": rvoe_by_plan.get(subject.plan_version_id, ""),
+            "code": subject.code,
+            "name": subject.name,
+            "period_number": subject.period_number,
+            "credits": subject.credits,
+            "term_name": None,
+            "term_start": None,
+            "group_code": None,
+            "campus_name": None,
+            "attempt_number": None,
+            "status": "pendiente",
+            "final_grade": None,
+            "cf": None,
+            "e1": None,
+            "e2": None,
+            "recognition": None,
+        })
+
+    rows.sort(key=lambda r: (r["period_number"], r["term_start"] or "9999-12-31", r["code"], r["attempt_number"] or 0))
+
+    def studied(r: dict) -> bool:
+        return r["subject_enrollment_id"] is not None and r["recognition"] is None
+
+    by_period: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_period[r["period_number"]].append(r)
+    periods, visible, previous = [], [], None
+    for number in sorted(by_period):
+        period_rows = by_period[number]
+        first_studied = next((r for r in period_rows if studied(r)), None)  # rows are by term
+        rvoe = first_studied["rvoe"] if first_studied else current_rvoe.agreement_number
+        periods.append({"period_number": number, "rvoe": rvoe, "rvoe_changed": rvoe != previous})
+        previous = rvoe
+        visible.extend(r for r in period_rows if r["rvoe"] == rvoe or studied(r))
+
+    return {
+        "program_id": str(program_id),
+        "programs": [{"id": str(pid), "name": name} for pid, name in programs.items()],
+        "current_plan_version_id": str(current.plan_version_id),
+        "period_type": current_plan.period_type if current_plan else None,
+        "periods": periods,
+        "rows": visible,
+        "progress": await curricular_progress(session, student_id, current.plan_version_id),
     }
 
 

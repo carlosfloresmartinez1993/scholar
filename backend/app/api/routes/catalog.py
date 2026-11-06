@@ -23,6 +23,7 @@ from app.models import (
     EvaluationComponent,
     EvaluationComponentCreate,
     EvaluationComponentPublic,
+    REPLACEMENT_KINDS,
     Group,
     GroupCreate,
     GroupPublic,
@@ -35,6 +36,7 @@ from app.models import (
     InstitutionUpdate,
     PlanSubject,
     PlanSubjectCreate,
+    PlanSubjectUpdate,
     PlanSubjectPublic,
     PlanVersion,
     PlanVersionCreate,
@@ -364,6 +366,46 @@ async def create_plan_subject(
     return await _subject_public(session, subject)
 
 
+@router.patch("/plan-subjects/{subject_id}")
+async def update_plan_subject(
+    session: SessionDep, current_user: ServiciosEscolares, subject_id: uuid.UUID,
+    body: PlanSubjectUpdate,
+) -> PlanSubjectPublic:
+    """Edit a materia of the plan (name, clave, cuatrimestre, créditos, horas). The
+    history keeps pointing at it, so kárdex and actas show the new values."""
+    subject = await session.get(PlanSubject, subject_id)
+    if subject is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    changes = body.model_dump(exclude_unset=True, exclude_none=True)
+    if "code" in changes:
+        changes["code"] = changes["code"].strip()
+        clash = (
+            await session.exec(
+                select(PlanSubject).where(
+                    PlanSubject.plan_version_id == subject.plan_version_id,
+                    PlanSubject.code == changes["code"],
+                    PlanSubject.id != subject_id,
+                )
+            )
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="Ya existe una materia con esa clave en el plan")
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+        if not changes["name"]:
+            raise HTTPException(status_code=400, detail="El nombre no puede quedar vacío")
+    before = f"{subject.code} — {subject.name}"
+    for field, value in changes.items():
+        setattr(subject, field, value)
+    session.add(subject)
+    audit.record(session, actor=current_user.email, action="plan_subject.updated",
+                 entity="plan_subject", entity_id=str(subject_id),
+                 detail=f"{before} -> {subject.code} — {subject.name}")
+    await session.commit()
+    await session.refresh(subject)
+    return await _subject_public(session, subject)
+
+
 @router.put("/plan-subjects/{subject_id}/prerequisites")
 async def set_prerequisites(
     session: SessionDep,
@@ -415,16 +457,19 @@ async def create_evaluation_component(
 ) -> EvaluationComponentPublic:
     if await session.get(PlanSubject, body.plan_subject_id) is None:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if body.kind in REPLACEMENT_KINDS:
+        # extraordinario / título de suficiencia replace the final, never weigh in it
+        body.counts_towards_final = False
+        body.weight_pct = 0
     if body.counts_towards_final:
         existing = (
             await session.exec(
                 select(EvaluationComponent).where(
                     EvaluationComponent.plan_subject_id == body.plan_subject_id,
-                    EvaluationComponent.counts_towards_final == True,  # noqa: E712
                 )
             )
         ).all()
-        if sum(c.weight_pct for c in existing) + body.weight_pct > 100.001:
+        if sum(c.weight_pct for c in existing if c.weighs_in_final) + body.weight_pct > 100.001:
             raise HTTPException(
                 status_code=400, detail="La ponderación total excedería el 100%"
             )

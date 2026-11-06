@@ -33,6 +33,7 @@ import {
   RVOE_STATUS_LABELS,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { REPLACES_FINAL, weighsInFinal } from "@/lib/evaluation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1043,16 +1044,21 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
   });
 
   const [open, setOpen] = useState(false);
-  const [editingPrereqs, setEditingPrereqs] = useState<PlanSubject | null>(null);
+  const [editingSubject, setEditingSubject] = useState<PlanSubject | null>(null);
   const [form, setForm] = useState<SubjectForm>(emptySubjectForm);
   const [componentsFor, setComponentsFor] = useState<PlanSubject | null>(null);
 
   const save = useMutation({
-    mutationFn: () => {
-      if (editingPrereqs) {
+    mutationFn: async () => {
+      if (editingSubject) {
+        const { prerequisite_ids, ...fields } = form;
+        await api<PlanSubject>(`/catalog/plan-subjects/${editingSubject.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(fields),
+        });
         return api<PlanSubject>(
-          `/catalog/plan-subjects/${editingPrereqs.id}/prerequisites`,
-          { method: "PUT", body: JSON.stringify(form.prerequisite_ids) },
+          `/catalog/plan-subjects/${editingSubject.id}/prerequisites`,
+          { method: "PUT", body: JSON.stringify(prerequisite_ids) },
         );
       }
       return api<PlanSubject>("/catalog/plan-subjects", {
@@ -1064,9 +1070,7 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.planSubjects(planVersionId),
       });
-      toast.success(
-        editingPrereqs ? "Seriación actualizada" : "Materia creada",
-      );
+      toast.success(editingSubject ? "Materia actualizada" : "Materia creada");
       setOpen(false);
     },
     onError: (e) =>
@@ -1078,10 +1082,8 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
 
   const prereqCandidates = (subjects ?? []).filter(
     (s) =>
-      (!editingPrereqs || s.id !== editingPrereqs.id) &&
-      (editingPrereqs
-        ? s.period_number < editingPrereqs.period_number
-        : s.period_number < form.period_number),
+      (!editingSubject || s.id !== editingSubject.id) &&
+      s.period_number < form.period_number,
   );
 
   return (
@@ -1091,7 +1093,7 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
         <Button
           variant="outline"
           onClick={() => {
-            setEditingPrereqs(null);
+            setEditingSubject(null);
             setForm(emptySubjectForm);
             setOpen(true);
           }}
@@ -1137,10 +1139,10 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    aria-label="Editar seriación"
-                    title="Editar seriación"
+                    aria-label="Editar materia"
+                    title="Editar materia"
                     onClick={() => {
-                      setEditingPrereqs(s);
+                      setEditingSubject(s);
                       setForm({
                         code: s.code,
                         name: s.name,
@@ -1185,13 +1187,12 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingPrereqs
-                ? `Seriación de ${editingPrereqs.name}`
-                : "Nueva materia"}
+              {editingSubject ? "Editar materia" : "Nueva materia"}
             </DialogTitle>
-            {editingPrereqs && (
+            {editingSubject && (
               <DialogDescription>
-                Materias que el alumno debe aprobar antes de cursarla.
+                Los cambios se reflejan en el kárdex y las actas de quienes ya la
+                cursaron.
               </DialogDescription>
             )}
           </DialogHeader>
@@ -1202,96 +1203,92 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
               save.mutate();
             }}
           >
-            {!editingPrereqs && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="s-code">Clave</Label>
-                    <Input
-                      id="s-code"
-                      required
-                      value={form.code}
-                      onChange={(e) =>
-                        setForm({ ...form, code: e.target.value })
-                      }
-                      placeholder="DER-101"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="s-period">Periodo</Label>
-                    <Input
-                      id="s-period"
-                      type="number"
-                      min={1}
-                      max={20}
-                      required
-                      value={form.period_number}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          period_number: Number(e.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="s-name">Nombre</Label>
-                  <Input
-                    id="s-name"
-                    required
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  />
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="s-credits">Créditos</Label>
-                    <Input
-                      id="s-credits"
-                      type="number"
-                      min={0}
-                      step="0.5"
-                      required
-                      value={form.credits}
-                      onChange={(e) =>
-                        setForm({ ...form, credits: Number(e.target.value) })
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="s-theory">Hrs. teoría</Label>
-                    <Input
-                      id="s-theory"
-                      type="number"
-                      min={0}
-                      value={form.theory_hours}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          theory_hours: Number(e.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="s-practice">Hrs. práctica</Label>
-                    <Input
-                      id="s-practice"
-                      type="number"
-                      min={0}
-                      value={form.practice_hours}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          practice_hours: Number(e.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="s-code">Clave</Label>
+                <Input
+                  id="s-code"
+                  required
+                  value={form.code}
+                  onChange={(e) =>
+                    setForm({ ...form, code: e.target.value })
+                  }
+                  placeholder="DER-101"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="s-period">Periodo</Label>
+                <Input
+                  id="s-period"
+                  type="number"
+                  min={1}
+                  max={20}
+                  required
+                  value={form.period_number}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      period_number: Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="s-name">Nombre</Label>
+              <Input
+                id="s-name"
+                required
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="s-credits">Créditos</Label>
+                <Input
+                  id="s-credits"
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  required
+                  value={form.credits}
+                  onChange={(e) =>
+                    setForm({ ...form, credits: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="s-theory">Hrs. teoría</Label>
+                <Input
+                  id="s-theory"
+                  type="number"
+                  min={0}
+                  value={form.theory_hours}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      theory_hours: Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="s-practice">Hrs. práctica</Label>
+                <Input
+                  id="s-practice"
+                  type="number"
+                  min={0}
+                  value={form.practice_hours}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      practice_hours: Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+            </div>
             <div className="grid gap-2">
               <Label>Seriación (materias prerequisito)</Label>
               {prereqCandidates.length === 0 ? (
@@ -1354,6 +1351,7 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
 
 // --- Evaluation components ------------------------------------------------------
 
+
 function ComponentsDialog({
   subject,
   onClose,
@@ -1377,6 +1375,7 @@ function ComponentsDialog({
     sequence: 1,
     counts_towards_final: true,
   });
+  const isReplacement = REPLACES_FINAL.includes(form.kind);
 
   const add = useMutation({
     mutationFn: () =>
@@ -1409,7 +1408,7 @@ function ComponentsDialog({
   });
 
   const countingWeight = (components ?? [])
-    .filter((c) => c.counts_towards_final)
+    .filter(weighsInFinal)
     .reduce((sum, c) => sum + c.weight_pct, 0);
 
   return (
@@ -1435,7 +1434,7 @@ function ComponentsDialog({
               <span className="ml-auto" data-numeric>
                 {c.weight_pct}%
               </span>
-              {!c.counts_towards_final && (
+              {!weighsInFinal(c) && (
                 <span className="text-xs text-muted-foreground">
                   no cuenta
                 </span>
@@ -1485,7 +1484,12 @@ function ComponentsDialog({
               <Select
                 value={form.kind}
                 onValueChange={(v) =>
-                  setForm({ ...form, kind: v as EvaluationKind })
+                  setForm(
+                    REPLACES_FINAL.includes(v as EvaluationKind)
+                      ? // replace the final grade, never weigh in it
+                        { ...form, kind: v as EvaluationKind, weight_pct: 0, counts_towards_final: false }
+                      : { ...form, kind: v as EvaluationKind, counts_towards_final: true },
+                  )
                 }
               >
                 <SelectTrigger className="w-full">
@@ -1523,6 +1527,7 @@ function ComponentsDialog({
                 max={100}
                 step="0.1"
                 required
+                disabled={isReplacement}
                 value={form.weight_pct}
                 onChange={(e) =>
                   setForm({ ...form, weight_pct: Number(e.target.value) })
@@ -1545,6 +1550,7 @@ function ComponentsDialog({
             <label className="flex items-center gap-2 pb-2 text-sm font-medium">
               <Checkbox
                 checked={form.counts_towards_final}
+                disabled={isReplacement}
                 onCheckedChange={(v) =>
                   setForm({ ...form, counts_towards_final: v === true })
                 }

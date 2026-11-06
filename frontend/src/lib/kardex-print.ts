@@ -1,15 +1,15 @@
 // Printable kárdex (historial académico). Mirrors lib/receipt.ts: renders HTML
 // into a hidden iframe and drives window.print() — no PDF lib, no dependencies.
 // Uses a full letter page instead of the 80mm thermal layout.
-import { SUBJECT_STATUS_LABELS } from "@/lib/format";
-import type { Kardex } from "@/api/types";
+import { kardexCells, kardexHeaders, kardexSections, showE2 } from "@/lib/kardex";
+import type { StudentKardex } from "@/api/types";
 
 export interface KardexPrintData {
   institutionName: string;
   studentName: string;
   enrollmentNumber: string;
   planLabel: string;
-  kardex: Kardex;
+  kardex: StudentKardex;
 }
 
 const esc = (s: string) =>
@@ -34,27 +34,35 @@ const STYLE = `
   table { width: 100%; border-collapse: collapse; margin-top: 6px; }
   th { background: #000; color: #fff; text-align: left; padding: 4px 6px; font-size: 10px; }
   td { padding: 3px 6px; border-bottom: 1px solid #ccc; }
+  td.period { background: #eee; font-weight: bold; border-bottom: 1px solid #999; }
+  td.period span { float: right; font-size: 10px; }
   .r { text-align: right; }
   .totals { margin-top: 10px; font-size: 11px; }
   .totals span { display: inline-block; margin-right: 24px; }
   .foot { margin-top: 18px; font-size: 10px; color: #555; }
 `;
 
+// columns after Asignatura are numeric except the last (Estatus)
+const isNumeric = (i: number, total: number) => i === 2 || (i >= 5 && i < total - 1);
+
 function body(d: KardexPrintData): string {
   const p = d.kardex.progress;
-  const rows = d.kardex.rows
+  const withE2 = showE2(d.kardex);
+  const headers = kardexHeaders(withE2);
+  const rows = kardexSections(d.kardex)
     .map(
-      (r) =>
-        `<tr>
-          <td class="r">${r.period_number}</td>
-          <td>${esc(r.code)}</td>
-          <td>${esc(r.name)}</td>
-          <td class="r">${r.credits}</td>
-          <td>${esc(r.group_code)}</td>
-          <td class="r">${r.attempt_number}</td>
-          <td class="r">${r.final_grade ?? "—"}</td>
-          <td>${SUBJECT_STATUS_LABELS[r.status] ?? r.status}</td>
-        </tr>`,
+      (s) =>
+        `<tr><td class="period" colspan="${headers.length}">${esc(s.heading)}` +
+        (s.rvoe ? `<span>${esc(s.rvoe)}</span>` : "") +
+        `</td></tr>` +
+        s.rows
+          .map(
+            (r) =>
+              `<tr>${kardexCells(r, withE2)
+                .map((cell, i) => `<td${isNumeric(i, headers.length) ? ' class="r"' : ""}>${esc(cell)}</td>`)
+                .join("")}</tr>`,
+          )
+          .join(""),
     )
     .join("");
   return `
@@ -64,23 +72,24 @@ function body(d: KardexPrintData): string {
     <div class="meta">
       <div><b>Alumno:</b> ${esc(d.studentName)}</div>
       <div><b>Matrícula:</b> ${esc(d.enrollmentNumber)}</div>
-      <div style="grid-column: 1 / -1"><b>Plan:</b> ${esc(d.planLabel)}</div>
+      <div style="grid-column: 1 / -1"><b>Plan vigente:</b> ${esc(d.planLabel)}</div>
     </div>
     <table>
       <thead>
-        <tr>
-          <th>Periodo</th><th>Clave</th><th>Materia</th><th>Créditos</th>
-          <th>Grupo</th><th>Intento</th><th>Calif.</th><th>Estatus</th>
-        </tr>
+        <tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>
       </thead>
-      <tbody>${rows || `<tr><td colspan="8">Sin historial académico en este plan</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="${headers.length}">Sin historial académico</td></tr>`}</tbody>
     </table>
-    <div class="totals">
+    ${
+      p
+        ? `<div class="totals">
       <span><b>Créditos:</b> ${p.earned_credits} / ${p.total_credits}</span>
       <span><b>Materias aprobadas:</b> ${p.passed_subjects} / ${p.total_subjects}</span>
       <span><b>Promedio:</b> ${p.gpa ?? "—"}</span>
       <span><b>Avance:</b> ${p.credit_progress_pct}%</span>
-    </div>
+    </div>`
+        : ""
+    }
     <div class="foot">Documento informativo, sin validez oficial. Impreso el ${new Date().toLocaleDateString("es-MX")}.</div>
   `;
 }

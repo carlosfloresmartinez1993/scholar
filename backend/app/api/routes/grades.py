@@ -16,7 +16,7 @@ from app.models import (
     DegreeRecordCreate,
     DegreeRecordPublic,
     EvaluationComponent,
-    EvaluationKind,
+    REPLACEMENT_KINDS,
     Grade,
     GradeActa,
     GradeActaPublic,
@@ -32,7 +32,13 @@ from app.models import (
     UserRole,
 )
 from app.services import audit
-from app.services.academics import PASSING_GRADE, curricular_progress, kardex_rows
+from app.services.academics import (
+    PASSING_GRADE,
+    curricular_progress,
+    kardex_rows,
+    ordinary_grade,
+    student_kardex,
+)
 from app.services.folios import next_folio
 from app.services.treasury import has_blocking_debt
 
@@ -100,6 +106,7 @@ async def grade_grid(
                 "enrollment_number": s.enrollment_number,
                 "status": e.status,
                 "final_grade": e.final_grade,
+                "attempt_number": e.attempt_number,  # > 1: recursamiento
                 "grades": {
                     str(c.id): grade_map.get((e.id, c.id)) for c in components
                 },
@@ -109,9 +116,9 @@ async def grade_grid(
     }
 
 
-async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -> None:
-    """Weighted final from counting components once all are captured; extraordinario
-    and título de suficiencia replace the final grade when present."""
+async def _components_and_grades(
+    session: SessionDep, enrollment: SubjectEnrollment
+) -> tuple[list[EvaluationComponent], dict[uuid.UUID, float]]:
     group_subject = await session.get(GroupSubject, enrollment.group_subject_id)
     components = (
         await session.exec(
@@ -125,22 +132,25 @@ async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -
             select(Grade).where(Grade.subject_enrollment_id == enrollment.id)
         )
     ).all()
-    by_component = {g.component_id: g.value for g in grades}
+    return list(components), {g.component_id: g.value for g in grades}
+
+
+async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -> None:
+    """Weighted final from counting components once all are captured. Extraordinario
+    and título de suficiencia replace it, but only when the ordinario was failed (or
+    is not there, e.g. loaded history): fixing a parcial up to a pass drops them."""
+    components, by_component = await _components_and_grades(session, enrollment)
 
     replacement = None
     for c in components:
-        if c.kind in (EvaluationKind.extraordinario, EvaluationKind.titulo_suficiencia):
-            if c.id in by_component:
-                replacement = by_component[c.id]
+        if c.kind in REPLACEMENT_KINDS and c.id in by_component:
+            replacement = by_component[c.id]
 
-    counting = [c for c in components if c.counts_towards_final]
-    final = None
-    if replacement is not None:
+    ordinary = ordinary_grade(components, by_component)
+    if replacement is not None and (ordinary is None or ordinary < PASSING_GRADE):
         final = replacement
-    elif counting and all(c.id in by_component for c in counting):
-        total_weight = sum(c.weight_pct for c in counting)
-        if total_weight > 0:
-            final = sum(by_component[c.id] * c.weight_pct for c in counting) / total_weight
+    else:
+        final = ordinary
     if final is not None:
         enrollment.final_grade = round(final, 1)
         enrollment.status = (
@@ -166,6 +176,19 @@ async def _apply_capture(
     component = await session.get(EvaluationComponent, body.component_id)
     if component is None or component.plan_subject_id != group_subject.plan_subject_id:
         raise HTTPException(status_code=400, detail="Componente de evaluación inválido")
+    if component.kind in REPLACEMENT_KINDS:
+        # an extraordinario only exists for whoever failed the ordinario
+        ordinary = ordinary_grade(*await _components_and_grades(session, enrollment))
+        if ordinary is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{component.label}: primero captura todas las calificaciones ordinarias",
+            )
+        if ordinary >= PASSING_GRADE:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{component.label}: el alumno aprobó el ordinario ({ordinary:g}); no aplica",
+            )
 
     existing = (
         await session.exec(
@@ -224,6 +247,18 @@ async def capture_grades_batch(
     session: SessionDep, current_user: TeacherOrAcademic, body: list[GradeCaptureIn]
 ) -> list[GradePublic]:
     """Save a whole grid in one request instead of one POST per cell."""
+    # parciales first: an extraordinario in the same batch is checked against them
+    replacement_ids = set(
+        (
+            await session.exec(
+                select(EvaluationComponent.id).where(
+                    EvaluationComponent.id.in_({item.component_id for item in body}),  # type: ignore[attr-defined]
+                    EvaluationComponent.kind.in_(REPLACEMENT_KINDS),  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+    )
+    body = sorted(body, key=lambda item: item.component_id in replacement_ids)
     grades = [await _apply_capture(session, current_user, item) for item in body]
     await session.commit()
     for g in grades:
@@ -321,6 +356,17 @@ async def kardex(
     progress = await curricular_progress(session, student_id, plan_version_id)
     return {"student_id": str(student_id), "plan_version_id": str(plan_version_id),
             "rows": rows, "progress": progress}
+
+
+@router.get("/students/{student_id}/kardex-completo")
+async def full_kardex(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID, program_id: uuid.UUID | None = None
+) -> dict:
+    """One kárdex per carrera across every plan/RVOE of it (see student_kardex)."""
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return {"student_id": str(student_id), **await student_kardex(session, student_id, program_id)}
 
 
 # --- Degree registry (RF-C09) ---------------------------------------------------------

@@ -14,6 +14,7 @@ from app.models import (
     Group,
     GroupEnrollment,
     GroupEnrollmentKind,
+    GroupEnrollmentStatus,
     GroupSubject,
     Institution,
     PlanSubject,
@@ -21,6 +22,7 @@ from app.models import (
     StudentCreate,
     StudentRelative,
     SubjectEnrollment,
+    SubjectEnrollmentStatus,
     UserRole,
 )
 from app.services import audit
@@ -339,3 +341,109 @@ async def enroll_student_core(
             detail=f"{len(generated)} cargos del cuatrimestre",
         )
     return enrollment
+
+
+async def add_subjects_core(
+    session: AsyncSession,
+    current_user,
+    student: Student,
+    group: Group,
+    *,
+    plan_subject_ids: list,
+    override_prerequisites: bool = False,
+) -> list[SubjectEnrollment]:
+    """Add plan subjects to a student already enrolled in the group, at any point of
+    the term (a materia missing from the plan or the group, a late addition, a
+    recursamiento). Subjects of the group's plan up to the group's cuatrimestre are
+    accepted, never later ones; an earlier one already failed becomes a
+    recursamiento (next attempt). One the group does not teach yet is added to it
+    (teacher unassigned). No new group enrollment, so
+    nothing is billed. Caller commits."""
+    if not plan_subject_ids:
+        raise HTTPException(status_code=400, detail="Seleccione al menos una materia")
+    enrollment = (
+        await session.exec(
+            select(GroupEnrollment).where(
+                GroupEnrollment.student_id == student.id,
+                GroupEnrollment.group_id == group.id,
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            )
+        )
+    ).first()
+    if enrollment is None:
+        raise HTTPException(status_code=404, detail="El alumno no está inscrito en ese grupo")
+    if override_prerequisites and not (
+        current_user.is_superuser
+        or current_user.role in (UserRole.servicios_escolares, UserRole.admin_sistema)
+    ):
+        raise HTTPException(status_code=403, detail="Solo Servicios Escolares puede omitir seriación")
+
+    subjects = (
+        await session.exec(
+            select(PlanSubject).where(PlanSubject.id.in_(set(plan_subject_ids)))  # type: ignore[attr-defined]
+        )
+    ).all()
+    if len(subjects) != len(set(plan_subject_ids)) or any(
+        s.plan_version_id != group.plan_version_id for s in subjects
+    ):
+        raise HTTPException(status_code=400, detail="Alguna materia no pertenece al plan del grupo")
+
+    later = [s.name for s in subjects if s.period_number > group.period_number]
+    if later:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{', '.join(later)}: es de un cuatrimestre posterior al del grupo",
+        )
+
+    added = []
+    for subject in sorted(subjects, key=lambda s: (s.period_number, s.code)):
+        attempts = (
+            await session.exec(
+                select(SubjectEnrollment, GroupSubject)
+                .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+                .where(
+                    SubjectEnrollment.student_id == student.id,
+                    GroupSubject.plan_subject_id == subject.id,
+                )
+            )
+        ).all()
+        for attempt, gs in attempts:
+            if attempt.group_enrollment_id == enrollment.id:
+                raise HTTPException(
+                    status_code=409, detail=f"{subject.name} ya está inscrita en este grupo"
+                )
+            if attempt.status == SubjectEnrollmentStatus.aprobada:
+                raise HTTPException(status_code=409, detail=f"{subject.name} ya está aprobada")
+            if attempt.status == SubjectEnrollmentStatus.cursando:
+                raise HTTPException(
+                    status_code=409, detail=f"{subject.name} ya se está cursando en otro grupo"
+                )
+        if not override_prerequisites and await check_prerequisites(session, student.id, subject.id):
+            raise HTTPException(status_code=409, detail=f"Seriación no cumplida para {subject.name}")
+
+        group_subject = (
+            await session.exec(
+                select(GroupSubject).where(
+                    GroupSubject.group_id == group.id, GroupSubject.plan_subject_id == subject.id
+                )
+            )
+        ).first()
+        if group_subject is None:
+            group_subject = GroupSubject(group_id=group.id, plan_subject_id=subject.id)
+            session.add(group_subject)
+            await session.flush()
+        subject_enrollment = SubjectEnrollment(
+            group_enrollment_id=enrollment.id, group_subject_id=group_subject.id,
+            student_id=student.id, attempt_number=len(attempts) + 1,
+        )
+        session.add(subject_enrollment)
+        added.append(subject_enrollment)
+
+    audit.record(
+        session, actor=current_user.email, action="subject_enrollment.added",
+        entity="group_enrollment", entity_id=str(enrollment.id),
+        detail=f"grupo {group.code}: " + ", ".join(s.code for s in subjects)
+        + (" (seriación omitida)" if override_prerequisites else ""),
+    )
+    await session.flush()
+    return added
