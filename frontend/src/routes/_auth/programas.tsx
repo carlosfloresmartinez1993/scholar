@@ -1350,6 +1350,12 @@ function SubjectsSection({ planVersionId }: { planVersionId: string }) {
 
 // --- Evaluation components ------------------------------------------------------
 
+// extraordinario / título de suficiencia replace the final grade (backend
+// REPLACEMENT_KINDS): no weight, never "cuenta para final"
+const REPLACES_FINAL: EvaluationKind[] = ["extraordinario", "titulo_suficiencia"];
+const weighsInFinal = (c: EvaluationComponent) =>
+  c.counts_towards_final && !REPLACES_FINAL.includes(c.kind);
+
 function ComponentsDialog({
   subject,
   onClose,
@@ -1373,6 +1379,7 @@ function ComponentsDialog({
     sequence: 1,
     counts_towards_final: true,
   });
+  const replacesFinal = REPLACES_FINAL.includes(form.kind);
 
   const add = useMutation({
     mutationFn: () =>
@@ -1405,7 +1412,7 @@ function ComponentsDialog({
   });
 
   const countingWeight = (components ?? [])
-    .filter((c) => c.counts_towards_final)
+    .filter(weighsInFinal)
     .reduce((sum, c) => sum + c.weight_pct, 0);
 
   return (
@@ -1431,7 +1438,7 @@ function ComponentsDialog({
               <span className="ml-auto" data-numeric>
                 {c.weight_pct}%
               </span>
-              {!c.counts_towards_final && (
+              {!weighsInFinal(c) && (
                 <span className="text-xs text-muted-foreground">
                   no cuenta
                 </span>
@@ -1481,7 +1488,12 @@ function ComponentsDialog({
               <Select
                 value={form.kind}
                 onValueChange={(v) =>
-                  setForm({ ...form, kind: v as EvaluationKind })
+                  setForm(
+                    REPLACES_FINAL.includes(v as EvaluationKind)
+                      ? // replace the final grade, never weigh in it
+                        { ...form, kind: v as EvaluationKind, weight_pct: 0, counts_towards_final: false }
+                      : { ...form, kind: v as EvaluationKind, counts_towards_final: true },
+                  )
                 }
               >
                 <SelectTrigger className="w-full">
@@ -1519,6 +1531,7 @@ function ComponentsDialog({
                 max={100}
                 step="0.1"
                 required
+                disabled={replacesFinal}
                 value={form.weight_pct}
                 onChange={(e) =>
                   setForm({ ...form, weight_pct: Number(e.target.value) })
@@ -1541,6 +1554,7 @@ function ComponentsDialog({
             <label className="flex items-center gap-2 pb-2 text-sm font-medium">
               <Checkbox
                 checked={form.counts_towards_final}
+                disabled={replacesFinal}
                 onCheckedChange={(v) =>
                   setForm({ ...form, counts_towards_final: v === true })
                 }

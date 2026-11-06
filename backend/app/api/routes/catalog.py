@@ -23,6 +23,7 @@ from app.models import (
     EvaluationComponent,
     EvaluationComponentCreate,
     EvaluationComponentPublic,
+    REPLACEMENT_KINDS,
     Group,
     GroupCreate,
     GroupPublic,
@@ -456,16 +457,19 @@ async def create_evaluation_component(
 ) -> EvaluationComponentPublic:
     if await session.get(PlanSubject, body.plan_subject_id) is None:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if body.kind in REPLACEMENT_KINDS:
+        # extraordinario / título de suficiencia replace the final, never weigh in it
+        body.counts_towards_final = False
+        body.weight_pct = 0
     if body.counts_towards_final:
         existing = (
             await session.exec(
                 select(EvaluationComponent).where(
                     EvaluationComponent.plan_subject_id == body.plan_subject_id,
-                    EvaluationComponent.counts_towards_final == True,  # noqa: E712
                 )
             )
         ).all()
-        if sum(c.weight_pct for c in existing) + body.weight_pct > 100.001:
+        if sum(c.weight_pct for c in existing if c.weighs_in_final) + body.weight_pct > 100.001:
             raise HTTPException(
                 status_code=400, detail="La ponderación total excedería el 100%"
             )

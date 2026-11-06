@@ -1,5 +1,7 @@
 """Kárdex único del alumno: todas las materias del plan vigente, cada intento con su
 RVOE, ciclo y grupo, y el desglose CF / E1 / EQ."""
+import uuid
+
 from httpx import AsyncClient
 
 from tests.conftest import login
@@ -69,6 +71,47 @@ async def test_kardex_lists_pending_subjects_and_grade_breakdown(client, seed):
     assert pending["rvoe"] == catalog["rvoe"]["agreement_number"]
     assert k["progress"]["passed_subjects"] == 1
     assert k["progress"]["total_subjects"] == 2
+
+
+async def test_extraordinario_never_blocks_the_final(client, seed, session_factory):
+    """An extraordinario saved as "cuenta para final" (as the form used to allow)
+    must not hold the final back: the parciales alone make it."""
+    from app.models import EvaluationComponent
+
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])
+    subject_id = catalog["subject_a"]["id"]
+
+    parciales = [(await client.post("/api/v1/catalog/evaluation-components", json={
+        "plan_subject_id": subject_id, "kind": "parcial", "label": f"Parcial {n}",
+        "weight_pct": 50, "sequence": n,
+    })).json() for n in (1, 2)]
+    extra = (await client.post("/api/v1/catalog/evaluation-components", json={
+        "plan_subject_id": subject_id, "kind": "extraordinario", "label": "Extraordinario",
+        "weight_pct": 0, "sequence": 3, "counts_towards_final": True,
+    })).json()
+    assert extra["counts_towards_final"] is False  # normalized on create
+
+    async with session_factory() as session:  # data saved before the fix
+        component = await session.get(EvaluationComponent, uuid.UUID(extra["id"]))
+        component.counts_towards_final = True
+        session.add(component)
+        await session.commit()
+
+    await client.patch(f"/api/v1/catalog/terms/{catalog['term']['id']}",
+                       json={"grade_capture_open": True})
+    se_id = (await client.get(
+        f"/api/v1/students/{student['id']}/subject-enrollments"
+    )).json()[0]["id"]
+    await client.post("/api/v1/grades/capture-batch", json=[
+        {"subject_enrollment_id": se_id, "component_id": c["id"], "value": 10} for c in parciales
+    ])
+    row = (await kardex(client, student["id"]))["rows"][0]
+    assert row["final_grade"] == 10.0
+    assert row["status"] == "aprobada"
+    assert row["cf"] == 10.0
 
 
 async def new_plan(client: AsyncClient, program_id: str, campus_id: str, agreement: str,

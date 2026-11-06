@@ -16,6 +16,12 @@ class EvaluationKind(str, Enum):
     titulo_suficiencia = "titulo_suficiencia"
 
 
+# these replace the final grade when captured; they never weigh into it, whatever
+# counts_towards_final says (a component saved with it on would otherwise block the
+# final until an extraordinario is captured)
+REPLACEMENT_KINDS = (EvaluationKind.extraordinario, EvaluationKind.titulo_suficiencia)
+
+
 class EvaluationComponentBase(SQLModel):
     kind: EvaluationKind
     label: str = Field(max_length=64)  # e.g. "Parcial 1"
@@ -33,6 +39,10 @@ class EvaluationComponent(EvaluationComponentBase, table=True):
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     plan_subject_id: uuid.UUID = Field(foreign_key="plan_subjects.id", index=True)
+
+    @property
+    def weighs_in_final(self) -> bool:
+        return self.counts_towards_final and self.kind not in REPLACEMENT_KINDS
 
 
 class EvaluationComponentCreate(EvaluationComponentBase):

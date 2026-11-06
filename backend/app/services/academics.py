@@ -220,7 +220,7 @@ async def student_kardex(
                 )
             )
         ).all():
-            if c.counts_towards_final:
+            if c.weighs_in_final:
                 counting[c.plan_subject_id].append(c)
     captured: dict[uuid.UUID, dict[uuid.UUID, float]] = defaultdict(dict)
     kind_values: dict[uuid.UUID, dict[EvaluationKind, float]] = defaultdict(dict)

@@ -138,7 +138,7 @@ async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -
             if c.id in by_component:
                 replacement = by_component[c.id]
 
-    counting = [c for c in components if c.counts_towards_final]
+    counting = [c for c in components if c.weighs_in_final]
     final = None
     if replacement is not None:
         final = replacement

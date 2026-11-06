@@ -100,6 +100,7 @@ from app.models.grades import (
     Grade,
     GradeActa,
     GradeActaPublic,
+    REPLACEMENT_KINDS,
     GradeCaptureIn,
     GradePublic,
 )
