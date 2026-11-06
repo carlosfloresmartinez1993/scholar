@@ -564,6 +564,40 @@ export interface Kardex {
   progress: CurricularProgress;
 }
 
+// Kárdex único del alumno (todas sus materias, de todos sus planes/RVOE)
+export type RecognitionKind = "eq" | "rev" | "conv";
+
+export interface StudentKardexRow {
+  row_id: string;
+  subject_enrollment_id: string | null; // null = materia del plan aún no cursada
+  plan_subject_id: string;
+  plan_version_id: string;
+  rvoe: string;
+  code: string;
+  name: string;
+  period_number: number;
+  credits: number;
+  term_name: string | null;
+  term_start: string | null;
+  group_code: string | null;
+  campus_name: string | null;
+  attempt_number: number | null;
+  status: SubjectEnrollmentStatus | "pendiente";
+  final_grade: number | null;
+  cf: number | null; // ordinario (componentes que cuentan para la final)
+  e1: number | null; // extraordinario
+  e2: number | null; // título de suficiencia
+  recognition: RecognitionKind | null; // acreditada por EQ / REV / CONV
+}
+
+export interface StudentKardex {
+  student_id: string;
+  current_plan_version_id: string | null;
+  period_type: PeriodType | null;
+  rows: StudentKardexRow[];
+  progress: CurricularProgress | null;
+}
+
 export interface DegreeRecord {
   id: string;
   student_id: string;

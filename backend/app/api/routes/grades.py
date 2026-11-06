@@ -32,7 +32,12 @@ from app.models import (
     UserRole,
 )
 from app.services import audit
-from app.services.academics import PASSING_GRADE, curricular_progress, kardex_rows
+from app.services.academics import (
+    PASSING_GRADE,
+    curricular_progress,
+    kardex_rows,
+    student_kardex,
+)
 from app.services.folios import next_folio
 from app.services.treasury import has_blocking_debt
 
@@ -321,6 +326,15 @@ async def kardex(
     progress = await curricular_progress(session, student_id, plan_version_id)
     return {"student_id": str(student_id), "plan_version_id": str(plan_version_id),
             "rows": rows, "progress": progress}
+
+
+@router.get("/students/{student_id}/kardex-completo")
+async def full_kardex(session: SessionDep, _: AnyStaff, student_id: uuid.UUID) -> dict:
+    """One kárdex across every plan/RVOE of the student (see student_kardex)."""
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return {"student_id": str(student_id), **await student_kardex(session, student_id)}
 
 
 # --- Degree registry (RF-C09) ---------------------------------------------------------

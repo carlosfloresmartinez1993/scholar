@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -31,7 +31,8 @@ import type {
   Institution,
   IssuedDocumentKind,
   Justification,
-  Kardex,
+  StudentKardex,
+  StudentKardexRow,
   Payment,
   PlanEnrollment,
   PlanVersion,
@@ -48,6 +49,15 @@ import type {
 import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import {
+  grade,
+  groupByPeriod,
+  isRetake,
+  periodHeading,
+  RECOGNITION_COLUMNS,
+  recognitionCell,
+  statusLabel,
+} from "@/lib/kardex";
+import {
   ADMISSION_TYPE_LABELS,
   CHARGE_STATUS_LABELS,
   formatDate,
@@ -60,7 +70,6 @@ import {
   REVIEW_STATUS_LABELS,
   SCHOLARSHIP_STATUS_LABELS,
   STUDENT_STATUS_LABELS,
-  SUBJECT_STATUS_LABELS,
   todayISO,
 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -237,11 +246,15 @@ function IdentityHeader({ student }: { student: Student }) {
   const planVersionLabels = usePlanVersionLabels();
   const campusName =
     campuses?.find((c) => c.id === student.campus_id)?.name ?? "—";
-  const activePlan =
-    enrollments?.find((e) => e.status === "inscrito") ?? enrollments?.[0];
-  const planLabel = activePlan
-    ? planVersionLabels.get(activePlan.plan_version_id)
-    : null;
+  // same "current plan" as the kárdex (the inscrito one that started last)
+  const { data: kardex } = useQuery({
+    queryKey: queryKeys.studentKardex(student.id),
+    queryFn: () =>
+      api<StudentKardex>(`/grades/students/${student.id}/kardex-completo`),
+  });
+  const activePlanId =
+    kardex?.current_plan_version_id ?? enrollments?.[0]?.plan_version_id;
+  const planLabel = activePlanId ? planVersionLabels.get(activePlanId) : null;
 
   // enrollment facts only — contact/ingreso live in the Resumen tab
   const facts = [
@@ -1184,17 +1197,13 @@ function AcademicoTab({ student }: { student: Student }) {
     queryFn: () => api<Institution>("/catalog/institution"),
   });
 
-  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
-  const planVersionId = selectedPlan ?? enrollments?.[0]?.plan_version_id ?? null;
-
+  // one kárdex across every plan/RVOE; progress is against the current plan
   const { data: kardex, isLoading: loadingKardex } = useQuery({
-    queryKey: queryKeys.kardex(student.id, planVersionId ?? ""),
+    queryKey: queryKeys.studentKardex(student.id),
     queryFn: () =>
-      api<Kardex>(
-        `/grades/students/${student.id}/kardex?plan_version_id=${planVersionId}`,
-      ),
-    enabled: !!planVersionId,
+      api<StudentKardex>(`/grades/students/${student.id}/kardex-completo`),
   });
+  const currentPlanId = kardex?.current_plan_version_id ?? null;
 
   // Inscribir a plan
   const [open, setOpen] = useState(false);
@@ -1214,6 +1223,9 @@ function AcademicoTab({ student }: { student: Student }) {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.planEnrollments(student.id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.studentKardex(student.id),
       });
       toast.success("Alumno inscrito al plan");
       setOpen(false);
@@ -1266,15 +1278,17 @@ function AcademicoTab({ student }: { student: Student }) {
                 <TableRow
                   key={en.id}
                   className={
-                    en.plan_version_id === planVersionId
-                      ? "bg-muted/60"
-                      : "cursor-pointer"
+                    en.plan_version_id === currentPlanId ? "bg-muted/60" : undefined
                   }
-                  onClick={() => setSelectedPlan(en.plan_version_id)}
                 >
                   <TableCell className="font-semibold">
                     {planVersionLabels.get(en.plan_version_id) ??
                       en.plan_version_id}
+                    {en.plan_version_id === currentPlanId && (
+                      <Badge variant="secondary" className="ml-2">
+                        Vigente
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>{termName(en.start_term_id)}</TableCell>
                   <TableCell>
@@ -1304,7 +1318,7 @@ function AcademicoTab({ student }: { student: Student }) {
         </div>
       </section>
 
-      {planVersionId && (
+      {(loadingKardex || currentPlanId) && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold">Kárdex</h2>
@@ -1313,12 +1327,12 @@ function AcademicoTab({ student }: { student: Student }) {
               disabled={!kardex}
               onClick={() =>
                 kardex &&
+                currentPlanId &&
                 printKardex({
                   institutionName: institution?.name ?? "INUE",
                   studentName: student.full_name,
                   enrollmentNumber: student.enrollment_number,
-                  planLabel:
-                    planVersionLabels.get(planVersionId) ?? planVersionId,
+                  planLabel: planVersionLabels.get(currentPlanId) ?? currentPlanId,
                   kardex,
                 })
               }
@@ -1327,7 +1341,7 @@ function AcademicoTab({ student }: { student: Student }) {
             </Button>
           </div>
           {loadingKardex && <Skeleton className="h-40 w-full rounded-md" />}
-          {kardex && (
+          {kardex?.progress && (
             <>
               <Card className="rounded-md">
                 <CardContent className="space-y-3 p-6">
@@ -1385,62 +1399,7 @@ function AcademicoTab({ student }: { student: Student }) {
                 </CardContent>
               </Card>
 
-              <div className="rounded-md border bg-card">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Periodo</TableHead>
-                      <TableHead>Clave</TableHead>
-                      <TableHead>Materia</TableHead>
-                      <TableHead>Créditos</TableHead>
-                      <TableHead>Grupo</TableHead>
-                      <TableHead>Intento</TableHead>
-                      <TableHead>Calificación</TableHead>
-                      <TableHead>Estatus</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {kardex.rows.map((r) => (
-                      <TableRow key={r.subject_enrollment_id}>
-                        <TableCell data-numeric>{r.period_number}</TableCell>
-                        <TableCell data-numeric>{r.code}</TableCell>
-                        <TableCell className="font-semibold">
-                          {r.name}
-                        </TableCell>
-                        <TableCell data-numeric>{r.credits}</TableCell>
-                        <TableCell data-numeric>{r.group_code}</TableCell>
-                        <TableCell data-numeric>{r.attempt_number}</TableCell>
-                        <TableCell data-numeric className="font-semibold">
-                          {r.final_grade ?? "—"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              r.status === "aprobada"
-                                ? "default"
-                                : r.status === "reprobada"
-                                  ? "destructive"
-                                  : "outline"
-                            }
-                          >
-                            {SUBJECT_STATUS_LABELS[r.status]}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {kardex.rows.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={8}
-                          className="py-8 text-center text-muted-foreground"
-                        >
-                          Sin historial académico en este plan
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+              <KardexTable kardex={kardex} />
             </>
           )}
         </section>
@@ -1494,6 +1453,117 @@ function AcademicoTab({ student }: { student: Student }) {
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function KardexStatusBadge({ row }: { row: StudentKardexRow }) {
+  const pendingRecognition = row.recognition != null && row.final_grade == null;
+  const variant =
+    row.status === "aprobada" && !pendingRecognition
+      ? "default"
+      : row.status === "reprobada"
+        ? "destructive"
+        : pendingRecognition
+          ? "secondary"
+          : "outline";
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      <Badge variant={variant}>{statusLabel(row)}</Badge>
+      {isRetake(row) && <Badge variant="outline">Recursamiento</Badge>}
+    </span>
+  );
+}
+
+// One table, a heading row per plan period; each row says which RVOE it was taken
+// under, so a plan change reads as the RVOE column changing.
+function KardexTable({ kardex }: { kardex: StudentKardex }) {
+  const showE2 = kardex.rows.some((r) => r.e2 != null);
+  const columns = 11 + (showE2 ? 1 : 0) + RECOGNITION_COLUMNS.length;
+  return (
+    <div className="rounded-md border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Clave</TableHead>
+            <TableHead>Asignatura</TableHead>
+            <TableHead className="text-right">Créd.</TableHead>
+            <TableHead>Ciclo</TableHead>
+            <TableHead>Grupo</TableHead>
+            <TableHead>RVOE</TableHead>
+            <TableHead className="text-right">CF</TableHead>
+            <TableHead className="text-right">E1</TableHead>
+            {showE2 && <TableHead className="text-right">E2</TableHead>}
+            {RECOGNITION_COLUMNS.map((c) => (
+              <TableHead key={c.kind} className="text-right">
+                {c.label}
+              </TableHead>
+            ))}
+            <TableHead>Estatus</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groupByPeriod(kardex.rows).map(([period, rows]) => (
+            <Fragment key={period}>
+              <TableRow className="bg-muted/60 hover:bg-muted/60">
+                <TableCell colSpan={columns} className="font-bold">
+                  {periodHeading(kardex.period_type, period)}
+                </TableCell>
+              </TableRow>
+              {rows.map((r) => (
+                <TableRow
+                  key={r.row_id}
+                  className={r.status === "pendiente" ? "text-muted-foreground" : undefined}
+                >
+                  <TableCell data-numeric>{r.code}</TableCell>
+                  <TableCell className="font-semibold">{r.name}</TableCell>
+                  <TableCell data-numeric className="text-right">
+                    {r.credits}
+                  </TableCell>
+                  <TableCell data-numeric>{r.term_name ?? ""}</TableCell>
+                  <TableCell data-numeric>{r.group_code ?? ""}</TableCell>
+                  <TableCell data-numeric className="text-xs">
+                    {r.rvoe}
+                  </TableCell>
+                  <TableCell data-numeric className="text-right font-semibold">
+                    {grade(r.cf)}
+                  </TableCell>
+                  <TableCell data-numeric className="text-right font-semibold">
+                    {grade(r.e1)}
+                  </TableCell>
+                  {showE2 && (
+                    <TableCell data-numeric className="text-right font-semibold">
+                      {grade(r.e2)}
+                    </TableCell>
+                  )}
+                  {RECOGNITION_COLUMNS.map((c) => (
+                    <TableCell
+                      key={c.kind}
+                      data-numeric
+                      className="text-right font-semibold"
+                    >
+                      {recognitionCell(r, c.kind)}
+                    </TableCell>
+                  ))}
+                  <TableCell>
+                    <KardexStatusBadge row={r} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </Fragment>
+          ))}
+          {kardex.rows.length === 0 && (
+            <TableRow>
+              <TableCell
+                colSpan={columns}
+                className="py-8 text-center text-muted-foreground"
+              >
+                Sin historial académico
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
     </div>
   );
 }
