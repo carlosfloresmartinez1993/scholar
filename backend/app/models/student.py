@@ -336,6 +336,14 @@ class GroupEnrollmentCreate(SQLModel):
     waive_enrollment_fee: bool = False
 
 
+class GroupEnrollmentSubjectsAdd(SQLModel):
+    """Add plan subjects to a student already enrolled in the group."""
+    student_id: uuid.UUID
+    group_id: uuid.UUID
+    plan_subject_ids: list[uuid.UUID]
+    override_prerequisites: bool = False
+
+
 class GroupEnrollmentPublic(SQLModel):
     id: uuid.UUID
     student_id: uuid.UUID

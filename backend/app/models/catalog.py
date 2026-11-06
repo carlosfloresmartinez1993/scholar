@@ -242,6 +242,15 @@ class PlanSubjectCreate(PlanSubjectBase):
     prerequisite_ids: list[uuid.UUID] = []
 
 
+class PlanSubjectUpdate(SQLModel):
+    code: str | None = Field(default=None, max_length=32)
+    name: str | None = Field(default=None, max_length=255)
+    period_number: int | None = Field(default=None, ge=1, le=20)
+    credits: float | None = Field(default=None, ge=0)
+    theory_hours: float | None = Field(default=None, ge=0)
+    practice_hours: float | None = Field(default=None, ge=0)
+
+
 class PlanSubjectPublic(PlanSubjectBase):
     id: uuid.UUID
     plan_version_id: uuid.UUID
