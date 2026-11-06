@@ -76,12 +76,18 @@ async def list_students(
     q: str | None = None,
     status: str | None = None,
     campus_id: uuid.UUID | None = None,
+    carrera_of_plan_version_id: uuid.UUID | None = None,
     with_debt: bool = False,
     only_debtors: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> list[StudentPublic]:
-    """`with_debt` adds each student's balance and overdue balance (two extra
+    """`carrera_of_plan_version_id` keeps the students enrolled in any plan of that
+    plan's carrera (any of its RVOE): enrolling into a group only offers students
+    of the group's carrera. A new student always arrives with a group, through
+    Inscripciones, so nobody is left out.
+
+    `with_debt` adds each student's balance and overdue balance (two extra
     grouped queries for the whole page, not one per row); `only_debtors` keeps
     just those with an overdue balance — filtered inside the query, before the
     LIMIT, so it means "debtors in the institution" and not "debtors on this
@@ -109,6 +115,19 @@ async def list_students(
         )
     if status:
         query = query.where(Student.status == status)
+    if carrera_of_plan_version_id:
+        plan = await session.get(PlanVersion, carrera_of_plan_version_id)
+        rvoe = plan and await session.get(Rvoe, plan.rvoe_id)
+        if rvoe is None:
+            raise HTTPException(status_code=404, detail="Plan de estudios no encontrado")
+        query = query.where(
+            Student.id.in_(  # type: ignore[attr-defined]
+                select(StudentPlanEnrollment.student_id)
+                .join(PlanVersion, PlanVersion.id == StudentPlanEnrollment.plan_version_id)
+                .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+                .where(Rvoe.program_id == rvoe.program_id)
+            )
+        )
     if only_debtors:
         query = query.where(
             Student.id.in_(treasury.overdue_debtor_ids_select())  # type: ignore[attr-defined]

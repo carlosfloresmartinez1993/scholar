@@ -1360,11 +1360,15 @@ function EnrollDialog({
   const [override, setOverride] = useState(false);
   const [waiveEnrollmentFee, setWaiveEnrollmentFee] = useState(false);
 
-  // only students of the group's campus can enroll (Servo Plantel key)
+  // only students of the group's campus (Servo Plantel key) and carrera: a student
+  // always enters with a group, so everyone who may enroll here is already in it
   const { data: students } = useQuery({
-    queryKey: ["students", "by-campus", group.campus_id],
+    queryKey: ["students", "by-campus", group.campus_id, "carrera", group.plan_version_id],
     queryFn: () =>
-      api<Student[]>(`/students?limit=1000&campus_id=${group.campus_id}`),
+      api<Student[]>(
+        `/students?limit=1000&campus_id=${group.campus_id}` +
+          `&carrera_of_plan_version_id=${group.plan_version_id}`,
+      ),
     enabled: open,
   });
 
@@ -1410,8 +1414,10 @@ function EnrollDialog({
         <DialogHeader>
           <DialogTitle>Inscribir alumno a {group.code}</DialogTitle>
           <DialogDescription>
-            Se validará la seriación y que el RVOE del plan esté vigente. Si no
-            selecciona materias se inscribirá a todas.
+            Solo aparecen alumnos de la carrera del grupo; los de nuevo ingreso
+            se inscriben desde «Inscripciones». Se validará la seriación y que el
+            RVOE del plan esté vigente. Si no selecciona materias se inscribirá a
+            todas.
           </DialogDescription>
         </DialogHeader>
         <form

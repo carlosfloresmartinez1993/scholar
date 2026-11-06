@@ -93,3 +93,46 @@ async def test_edit_plan_subject(client, seed):
     assert clash.status_code == 409
     empty = await client.patch(f"/api/v1/catalog/plan-subjects/{subject_id}", json={"name": "  "})
     assert empty.status_code == 400
+
+
+async def test_students_of_the_groups_carrera(client, seed):
+    """Enrolling into a group only offers students of that group's carrera (any of
+    its RVOE); students of other carreras, or with no plan, are left out."""
+    from tests.test_student_kardex import group_in_new_term, new_plan
+
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    derecho = await enroll_student(client, campus_id, catalog["group"]["id"])
+
+    # same carrera under another RVOE
+    plan2 = await new_plan(client, catalog["program"]["id"], campus_id, "20270002", [("LIAS101", 1)])
+    group2 = await group_in_new_term(client, plan2["id"], 1, "LD2-1A")
+    other_rvoe = (await client.post("/api/v1/students", json={
+        "curp": "GOMA020202MBCXNS08", "full_name": "Otro RVOE", "campus_id": campus_id,
+    })).json()
+    await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": other_rvoe["id"], "group_id": group2["id"],
+    })
+
+    # another carrera, and a student with no plan at all
+    psico = (await client.post("/api/v1/catalog/programs", json={
+        "code": "LP", "name": "Licenciatura en Psicología", "level": "licenciatura",
+    })).json()
+    plan_p = await new_plan(client, psico["id"], campus_id, "20270009", [("PSI101", 1)])
+    group_p = await group_in_new_term(client, plan_p["id"], 1, "LP-1A")
+    psicologo = (await client.post("/api/v1/students", json={
+        "curp": "PEPJ000101HBCRRNA1", "full_name": "Psicología", "campus_id": campus_id,
+    })).json()
+    await client.post("/api/v1/students/group-enrollments", json={
+        "student_id": psicologo["id"], "group_id": group_p["id"],
+    })
+    await client.post("/api/v1/students", json={
+        "curp": "LOPA990505MBCRRNA2", "full_name": "Sin plan", "campus_id": campus_id,
+    })
+
+    listed = (await client.get("/api/v1/students", params={
+        "carrera_of_plan_version_id": catalog["plan"]["id"],
+    })).json()
+    assert {s["id"] for s in listed} == {derecho["id"], other_rvoe["id"]}
+    assert len((await client.get("/api/v1/students")).json()) == 4  # unfiltered: everyone
