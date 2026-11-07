@@ -21,6 +21,7 @@ from app.models import (
     SessionWithAttendanceIn,
     Student,
     SubjectEnrollment,
+    SubjectEnrollmentStatus,
     User,
     UserRole,
 )
@@ -76,7 +77,8 @@ async def record_session(
         (
             await session.exec(
                 select(SubjectEnrollment.student_id).where(
-                    SubjectEnrollment.group_subject_id == body.group_subject_id
+                    SubjectEnrollment.group_subject_id == body.group_subject_id,
+                    SubjectEnrollment.status != SubjectEnrollmentStatus.baja,
                 )
             )
         ).all()
@@ -146,7 +148,8 @@ async def attendance_report(
     student_ids = (
         await session.exec(
             select(SubjectEnrollment.student_id).where(
-                SubjectEnrollment.group_subject_id == group_subject_id
+                SubjectEnrollment.group_subject_id == group_subject_id,
+                SubjectEnrollment.status != SubjectEnrollmentStatus.baja,
             )
         )
     ).all()

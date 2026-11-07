@@ -82,7 +82,8 @@ async def grade_grid(
         await session.exec(
             select(SubjectEnrollment, Student)
             .join(Student, Student.id == SubjectEnrollment.student_id)
-            .where(SubjectEnrollment.group_subject_id == group_subject_id)
+            .where(SubjectEnrollment.group_subject_id == group_subject_id,
+                   SubjectEnrollment.status != SubjectEnrollmentStatus.baja)
             .order_by(Student.full_name)
         )
     ).all()
@@ -168,6 +169,8 @@ async def _apply_capture(
     enrollment = await session.get(SubjectEnrollment, body.subject_enrollment_id)
     if enrollment is None:
         raise HTTPException(status_code=404, detail="Inscripción de materia no encontrada")
+    if enrollment.status == SubjectEnrollmentStatus.baja:
+        raise HTTPException(status_code=409, detail="La materia está dada de baja")
     group_subject = await session.get(GroupSubject, enrollment.group_subject_id)
     if group_subject is None:
         raise HTTPException(status_code=404, detail="Materia de grupo no encontrada")
@@ -282,7 +285,8 @@ async def generate_acta(
         await session.exec(
             select(SubjectEnrollment, Student)
             .join(Student, Student.id == SubjectEnrollment.student_id)
-            .where(SubjectEnrollment.group_subject_id == group_subject_id)
+            .where(SubjectEnrollment.group_subject_id == group_subject_id,
+                   SubjectEnrollment.status != SubjectEnrollmentStatus.baja)
             .order_by(Student.full_name)
         )
     ).all()

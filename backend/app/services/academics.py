@@ -128,6 +128,7 @@ async def kardex_rows(
         .where(
             SubjectEnrollment.student_id == student_id,
             PlanSubject.plan_version_id == plan_version_id,
+            SubjectEnrollment.status != SubjectEnrollmentStatus.baja,
         )
         .order_by(PlanSubject.period_number, PlanSubject.code, SubjectEnrollment.attempt_number)
     )
@@ -258,6 +259,7 @@ async def student_kardex(
             .where(
                 SubjectEnrollment.student_id == student_id,
                 PlanSubject.plan_version_id.in_(line_plan_versions),  # type: ignore[attr-defined]
+                SubjectEnrollment.status != SubjectEnrollmentStatus.baja,  # a dropped subject is not part of the record
             )
         )
     ).all()

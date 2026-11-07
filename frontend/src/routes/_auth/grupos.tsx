@@ -7,7 +7,15 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowUpCircle, CalendarDays, Plus, UserPlus, Users } from "lucide-react";
+import {
+  ArrowRightLeft,
+  ArrowUpCircle,
+  CalendarDays,
+  Plus,
+  UserMinus,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import {
   api,
   ApiError,
@@ -33,6 +41,11 @@ import type {
 } from "@/api/types";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
+import {
+  ChangeGroupDialog,
+  DropSubjectsDialog,
+  type GroupStudentSubjects,
+} from "@/components/enrollment-change-dialogs";
 import { SearchableSelect } from "@/components/searchable-select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -723,14 +736,33 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
               name: row.student_name,
               enrollment_number: row.enrollment_number,
               planSubjectIds: new Set<string>(),
+              subjects: [],
             })
             .get(row.student_id)!;
-        if (planSubjectId) student.planSubjectIds.add(planSubjectId);
+        if (planSubjectId) {
+          student.planSubjectIds.add(planSubjectId);
+          student.subjects.push({
+            planSubjectId,
+            subjectEnrollmentId: row.subject_enrollment_id,
+            finalGrade: row.final_grade ?? null,
+          });
+        }
       }
     });
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [gridQueries, groupSubjects]);
   const [addingTo, setAddingTo] = useState<EnrolledStudent | null>(null);
+  const [droppingFrom, setDroppingFrom] = useState<EnrolledStudent | null>(null);
+  const [moving, setMoving] = useState<EnrolledStudent | null>(null);
+
+  // after a baja or a cambio de grupo: rosters, billing and the student's record
+  function refreshAfterChange(studentId: string) {
+    queryClient.invalidateQueries({ queryKey: ["grade-grid"] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.groupSubjects(group.id) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.groupBillingStatus(group.id) });
+    queryClient.invalidateQueries({ queryKey: ["kardex", studentId] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.groupEnrollments(studentId) });
+  }
 
   function invalidateGrids() {
     for (const gs of groupSubjects ?? []) {
@@ -860,7 +892,7 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
                 <TableHead>Matrícula</TableHead>
                 <TableHead>Nombre</TableHead>
                 <TableHead>Materias inscritas</TableHead>
-                <TableHead className="w-44" />
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -874,13 +906,29 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
                     {s.planSubjectIds.size} / {(groupSubjects ?? []).length}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setAddingTo(s)}
-                    >
-                      <Plus className="size-4" /> Agregar materias
-                    </Button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAddingTo(s)}
+                      >
+                        <Plus className="size-4" /> Agregar materias
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDroppingFrom(s)}
+                      >
+                        <UserMinus className="size-4" /> Baja de materias
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setMoving(s)}
+                      >
+                        <ArrowRightLeft className="size-4" /> Cambiar de grupo
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -963,6 +1011,26 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
             invalidateGrids();
             queryClient.invalidateQueries({ queryKey: ["kardex", addingTo.student_id] });
           }}
+        />
+      )}
+
+      {droppingFrom && (
+        <DropSubjectsDialog
+          group={group}
+          student={droppingFrom}
+          subjectName={subjectName}
+          onClose={() => setDroppingFrom(null)}
+          onDone={() => refreshAfterChange(droppingFrom.student_id)}
+        />
+      )}
+
+      {moving && (
+        <ChangeGroupDialog
+          group={group}
+          groups={groups}
+          student={moving}
+          onClose={() => setMoving(null)}
+          onDone={() => refreshAfterChange(moving.student_id)}
         />
       )}
 
@@ -1201,6 +1269,7 @@ interface EnrolledStudent {
   name: string;
   enrollment_number: string;
   planSubjectIds: Set<string>; // materias that student takes in this group
+  subjects: GroupStudentSubjects["subjects"];
 }
 
 // Add plan subjects to a student already in the group, at any point of the term.

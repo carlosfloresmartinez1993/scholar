@@ -17,6 +17,7 @@ from app.models import (
     Rvoe,
     Student,
     SubjectEnrollment,
+    SubjectEnrollmentStatus,
     Term,
     User,
 )
@@ -123,7 +124,7 @@ async def integration_group_enrollments(session: SessionDep, group_id: uuid.UUID
             select(SubjectEnrollment, GroupSubject, Student)
             .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
             .join(Student, Student.id == SubjectEnrollment.student_id)
-            .where(GroupSubject.group_id == group_id)
+            .where(GroupSubject.group_id == group_id, SubjectEnrollment.status != SubjectEnrollmentStatus.baja)
         )
     ).all()
     return [

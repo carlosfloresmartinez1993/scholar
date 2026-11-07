@@ -106,7 +106,8 @@ async def _plan_history(session: AsyncSession, student_id, plan_version_id) -> l
         await session.exec(
             select(SubjectEnrollment, GroupSubject.plan_subject_id)
             .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
-            .where(SubjectEnrollment.student_id == student_id)
+            .where(SubjectEnrollment.student_id == student_id,
+                   SubjectEnrollment.status != SubjectEnrollmentStatus.baja)
         )
     ).all():
         current = best.get(plan_subject_id)
@@ -260,7 +261,8 @@ async def record_recognitions(
                 .where(
                     SubjectEnrollment.student_id == student.id,
                     GroupSubject.plan_subject_id == subject.id,
-                    SubjectEnrollment.status != SubjectEnrollmentStatus.reprobada,
+                    SubjectEnrollment.status.not_in(  # type: ignore[attr-defined]
+                        [SubjectEnrollmentStatus.reprobada, SubjectEnrollmentStatus.baja]),
                 )
             )
         ).first()
@@ -461,7 +463,7 @@ async def recognition_candidates(session: AsyncSession, student: Student, plan_v
             await session.exec(
                 select(GroupSubject.plan_subject_id)
                 .join(SubjectEnrollment, SubjectEnrollment.group_subject_id == GroupSubject.id)
-                .where(SubjectEnrollment.student_id == student.id)
+                .where(SubjectEnrollment.student_id == student.id, SubjectEnrollment.status != SubjectEnrollmentStatus.baja)
             )
         ).all()
     )

@@ -376,6 +376,19 @@ class OfficialGradeIn(SQLModel):
     grade: float = Field(ge=0, le=10)
 
 
+class SubjectDropIn(SQLModel):
+    """Baja de materias en curso (mismo alumno)."""
+    subject_enrollment_ids: list[uuid.UUID]
+    reason: str = Field(default="", max_length=255)
+
+
+class GroupChangeIn(SQLModel):
+    """Cambio de grupo dentro del mismo ciclo y plan."""
+    from_group_id: uuid.UUID
+    to_group_id: uuid.UUID
+    reason: str = Field(default="", max_length=255)
+
+
 class GroupEnrollmentPublic(SQLModel):
     id: uuid.UUID
     student_id: uuid.UUID

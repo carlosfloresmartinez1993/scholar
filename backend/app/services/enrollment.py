@@ -28,6 +28,7 @@ from app.models import (
 from app.services import audit
 from app.services.academics import (
     check_prerequisites,
+    internal_group_clause,
     get_or_create_plan_enrollment,
     require_operable_rvoe,
 )
@@ -313,6 +314,7 @@ async def enroll_student_core(
                 .where(
                     SubjectEnrollment.student_id == student.id,
                     GroupSubject.plan_subject_id == gs.plan_subject_id,
+                    SubjectEnrollment.status != SubjectEnrollmentStatus.baja,  # no es intento
                 )
             )
         ).all()
@@ -366,12 +368,32 @@ async def add_subjects_core(
             select(GroupEnrollment).where(
                 GroupEnrollment.student_id == student.id,
                 GroupEnrollment.group_id == group.id,
-                GroupEnrollment.status == GroupEnrollmentStatus.activa,
             )
         )
     ).first()
     if enrollment is None:
         raise HTTPException(status_code=404, detail="El alumno no está inscrito en ese grupo")
+    # closed only because every subject was dropped (a group change leaves no
+    # subject in course there): adding one back reopens it
+    reopen = enrollment.status != GroupEnrollmentStatus.activa
+    if reopen:
+        moved = (
+            await session.exec(
+                select(GroupEnrollment.id)
+                .join(Group, Group.id == GroupEnrollment.group_id)
+                .where(
+                    GroupEnrollment.student_id == student.id,
+                    GroupEnrollment.plan_enrollment_id == enrollment.plan_enrollment_id,
+                    GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                    Group.term_id == group.term_id,
+                    ~internal_group_clause(),
+                )
+            )
+        ).first()
+        if moved:
+            raise HTTPException(
+                status_code=409, detail="El alumno ya no está en este grupo (cambió de grupo)"
+            )
     if override_prerequisites and not (
         current_user.is_superuser
         or current_user.role in (UserRole.servicios_escolares, UserRole.admin_sistema)
@@ -407,6 +429,12 @@ async def add_subjects_core(
                 )
             )
         ).all()
+        dropped_here = next(
+            (a for a, _ in attempts
+             if a.group_enrollment_id == enrollment.id and a.status == SubjectEnrollmentStatus.baja),
+            None,
+        )
+        attempts = [(a, gs) for a, gs in attempts if a.status != SubjectEnrollmentStatus.baja]
         for attempt, gs in attempts:
             if attempt.group_enrollment_id == enrollment.id:
                 raise HTTPException(
@@ -432,13 +460,21 @@ async def add_subjects_core(
             group_subject = GroupSubject(group_id=group.id, plan_subject_id=subject.id)
             session.add(group_subject)
             await session.flush()
-        subject_enrollment = SubjectEnrollment(
-            group_enrollment_id=enrollment.id, group_subject_id=group_subject.id,
-            student_id=student.id, attempt_number=len(attempts) + 1,
-        )
+        if dropped_here is not None:  # dropped earlier in this same group: back in course
+            subject_enrollment = dropped_here
+            subject_enrollment.status = SubjectEnrollmentStatus.cursando
+            subject_enrollment.attempt_number = len(attempts) + 1
+        else:
+            subject_enrollment = SubjectEnrollment(
+                group_enrollment_id=enrollment.id, group_subject_id=group_subject.id,
+                student_id=student.id, attempt_number=len(attempts) + 1,
+            )
         session.add(subject_enrollment)
         added.append(subject_enrollment)
 
+    if reopen:
+        enrollment.status = GroupEnrollmentStatus.activa
+        session.add(enrollment)
     audit.record(
         session, actor=current_user.email, action="subject_enrollment.added",
         entity="group_enrollment", entity_id=str(enrollment.id),

@@ -33,6 +33,8 @@ from app.models import (
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
     OfficialGradeIn,
+    SubjectDropIn,
+    GroupChangeIn,
     RecognitionsIn,
     RvoeChangeIn,
     GroupEnrollmentPublic,
@@ -63,6 +65,7 @@ from app.services import audit, calendar, treasury
 from app.services.academics import internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
+from app.services.enrollment_changes import change_group, drop_subjects
 from app.services.files import save_upload
 from app.services.plan_change import (
     apply_change,
@@ -554,6 +557,42 @@ async def official_grade(
         raise HTTPException(status_code=404, detail="Materia no encontrada")
     await _student_in_scope(session, scope, enrollment.student_id)
     enrollment = await set_official_grade(session, current_user, enrollment, body.grade)
+    await session.commit()
+    await session.refresh(enrollment)
+    return enrollment
+
+
+@router.post("/subject-enrollments/drop")
+async def drop_subject_enrollments(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    body: SubjectDropIn,
+) -> list[SubjectEnrollmentPublic]:
+    """Baja de materias en curso: salen de las listas del grupo y del kárdex."""
+    for se_id in body.subject_enrollment_ids:
+        enrollment = await session.get(SubjectEnrollment, se_id)
+        if enrollment is None:
+            raise HTTPException(status_code=404, detail="Materia no encontrada")
+        await _student_in_scope(session, scope, enrollment.student_id)
+    dropped = await drop_subjects(session, current_user, body.subject_enrollment_ids, body.reason)
+    await session.commit()
+    for enrollment in dropped:
+        await session.refresh(enrollment)
+    return dropped
+
+
+@router.post("/{student_id}/group-change")
+async def group_change(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    student_id: uuid.UUID, body: GroupChangeIn,
+) -> GroupEnrollmentPublic:
+    """Cambio de grupo (mismo ciclo y plan): las materias en curso se mueven con
+    sus calificaciones; los cargos siguen al alumno."""
+    student, from_group = await _student_and_group(session, scope, student_id, body.from_group_id)
+    to_group = await session.get(Group, body.to_group_id)
+    if to_group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, to_group.campus_id)
+    enrollment = await change_group(session, current_user, student, from_group, to_group, body.reason)
     await session.commit()
     await session.refresh(enrollment)
     return enrollment

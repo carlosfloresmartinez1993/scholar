@@ -24,6 +24,7 @@ from app.models import (
     StudentPlanEnrollment,
     StudentPublic,
     SubjectEnrollment,
+    SubjectEnrollmentStatus,
     Term,
 )
 from app.services.academics import curricular_progress, kardex_rows
@@ -145,6 +146,7 @@ async def portal_grades(
             .where(
                 SubjectEnrollment.student_id == student.id,
                 GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                SubjectEnrollment.status != SubjectEnrollmentStatus.baja,
                 Term.is_open == True,  # noqa: E712
             )
             .order_by(PlanSubject.code)
