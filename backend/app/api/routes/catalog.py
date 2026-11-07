@@ -57,7 +57,7 @@ from app.models import (
     TermUpdate,
 )
 from app.services import audit, calendar
-from app.services.academics import require_operable_rvoe
+from app.services.academics import internal_group_clause, require_operable_rvoe
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -642,8 +642,11 @@ async def list_groups(
     term_id: uuid.UUID | None = None,
     plan_version_id: uuid.UUID | None = None,
     campus_id: uuid.UUID | None = None,
+    include_internal: bool = False,
 ) -> list[GroupPublic]:
     q = select(Group).order_by(Group.code)
+    if not include_internal:  # equivalencia/convalidación groups: nobody attends them
+        q = q.where(~internal_group_clause())
     if scope is not None:
         q = q.where(Group.campus_id.in_(scope))  # type: ignore[attr-defined]
     if term_id:

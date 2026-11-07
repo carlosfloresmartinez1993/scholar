@@ -32,6 +32,7 @@ from app.models import (
     GroupEnrollment,
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
+    RvoeChangeIn,
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,
     PlanEnrollmentCreate,
@@ -57,10 +58,11 @@ from app.models import (
     WizardIntakeResult,
 )
 from app.services import audit, calendar, treasury
-from app.services.academics import require_operable_rvoe
+from app.services.academics import internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
 from app.services.files import save_upload
+from app.services.plan_change import apply_change, change_proposal
 from app.services.portal import credentials_email, grant_portal_access
 from app.services.promotion import promote_cycle
 from app.services.roster_import import normalize_date, normalize_sex, parse_roster
@@ -459,6 +461,44 @@ async def add_subjects_to_group_enrollment(
     return added
 
 
+async def _student_and_group(session, scope, student_id, group_id) -> tuple[Student, Group]:
+    student = await session.get(Student, student_id)
+    if student is None or (scope is not None and student.campus_id not in scope):
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, group.campus_id)
+    return student, group
+
+
+@router.get("/{student_id}/rvoe-change/proposal")
+async def rvoe_change_proposal(
+    session: SessionDep, _: ServiciosEscolares, scope: CampusScope, student_id: uuid.UUID,
+    from_plan_version_id: uuid.UUID, target_group_id: uuid.UUID,
+) -> dict:
+    """Cambio de RVOE, step 2: the proposed decision for every subject of the new
+    plan below the destination group's cuatrimestre."""
+    student, group = await _student_and_group(session, scope, student_id, target_group_id)
+    return await change_proposal(session, student, from_plan_version_id, group)
+
+
+@router.post("/{student_id}/rvoe-change")
+async def rvoe_change(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    student_id: uuid.UUID, body: RvoeChangeIn,
+) -> dict:
+    """Cambio de RVOE: close the current plan, enroll into the destination group and
+    apply each subject's decision (convalidar, EQ, REV, cursar ahora, pendiente)."""
+    student, group = await _student_and_group(session, scope, student_id, body.target_group_id)
+    result = await apply_change(
+        session, current_user, student, body.from_plan_version_id, group,
+        [d.model_dump() for d in body.decisions],
+    )
+    await session.commit()
+    return result
+
+
 @router.post("/intake", status_code=201)
 async def wizard_intake(
     session: SessionDep,
@@ -687,7 +727,7 @@ async def sep_export(
         .join(PlanVersion, PlanVersion.id == Group.plan_version_id)
         .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
         .join(Program, Program.id == Rvoe.program_id)
-        .where(Group.term_id == term_id)
+        .where(Group.term_id == term_id, ~internal_group_clause())
         .order_by(Program.name, Student.full_name)
     )
     buffer = io.StringIO()

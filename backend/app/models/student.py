@@ -344,6 +344,21 @@ class GroupEnrollmentSubjectsAdd(SQLModel):
     override_prerequisites: bool = False
 
 
+class RvoeChangeDecision(SQLModel):
+    """What happens with one subject of the new plan in a cambio de RVOE."""
+    plan_subject_id: uuid.UUID
+    action: str  # conv | eq | rev | cursar | pendiente
+    grade: float | None = None  # conv: required; eq/rev: None while pending
+    source_subject_enrollment_id: uuid.UUID | None = None  # old subject it comes from
+    group_id: uuid.UUID | None = None  # cursar: where (default: destination group)
+
+
+class RvoeChangeIn(SQLModel):
+    from_plan_version_id: uuid.UUID
+    target_group_id: uuid.UUID
+    decisions: list[RvoeChangeDecision] = []
+
+
 class GroupEnrollmentPublic(SQLModel):
     id: uuid.UUID
     student_id: uuid.UUID

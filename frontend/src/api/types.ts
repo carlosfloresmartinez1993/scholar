@@ -609,6 +609,39 @@ export interface StudentKardex {
   progress: CurricularProgress | null;
 }
 
+// Cambio de RVOE: decision for each subject of the new plan below the destination
+export type RvoeChangeAction = "conv" | "eq" | "rev" | "cursar" | "pendiente";
+
+export interface RvoeChangeItem {
+  plan_subject_id: string;
+  code: string;
+  name: string;
+  period_number: number;
+  credits: number;
+  action: RvoeChangeAction; // proposed
+  source_subject_enrollment_id: string | null;
+  grade: number | null;
+  groups: { group_id: string; code: string }[]; // groups of the term teaching it
+}
+
+export interface RvoeChangeApproved {
+  subject_enrollment_id: string;
+  plan_subject_id: string;
+  code: string;
+  name: string;
+  period_number: number;
+  grade: number | null;
+}
+
+export interface RvoeChangeProposal {
+  from_plan_version_id: string;
+  target_group_id: string;
+  target_plan_version_id: string;
+  target_period_number: number;
+  items: RvoeChangeItem[];
+  approved: RvoeChangeApproved[];
+}
+
 export interface DegreeRecord {
   id: string;
   student_id: string;

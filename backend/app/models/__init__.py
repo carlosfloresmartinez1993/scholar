@@ -65,6 +65,8 @@ from app.models.student import (
     GroupEnrollment,
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
+    RvoeChangeDecision,
+    RvoeChangeIn,
     GroupEnrollmentKind,
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,

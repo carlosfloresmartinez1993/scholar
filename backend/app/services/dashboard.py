@@ -30,6 +30,7 @@ from app.models import (
     Term,
 )
 from app.models.common import utcnow
+from app.services.academics import internal_group_clause
 from app.services.treasury import charges_paid_map
 
 LEVEL_ORDER = list(EducationLevel)
@@ -155,7 +156,13 @@ async def _enrollments_between(
     count = await session.scalar(
         select(func.count())
         .select_from(GroupEnrollment)
-        .where(GroupEnrollment.created_at >= start, GroupEnrollment.created_at < end)
+        .where(
+            GroupEnrollment.created_at >= start,
+            GroupEnrollment.created_at < end,
+            GroupEnrollment.group_id.not_in(  # type: ignore[attr-defined]
+                select(Group.id).where(internal_group_clause())
+            ),
+        )
     )
     return count or 0
 

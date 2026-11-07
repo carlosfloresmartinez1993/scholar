@@ -161,10 +161,12 @@ async def test_kardex_spans_rvoe_change(client, seed):
 
     k = await kardex(client, student["id"])
     assert k["current_plan_version_id"] == plan2["id"]
-    # 1.º studied under the old RVOE: the new plan's pending LIAS101 would duplicate it
-    assert [r["code"] for r in k["rows"]] == ["DER101", "LIAS201", "LIAS301"]
+    # 1.º studied under the old RVOE; the new plan's LIAS101 was not convalidated, so
+    # the student owes it and it shows there too
+    assert [r["code"] for r in k["rows"]] == ["DER101", "LIAS101", "LIAS201", "LIAS301"]
     statuses = {r["code"]: r["status"] for r in k["rows"]}
-    assert statuses == {"DER101": "cursando", "LIAS201": "pendiente", "LIAS301": "cursando"}
+    assert statuses == {"DER101": "cursando", "LIAS101": "pendiente",
+                        "LIAS201": "pendiente", "LIAS301": "cursando"}
     assert k["periods"] == [
         {"period_number": 1, "rvoe": "20260001", "rvoe_changed": True},
         {"period_number": 2, "rvoe": "20270002", "rvoe_changed": True},

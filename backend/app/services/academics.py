@@ -1,15 +1,17 @@
 """Academic business rules: RVOE operability (RT-03), seriación (RF-C07),
 kardex and curricular progress (RF-C05/C06/C08), attendance right-to-exam
 (RF-A02/A05)."""
+import json
 import uuid
 from collections import defaultdict
 
 from fastapi import HTTPException
-from sqlmodel import func, select
+from sqlmodel import func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
     AttendanceRecord,
+    AuditLog,
     AttendanceStatus,
     Campus,
     ClassSession,
@@ -34,6 +36,10 @@ from app.models import (
 
 PASSING_GRADE = 6.0
 
+# audit action of a cambio de RVOE (services/plan_change.py); the kárdex reads it to
+# chain the plan that was left with the one it led to
+PLAN_CHANGE_ACTION = "plan_enrollment.rvoe_changed"
+
 # Subjects acreditadas por equivalencia / revalidación / convalidación live in an
 # internal group whose code ends with the kind (e.g. "ARQ-014-EQ"); their grade is
 # the authority's, not one captured through evaluation components.
@@ -55,6 +61,12 @@ def ordinary_grade(
 def recognition_kind(group_code: str) -> str | None:
     code = group_code.upper()
     return next((kind for suffix, kind in RECOGNITION_SUFFIXES.items() if code.endswith(suffix)), None)
+
+
+def internal_group_clause():
+    """SQL condition for those internal recognition groups — kept out of the group
+    lists, the SEP export and enrollment counts (nobody attends them)."""
+    return or_(*[Group.code.ilike(f"%{suffix}") for suffix in RECOGNITION_SUFFIXES])  # type: ignore[attr-defined]
 
 
 async def require_operable_rvoe(session: AsyncSession, plan_version_id: uuid.UUID) -> Rvoe:
@@ -172,11 +184,15 @@ async def student_kardex(
     Rows are every subject enrollment (each attempt, each plan of the carrera) plus
     the subjects of the current plan not yet taken. A period (cuatrimestre) is studied
     under a single RVOE: the one of its earliest subject actually taken there, or the
-    current plan's if nothing was taken yet. Rows of another RVOE in that period are
-    dropped unless they were actually studied (they duplicate it: pendientes or
-    convalidaciones of the new plan). Progress is measured against the current plan:
-    the inscrito one that started last. A student with two carreras has one kárdex
-    each; `program_id` picks it (default: the carrera of the current plan)."""
+    current plan's if nothing was taken yet. In that period, recognitions of another
+    RVOE (the new plan's convalidaciones of what was studied) are not shown — they
+    would duplicate it — but owed subjects of the current plan are. Progress is
+    measured against the current plan: the inscrito one that started last.
+
+    A plan left through a cambio de RVOE (PLAN_CHANGE_ACTION in the audit log) is
+    part of the kárdex of the plan it led to, even in another carrera: one history.
+    A student with two active carreras has one kárdex each; `program_id` picks it
+    (default: the carrera of the current plan)."""
     plan_enrollments = (
         await session.exec(
             select(StudentPlanEnrollment, Term, Rvoe, Program)
@@ -194,13 +210,37 @@ async def student_kardex(
     def recency(row):
         return (row[0].status == PlanEnrollmentStatus.inscrito, row[1].start_date)
 
+    # cambio de RVOE links: new plan enrollment -> the one it replaced
+    by_id = {row[0].id: row for row in plan_enrollments}
+    came_from: dict[uuid.UUID, uuid.UUID] = {}
+    for log in (
+        await session.exec(
+            select(AuditLog).where(
+                AuditLog.action == PLAN_CHANGE_ACTION,
+                AuditLog.entity_id.in_([str(i) for i in by_id]),  # type: ignore[attr-defined]
+            )
+        )
+    ).all():
+        previous = json.loads(log.detail or "{}").get("from_plan_enrollment_id")
+        if previous and uuid.UUID(previous) in by_id:
+            came_from[uuid.UUID(log.entity_id)] = uuid.UUID(previous)
+    replaced = set(came_from.values())
+    heads = [row for row in plan_enrollments if row[0].id not in replaced]
+
     programs: dict[uuid.UUID, str] = {}
-    for _, _, _, program in sorted(plan_enrollments, key=recency, reverse=True):
+    for _, _, _, program in sorted(heads, key=recency, reverse=True):
         programs.setdefault(program.id, program.name)
     if program_id not in programs:
         program_id = next(iter(programs))
-    plan_enrollments = [row for row in plan_enrollments if row[3].id == program_id]
-    current, _, current_rvoe, _ = max(plan_enrollments, key=recency)
+    heads = [row for row in heads if row[3].id == program_id]
+    line: set[uuid.UUID] = set()
+    for head, *_ in heads:
+        cursor = head.id
+        while cursor is not None and cursor not in line:
+            line.add(cursor)
+            cursor = came_from.get(cursor)
+    line_plan_versions = {by_id[i][0].plan_version_id for i in line}
+    current, _, current_rvoe, _ = max(heads, key=recency)
     current_plan = await session.get(PlanVersion, current.plan_version_id)
 
     taken = (
@@ -213,7 +253,10 @@ async def student_kardex(
             .join(Group, Group.id == GroupSubject.group_id)
             .join(Term, Term.id == Group.term_id)
             .join(Campus, Campus.id == Group.campus_id)
-            .where(SubjectEnrollment.student_id == student_id, Rvoe.program_id == program_id)
+            .where(
+                SubjectEnrollment.student_id == student_id,
+                PlanSubject.plan_version_id.in_(line_plan_versions),  # type: ignore[attr-defined]
+            )
         )
     ).all()
     rvoe_by_plan = {subject.plan_version_id: rvoe.agreement_number for _, subject, *_, rvoe in taken}
@@ -327,7 +370,12 @@ async def student_kardex(
         rvoe = first_studied["rvoe"] if first_studied else current_rvoe.agreement_number
         periods.append({"period_number": number, "rvoe": rvoe, "rvoe_changed": rvoe != previous})
         previous = rvoe
-        visible.extend(r for r in period_rows if r["rvoe"] == rvoe or studied(r))
+        # hide only settled recognitions of another RVOE (they duplicate what was
+        # studied); owed subjects and still-pending EQ/REV stay visible
+        visible.extend(
+            r for r in period_rows
+            if r["rvoe"] == rvoe or studied(r) or r["final_grade"] is None
+        )
 
     return {
         "program_id": str(program_id),

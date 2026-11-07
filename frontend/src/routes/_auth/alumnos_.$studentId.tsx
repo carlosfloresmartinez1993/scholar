@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  ArrowRightLeft,
   BadgeDollarSign,
   CalendarDays,
   Download,
@@ -50,6 +51,7 @@ import type {
 import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
+import { RvoeChangeDialog } from "@/components/rvoe-change-dialog";
 import {
   grade,
   isRetake,
@@ -1199,6 +1201,7 @@ function AcademicoTab({ student }: { student: Student }) {
   // one kárdex per carrera across all its plans/RVOE; progress is against the
   // carrera's current plan. Default carrera: the one of the current plan.
   const [programId, setProgramId] = useState<string | null>(null);
+  const [changingRvoe, setChangingRvoe] = useState(false);
   const { data: kardex, isLoading: loadingKardex } = useQuery({
     queryKey: queryKeys.studentKardex(student.id, programId),
     queryFn: () =>
@@ -1316,6 +1319,13 @@ function AcademicoTab({ student }: { student: Student }) {
             <div className="flex gap-2">
               <Button
                 variant="outline"
+                disabled={!currentPlanId}
+                onClick={() => setChangingRvoe(true)}
+              >
+                <ArrowRightLeft className="size-4" /> Cambio de RVOE
+              </Button>
+              <Button
+                variant="outline"
                 disabled={!kardex}
                 onClick={() => {
                   const data = kardexPrintData();
@@ -1341,6 +1351,18 @@ function AcademicoTab({ student }: { student: Student }) {
               </Button>
             </div>
           </div>
+          {changingRvoe && currentPlanId && (
+            <RvoeChangeDialog
+              student={student}
+              fromPlanVersionId={currentPlanId}
+              planLabels={planVersionLabels}
+              terms={terms ?? []}
+              onClose={() => {
+                setChangingRvoe(false);
+                setProgramId(null); // the kárdex follows the new plan
+              }}
+            />
+          )}
           {loadingKardex && <Skeleton className="h-40 w-full rounded-md" />}
           {kardex?.progress && (
             <>
