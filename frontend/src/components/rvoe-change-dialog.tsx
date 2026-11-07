@@ -164,7 +164,7 @@ export function RvoeChangeDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[min(96vw,90rem)]">
         <DialogHeader>
           <DialogTitle>Cambio de RVOE — {student.full_name}</DialogTitle>
           <DialogDescription>
@@ -224,6 +224,48 @@ export function RvoeChangeDialog({
               plan nuevo de cuatrimestres anteriores: decide qué pasa con cada una.
               {proposal.items.length === 0 && " No hay materias anteriores: empieza desde ese cuatrimestre."}
             </p>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,5fr)]">
+            <div className="space-y-2">
+              <p className="text-sm font-bold">
+                Plan anterior — <span data-numeric>{proposal.from_rvoe}</span>
+              </p>
+              <div className="max-h-[60vh] overflow-y-auto rounded-md border text-xs">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Cuatri.</TableHead>
+                      <TableHead>Materia</TableHead>
+                      <TableHead className="text-right">Calif.</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {proposal.old_subjects.map((o) => (
+                      <TableRow
+                        key={o.code}
+                        className={o.status === "aprobada" ? undefined : "text-muted-foreground"}
+                      >
+                        <TableCell data-numeric>{o.period_number}</TableCell>
+                        <TableCell>
+                          <span className="font-semibold" data-numeric>
+                            {o.code}
+                          </span>{" "}
+                          {o.name}
+                        </TableCell>
+                        <TableCell data-numeric className="text-right">
+                          {o.status === "sin_cursar"
+                            ? "sin cursar"
+                            : o.status === "aprobada"
+                              ? (o.grade ?? "")
+                              : `${o.grade ?? ""} ${o.status}`}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+            <div className="space-y-2">
+            <p className="text-sm font-bold">Plan nuevo — decisiones</p>
             {proposal.items.length > 0 && (
               <div className="overflow-x-auto rounded-md border">
                 <Table>
@@ -336,6 +378,8 @@ export function RvoeChangeDialog({
                 </Table>
               </div>
             )}
+            </div>
+            </div>
             <p className="text-xs text-muted-foreground">
               Equivalencia o revalidación sin calificación quedan como «EQ/REV pendiente» hasta
               registrar la nota oficial. «Cursar ahora» en otro grupo crea otra inscripción (puede

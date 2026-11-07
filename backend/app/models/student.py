@@ -359,6 +359,23 @@ class RvoeChangeIn(SQLModel):
     decisions: list[RvoeChangeDecision] = []
 
 
+class RecognitionItem(SQLModel):
+    plan_subject_id: uuid.UUID
+    kind: str  # eq | rev | conv
+    grade: float | None = None  # None: pending the authority's document
+    origin: str = ""  # where it comes from (school, RVOE, certificate)
+
+
+class RecognitionsIn(SQLModel):
+    """Reconocer estudios previos: subjects below the current cuatrimestre."""
+    plan_version_id: uuid.UUID
+    items: list[RecognitionItem] = []
+
+
+class OfficialGradeIn(SQLModel):
+    grade: float = Field(ge=0, le=10)
+
+
 class GroupEnrollmentPublic(SQLModel):
     id: uuid.UUID
     student_id: uuid.UUID

@@ -1,6 +1,14 @@
 // Downloadable kárdex as a PDF file, same content as the printed one
 // (lib/kardex-print.ts). jsPDF is loaded on demand so it stays out of the main bundle.
-import { kardexCells, kardexHeaders, kardexSections, showE2 } from "@/lib/kardex";
+import {
+  kardexCells,
+  kardexHeaders,
+  kardexSections,
+  PREVIOUS_HEADERS,
+  previousCells,
+  showE2,
+  showOrigin,
+} from "@/lib/kardex";
 import type { KardexPrintData } from "@/lib/kardex-print";
 
 export async function downloadKardexPdf(d: KardexPrintData) {
@@ -23,7 +31,9 @@ export async function downloadKardexPdf(d: KardexPrintData) {
   doc.text(doc.splitTextToSize(`Plan vigente: ${d.planLabel}`, 188), margin, 35);
 
   const withE2 = showE2(d.kardex);
-  const headers = kardexHeaders(withE2);
+  const withOrigin = showOrigin(d.kardex);
+  const headers = kardexHeaders(withE2, withOrigin);
+  const gradeCols = withE2 ? 6 : 5;
   const n = headers.length;
   const body = kardexSections(d.kardex).flatMap((s) => [
     [
@@ -34,7 +44,7 @@ export async function downloadKardexPdf(d: KardexPrintData) {
         styles: { halign: "right" as const, fontStyle: "bold" as const, fillColor: 235 },
       },
     ],
-    ...s.rows.map((r) => kardexCells(r, withE2)),
+    ...s.rows.map((r) => kardexCells(r, withE2, withOrigin)),
   ]);
 
   autoTable(doc, {
@@ -47,13 +57,29 @@ export async function downloadKardexPdf(d: KardexPrintData) {
     columnStyles: {
       1: { cellWidth: 52 },
       ...Object.fromEntries(
-        headers.map((_, i) => [i, i === 2 || (i >= 5 && i < n - 1) ? { halign: "right" as const } : {}]),
+        headers.map((_, i) => [i, i === 2 || (i >= 5 && i < 5 + gradeCols) ? { halign: "right" as const } : {}]),
       ),
     },
   });
 
   // jspdf-autotable records where the table ended on the document
-  const end = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+  const lastY = () => (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+  for (const p of d.kardex.previous) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(`Estudios en RVOE anterior — ${p.rvoe} · ${p.program}`, margin, lastY() + 8);
+    doc.setFont("helvetica", "normal");
+    autoTable(doc, {
+      startY: lastY() + 10,
+      margin: { left: margin, right: margin },
+      head: [PREVIOUS_HEADERS],
+      body: p.rows.map(previousCells),
+      styles: { font: "helvetica", fontSize: 7, cellPadding: 1.2 },
+      headStyles: { fillColor: 90, textColor: 255 },
+      columnStyles: { 1: { cellWidth: 60 } },
+    });
+  }
+  const end = lastY();
   const p = d.kardex.progress;
   doc.setFontSize(8.5);
   let y = end + 7;

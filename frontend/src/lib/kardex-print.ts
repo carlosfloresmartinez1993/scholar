@@ -1,7 +1,15 @@
 // Printable kárdex (historial académico). Mirrors lib/receipt.ts: renders HTML
 // into a hidden iframe and drives window.print() — no PDF lib, no dependencies.
 // Uses a full letter page instead of the 80mm thermal layout.
-import { kardexCells, kardexHeaders, kardexSections, showE2 } from "@/lib/kardex";
+import {
+  kardexCells,
+  kardexHeaders,
+  kardexSections,
+  PREVIOUS_HEADERS,
+  previousCells,
+  showE2,
+  showOrigin,
+} from "@/lib/kardex";
 import type { StudentKardex } from "@/api/types";
 
 export interface KardexPrintData {
@@ -38,17 +46,21 @@ const STYLE = `
   td.period span { float: right; font-size: 10px; }
   .r { text-align: right; }
   .totals { margin-top: 10px; font-size: 11px; }
+  h2.prev { font-size: 12px; margin: 16px 0 2px; }
   .totals span { display: inline-block; margin-right: 24px; }
   .foot { margin-top: 18px; font-size: 10px; color: #555; }
 `;
 
 // columns after Asignatura are numeric except the last (Estatus)
-const isNumeric = (i: number, total: number) => i === 2 || (i >= 5 && i < total - 1);
+// Créd. and the grade columns (CF, E1, [E2], EQ, REV, CONV) are right-aligned
+const isNumeric = (i: number, gradeCols: number) => i === 2 || (i >= 5 && i < 5 + gradeCols);
 
 function body(d: KardexPrintData): string {
   const p = d.kardex.progress;
   const withE2 = showE2(d.kardex);
-  const headers = kardexHeaders(withE2);
+  const withOrigin = showOrigin(d.kardex);
+  const headers = kardexHeaders(withE2, withOrigin);
+  const gradeCols = withE2 ? 6 : 5;
   const rows = kardexSections(d.kardex)
     .map(
       (s) =>
@@ -58,8 +70,8 @@ function body(d: KardexPrintData): string {
         s.rows
           .map(
             (r) =>
-              `<tr>${kardexCells(r, withE2)
-                .map((cell, i) => `<td${isNumeric(i, headers.length) ? ' class="r"' : ""}>${esc(cell)}</td>`)
+              `<tr>${kardexCells(r, withE2, withOrigin)
+                .map((cell, i) => `<td${isNumeric(i, gradeCols) ? ' class="r"' : ""}>${esc(cell)}</td>`)
                 .join("")}</tr>`,
           )
           .join(""),
@@ -90,6 +102,15 @@ function body(d: KardexPrintData): string {
     </div>`
         : ""
     }
+    ${d.kardex.previous
+      .map(
+        (p) => `<h2 class="prev">Estudios en RVOE anterior — ${esc(p.rvoe)} · ${esc(p.program)}</h2>
+      <table>
+        <thead><tr>${PREVIOUS_HEADERS.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>${p.rows.map((r) => `<tr>${previousCells(r).map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table>`,
+      )
+      .join("")}
     <div class="foot">Documento informativo, sin validez oficial. Impreso el ${new Date().toLocaleDateString("es-MX")}.</div>
   `;
 }

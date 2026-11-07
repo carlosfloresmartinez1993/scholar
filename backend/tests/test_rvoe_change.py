@@ -102,11 +102,17 @@ async def test_proposal_matches_by_name(client, seed):
 async def test_apply_change_one_history(client, seed):
     campus_id, student, old = await studied_old_plan(client, seed)
     new, new_ids, group = await new_plan_and_group(client, campus_id)
+    proposal = (await client.get(f"{API}/students/{student['id']}/rvoe-change/proposal", params={
+        "from_plan_version_id": old["id"], "target_group_id": group["id"],
+    })).json()
+    assert [s["status"] for s in proposal["old_subjects"]] == ["aprobada", "aprobada", "aprobada", "reprobada"]
+    proposal_source = next(i for i in proposal["items"] if i["code"] == "O201")["source_subject_enrollment_id"]
 
     decisions = [
         {"plan_subject_id": new_ids["O101"][0], "action": "conv", "grade": 9},
         {"plan_subject_id": new_ids["O102"][0], "action": "eq"},  # official grade not in yet
-        {"plan_subject_id": new_ids["O201"][0], "action": "conv", "grade": 10},
+        {"plan_subject_id": new_ids["O201"][0], "action": "conv", "grade": 10,
+         "source_subject_enrollment_id": proposal_source},
         {"plan_subject_id": new_ids["O202"][0], "action": "cursar"},  # in the destination group
         {"plan_subject_id": new_ids["O203"][0], "action": "pendiente"},
     ]
@@ -120,19 +126,23 @@ async def test_apply_change_one_history(client, seed):
 
     k = (await client.get(f"{API}/grades/students/{student['id']}/kardex-completo")).json()
     assert [p["name"] for p in k["programs"]] == ["Bachillerato Online"]  # one history
-    assert k["periods"] == [
-        {"period_number": 1, "rvoe": "RVOE-PRES-01", "rvoe_changed": True},
-        {"period_number": 2, "rvoe": "RVOE-PRES-01", "rvoe_changed": False},
-        {"period_number": 3, "rvoe": "RVOE-ONL-02", "rvoe_changed": True},
-    ]
+    assert {p["rvoe"] for p in k["periods"]} == {"RVOE-ONL-02"}  # certificate's RVOE
     rows = {r["code"]: r for r in k["rows"]}
-    # what was studied under the old RVOE, once; the convalidaciones count but don't repeat
-    assert {"P101", "P102", "P201", "P202"} <= set(rows)
-    assert "O101" not in rows and "O201" not in rows
+    # the final plan, complete: recognitions with their origin, plus what is owed
+    assert set(rows) == {"O101", "O102", "O201", "O202", "O203", "O301"}
+    assert rows["O101"]["recognition"] == "conv" and rows["O101"]["final_grade"] == 9.0
+    assert rows["O101"]["origin"] == "RVOE-PRES-01"  # no source picked: just the RVOE
+    assert rows["O201"]["origin"] == "RVOE-PRES-01 · P201 Matemáticas II"
     assert rows["O102"]["recognition"] == "eq" and rows["O102"]["final_grade"] is None  # EQ pendiente
     assert rows["O202"]["status"] == "cursando" and rows["O202"]["group_code"] == "BO-3"
     assert rows["O203"]["status"] == "pendiente"
     assert rows["O301"]["status"] == "cursando"
+    # what was studied under the old RVOE, as the backing
+    [previous] = k["previous"]
+    assert previous["rvoe"] == "RVOE-PRES-01"
+    assert {r["code"]: r["status"] for r in previous["rows"]} == {
+        "P101": "aprobada", "P102": "aprobada", "P201": "aprobada", "P202": "reprobada",
+    }
     assert k["progress"]["passed_subjects"] == 2  # O101 + O201 convalidadas
     assert k["progress"]["total_subjects"] == 6
 
@@ -156,3 +166,56 @@ async def test_change_requires_grade_and_current_plan(client, seed):
         "from_plan_version_id": new["id"], "target_group_id": group["id"], "decisions": [],
     })
     assert wrong_plan.status_code == 404  # not enrolled in that plan
+
+
+async def test_prior_studies_pending_then_official_grade(client, seed):
+    """A new student enters 2.º with a partial certificate: 1.º marked EQ, pending
+    until the authority's grade is recorded."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    version, ids = await plan(client, campus_id, "LX", "Licenciatura X", "RVOE-X-01", [
+        ("X101", "Matemáticas I", 1), ("X102", "Química I", 1), ("X201", "Física", 2),
+    ])
+    t = await term(client, "2026-1", "2026-01-01", "2026-04-30")
+    group = await post(client, "/catalog/groups", code="LX-2", period_number=2,
+                       plan_version_id=version["id"], term_id=t["id"])
+    student = await post(client, "/students", curp=CURP_A, full_name="Nuevo Ingreso", campus_id=campus_id)
+    await post(client, "/students/group-enrollments", student_id=student["id"], group_id=group["id"],
+               override_prerequisites=True)
+
+    candidates = (await client.get(f"{API}/students/{student['id']}/recognitions/candidates",
+                                   params={"plan_version_id": version["id"]})).json()
+    assert candidates["group_code"] == "LX-2"
+    assert [s["code"] for s in candidates["subjects"]] == ["X101", "X102"]
+
+    created = await post(client, f"/students/{student['id']}/recognitions", plan_version_id=version["id"], items=[
+        {"plan_subject_id": ids["X101"][0], "kind": "eq", "origin": "Certificado parcial · Prepa Norte"},
+        {"plan_subject_id": ids["X102"][0], "kind": "rev", "grade": 8, "origin": "Dictamen SEP 123"},
+    ])
+    eq_id = next(c["id"] for c in created if c["status"] == "cursando")
+
+    k = (await client.get(f"{API}/grades/students/{student['id']}/kardex-completo")).json()
+    rows = {r["code"]: r for r in k["rows"]}
+    assert rows["X101"]["recognition"] == "eq" and rows["X101"]["final_grade"] is None
+    assert rows["X101"]["origin"] == "Certificado parcial · Prepa Norte"
+    assert rows["X102"]["recognition"] == "rev" and rows["X102"]["final_grade"] == 8.0
+
+    again = await client.post(f"{API}/students/{student['id']}/recognitions", json={
+        "plan_version_id": version["id"],
+        "items": [{"plan_subject_id": ids["X101"][0], "kind": "eq"}],
+    })
+    assert again.status_code == 409  # already recognized
+
+    # the authority's document arrives
+    graded = await post(client, f"/students/subject-enrollments/{eq_id}/official-grade", grade=9)
+    assert graded["final_grade"] == 9.0 and graded["status"] == "aprobada"
+    rows = {r["code"]: r for r in (await client.get(
+        f"{API}/grades/students/{student['id']}/kardex-completo")).json()["rows"]}
+    assert rows["X101"]["final_grade"] == 9.0
+
+    # only recognized subjects take an official grade
+    regular = rows["X201"]
+    refused = await client.post(
+        f"{API}/students/subject-enrollments/{regular['subject_enrollment_id']}/official-grade",
+        json={"grade": 9})
+    assert refused.status_code == 400

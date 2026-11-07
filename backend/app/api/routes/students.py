@@ -32,6 +32,8 @@ from app.models import (
     GroupEnrollment,
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
+    OfficialGradeIn,
+    RecognitionsIn,
     RvoeChangeIn,
     GroupEnrollmentPublic,
     GroupEnrollmentStatus,
@@ -62,7 +64,13 @@ from app.services.academics import internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
 from app.services.files import save_upload
-from app.services.plan_change import apply_change, change_proposal
+from app.services.plan_change import (
+    apply_change,
+    change_proposal,
+    recognition_candidates,
+    recognize_prior_studies,
+    set_official_grade,
+)
 from app.services.portal import credentials_email, grant_portal_access
 from app.services.promotion import promote_cycle
 from app.services.roster_import import normalize_date, normalize_sex, parse_roster
@@ -406,9 +414,12 @@ async def enroll_in_plan(
 async def list_group_enrollments(
     session: SessionDep, _: AnyStaff, student_id: uuid.UUID
 ) -> list[GroupEnrollmentPublic]:
+    # internal EQ/REV/CONV groups are not a group the student attends
     return (
         await session.exec(
-            select(GroupEnrollment).where(GroupEnrollment.student_id == student_id)
+            select(GroupEnrollment)
+            .join(Group, Group.id == GroupEnrollment.group_id)
+            .where(GroupEnrollment.student_id == student_id, ~internal_group_clause())
         )
     ).all()
 
@@ -497,6 +508,55 @@ async def rvoe_change(
     )
     await session.commit()
     return result
+
+
+async def _student_in_scope(session, scope, student_id) -> Student:
+    student = await session.get(Student, student_id)
+    if student is None or (scope is not None and student.campus_id not in scope):
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return student
+
+
+@router.get("/{student_id}/recognitions/candidates")
+async def recognitions_candidates(
+    session: SessionDep, _: ServiciosEscolares, scope: CampusScope, student_id: uuid.UUID,
+    plan_version_id: uuid.UUID,
+) -> dict:
+    """Subjects below the student's current cuatrimestre with nothing recorded yet."""
+    student = await _student_in_scope(session, scope, student_id)
+    return await recognition_candidates(session, student, plan_version_id)
+
+
+@router.post("/{student_id}/recognitions", status_code=201)
+async def recognize_studies(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    student_id: uuid.UUID, body: RecognitionsIn,
+) -> list[SubjectEnrollmentPublic]:
+    """Reconocer estudios previos: EQ/REV/CONV, pending until the authority's grade."""
+    student = await _student_in_scope(session, scope, student_id)
+    created = await recognize_prior_studies(
+        session, current_user, student, body.plan_version_id, [i.model_dump() for i in body.items]
+    )
+    await session.commit()
+    for enrollment in created:
+        await session.refresh(enrollment)
+    return created
+
+
+@router.post("/subject-enrollments/{subject_enrollment_id}/official-grade")
+async def official_grade(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    subject_enrollment_id: uuid.UUID, body: OfficialGradeIn,
+) -> SubjectEnrollmentPublic:
+    """The authority's grade for a subject recognized by EQ/REV/CONV."""
+    enrollment = await session.get(SubjectEnrollment, subject_enrollment_id)
+    if enrollment is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    await _student_in_scope(session, scope, enrollment.student_id)
+    enrollment = await set_official_grade(session, current_user, enrollment, body.grade)
+    await session.commit()
+    await session.refresh(enrollment)
+    return enrollment
 
 
 @router.post("/intake", status_code=201)

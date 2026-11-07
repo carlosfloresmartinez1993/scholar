@@ -589,6 +589,15 @@ export interface StudentKardexRow {
   e1: number | null; // extraordinario
   e2: number | null; // título de suficiencia
   recognition: RecognitionKind | null; // acreditada por EQ / REV / CONV
+  origin: string | null; // de dónde viene el reconocimiento (RVOE y materia, o documento)
+}
+
+// lo cursado bajo un RVOE anterior (respaldo de los reconocimientos)
+export interface StudentKardexPrevious {
+  plan_version_id: string;
+  rvoe: string;
+  program: string;
+  rows: StudentKardexRow[];
 }
 
 export interface StudentKardexPeriod {
@@ -606,6 +615,7 @@ export interface StudentKardex {
   period_type: PeriodType | null;
   periods: StudentKardexPeriod[];
   rows: StudentKardexRow[];
+  previous: StudentKardexPrevious[];
   progress: CurricularProgress | null;
 }
 
@@ -635,11 +645,33 @@ export interface RvoeChangeApproved {
 
 export interface RvoeChangeProposal {
   from_plan_version_id: string;
+  from_rvoe: string;
+  old_subjects: {
+    code: string;
+    name: string;
+    period_number: number;
+    status: SubjectEnrollmentStatus | "sin_cursar";
+    grade: number | null;
+  }[];
   target_group_id: string;
   target_plan_version_id: string;
   target_period_number: number;
   items: RvoeChangeItem[];
   approved: RvoeChangeApproved[];
+}
+
+// Reconocer estudios previos (certificado parcial): materias anteriores al cuatrimestre actual
+export interface RecognitionCandidates {
+  group_id: string;
+  group_code: string;
+  period_number: number;
+  subjects: {
+    plan_subject_id: string;
+    code: string;
+    name: string;
+    period_number: number;
+    credits: number;
+  }[];
 }
 
 export interface DegreeRecord {

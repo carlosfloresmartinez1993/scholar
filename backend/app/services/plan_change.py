@@ -22,9 +22,12 @@ from app.models import (
     Group,
     GroupEnrollment,
     GroupEnrollmentKind,
+    GroupEnrollmentStatus,
     GroupSubject,
     PlanEnrollmentStatus,
     PlanSubject,
+    PlanVersion,
+    Rvoe,
     Student,
     StudentPlanEnrollment,
     SubjectEnrollment,
@@ -35,6 +38,7 @@ from app.services import audit
 from app.services.academics import (
     PASSING_GRADE,
     PLAN_CHANGE_ACTION,
+    RECOGNITION_ACTION,
     get_or_create_plan_enrollment,
     internal_group_clause,
     recognition_kind,
@@ -90,6 +94,37 @@ async def _approved_in_plan(session: AsyncSession, student_id, plan_version_id) 
                 "grade": grade,
             }
     return sorted(best.values(), key=lambda s: (s["period_number"], s["code"]))
+
+
+async def _plan_history(session: AsyncSession, student_id, plan_version_id) -> list[dict]:
+    """Every subject of the old plan with the student's best result in it, for the
+    side-by-side view of the cambio de RVOE (aprobada > cursando > reprobada > sin cursar)."""
+    rank = {SubjectEnrollmentStatus.aprobada: 3, SubjectEnrollmentStatus.cursando: 2,
+            SubjectEnrollmentStatus.reprobada: 1, SubjectEnrollmentStatus.baja: 0}
+    best: dict[uuid.UUID, SubjectEnrollment] = {}
+    for enrollment, plan_subject_id in (
+        await session.exec(
+            select(SubjectEnrollment, GroupSubject.plan_subject_id)
+            .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+            .where(SubjectEnrollment.student_id == student_id)
+        )
+    ).all():
+        current = best.get(plan_subject_id)
+        if current is None or rank[enrollment.status] > rank[current.status]:
+            best[plan_subject_id] = enrollment
+    subjects = (
+        await session.exec(
+            select(PlanSubject)
+            .where(PlanSubject.plan_version_id == plan_version_id)
+            .order_by(PlanSubject.period_number, PlanSubject.code)
+        )
+    ).all()
+    return [
+        {"code": s.code, "name": s.name, "period_number": s.period_number,
+         "status": best[s.id].status if s.id in best else "sin_cursar",
+         "grade": best[s.id].final_grade if s.id in best else None}
+        for s in subjects
+    ]
 
 
 async def _groups_teaching(session: AsyncSession, term_id, campus_id, plan_subject_ids) -> dict:
@@ -165,6 +200,8 @@ async def change_proposal(
         })
     return {
         "from_plan_version_id": str(old_plan.plan_version_id),
+        "from_rvoe": await _plan_rvoe(session, old_plan.plan_version_id),
+        "old_subjects": await _plan_history(session, student.id, old_plan.plan_version_id),
         "target_group_id": str(target_group.id),
         "target_plan_version_id": str(target_group.plan_version_id),
         "target_period_number": target_group.period_number,
@@ -194,6 +231,93 @@ async def _recognition_group(session: AsyncSession, target_group: Group, suffix:
         await session.flush()
     assert recognition_kind(group.code)
     return group
+
+
+async def _plan_rvoe(session: AsyncSession, plan_version_id) -> str:
+    plan = await session.get(PlanVersion, plan_version_id)
+    rvoe = plan and await session.get(Rvoe, plan.rvoe_id)
+    return rvoe.agreement_number if rvoe else ""
+
+
+async def record_recognitions(
+    session: AsyncSession, current_user, student: Student, anchor_group: Group,
+    plan_enrollment: StudentPlanEnrollment, items: list[dict],
+) -> list[SubjectEnrollment]:
+    """Record subjects recognized by equivalencia / revalidación / convalidación in
+    the internal group of `anchor_group` ("<code>-EQ", ...). Each item: subject
+    (PlanSubject), kind (eq|rev|conv), grade (None = pending the authority's
+    document) and origin (where it comes from: RVOE and subject, or the external
+    school / document). The origin is kept in the audit log (RECOGNITION_ACTION),
+    one entry per recognized subject, which the kárdex shows. Caller commits."""
+    created = []
+    enrollments: dict[str, GroupEnrollment] = {}
+    for item in items:
+        subject, kind = item["subject"], item["kind"]
+        taken = (
+            await session.exec(
+                select(SubjectEnrollment.id)
+                .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+                .where(
+                    SubjectEnrollment.student_id == student.id,
+                    GroupSubject.plan_subject_id == subject.id,
+                    SubjectEnrollment.status != SubjectEnrollmentStatus.reprobada,
+                )
+            )
+        ).first()
+        if taken:
+            raise HTTPException(
+                status_code=409, detail=f"{subject.name}: ya está cursada, en curso o reconocida"
+            )
+        if kind not in enrollments:
+            group = await _recognition_group(session, anchor_group, RECOGNITION_ACTIONS[kind])
+            enrollment = (
+                await session.exec(
+                    select(GroupEnrollment).where(
+                        GroupEnrollment.student_id == student.id, GroupEnrollment.group_id == group.id
+                    )
+                )
+            ).first()
+            if enrollment is None:
+                enrollment = GroupEnrollment(
+                    student_id=student.id, group_id=group.id, plan_enrollment_id=plan_enrollment.id,
+                    kind=GroupEnrollmentKind.reinscripcion,
+                )
+                session.add(enrollment)
+                await session.flush()
+            enrollments[kind] = enrollment
+        enrollment = enrollments[kind]
+        gs = (
+            await session.exec(
+                select(GroupSubject).where(
+                    GroupSubject.group_id == enrollment.group_id, GroupSubject.plan_subject_id == subject.id
+                )
+            )
+        ).first()
+        if gs is None:
+            gs = GroupSubject(group_id=enrollment.group_id, plan_subject_id=subject.id)
+            session.add(gs)
+            await session.flush()
+        grade = item.get("grade")
+        recognized = SubjectEnrollment(
+            group_enrollment_id=enrollment.id, group_subject_id=gs.id, student_id=student.id,
+            status=_status_for(grade), final_grade=float(grade) if grade is not None else None,
+        )
+        session.add(recognized)
+        await session.flush()
+        audit.record(
+            session, actor=current_user.email, action=RECOGNITION_ACTION,
+            entity="subject_enrollment", entity_id=str(recognized.id),
+            detail=json.dumps({"kind": kind, "origin": item.get("origin") or "", "grade": grade,
+                               "subject": subject.code}, ensure_ascii=False),
+        )
+        created.append(recognized)
+    return created
+
+
+def _status_for(grade) -> SubjectEnrollmentStatus:
+    if grade is None:
+        return SubjectEnrollmentStatus.cursando  # EQ/REV/CONV pendiente del documento
+    return SubjectEnrollmentStatus.aprobada if float(grade) >= PASSING_GRADE else SubjectEnrollmentStatus.reprobada
 
 
 async def apply_change(
@@ -243,41 +367,22 @@ async def apply_change(
     summary = {k: [] for k in ACTIONS}
     # recognitions first, then other groups, then the destination group last: the
     # student header shows the most recent active group
-    for kind, suffix in RECOGNITION_ACTIONS.items():
-        chosen = [d for d in decisions if d["action"] == kind]
-        if not chosen:
+    sources = {a["subject_enrollment_id"]: a for a in await _approved_in_plan(
+        session, student.id, old_plan.plan_version_id)}
+    old_rvoe = await _plan_rvoe(session, old_plan.plan_version_id)
+    recognized = []
+    for d in decisions:
+        if d["action"] not in RECOGNITION_ACTIONS:
             continue
-        group = await _recognition_group(session, target_group, suffix)
-        enrollment = GroupEnrollment(
-            student_id=student.id, group_id=group.id, plan_enrollment_id=new_plan.id,
-            kind=GroupEnrollmentKind.reinscripcion,
-        )
-        session.add(enrollment)
-        await session.flush()
-        for d in chosen:
-            subject = subjects[uuid.UUID(str(d["plan_subject_id"]))]
-            gs = (
-                await session.exec(
-                    select(GroupSubject).where(
-                        GroupSubject.group_id == group.id, GroupSubject.plan_subject_id == subject.id
-                    )
-                )
-            ).first()
-            if gs is None:
-                gs = GroupSubject(group_id=group.id, plan_subject_id=subject.id)
-                session.add(gs)
-                await session.flush()
-            grade = d.get("grade")
-            session.add(SubjectEnrollment(
-                group_enrollment_id=enrollment.id, group_subject_id=gs.id, student_id=student.id,
-                status=(
-                    SubjectEnrollmentStatus.cursando if grade is None  # EQ/REV pendiente
-                    else SubjectEnrollmentStatus.aprobada if float(grade) >= PASSING_GRADE
-                    else SubjectEnrollmentStatus.reprobada
-                ),
-                final_grade=float(grade) if grade is not None else None,
-            ))
-            summary[kind].append(subject.code)
+        source = sources.get(str(d.get("source_subject_enrollment_id") or ""))
+        recognized.append({
+            "subject": subjects[uuid.UUID(str(d["plan_subject_id"]))], "kind": d["action"],
+            "grade": d.get("grade"),
+            "origin": f"{old_rvoe} · {source['code']} {source['name']}" if source else old_rvoe,
+        })
+    await record_recognitions(session, current_user, student, target_group, new_plan, recognized)
+    for item in recognized:
+        summary[item["kind"]].append(item["subject"].code)
 
     elsewhere: dict[str, list] = {}
     in_target = []
@@ -322,3 +427,117 @@ async def apply_change(
     )
     await session.flush()
     return {"new_plan_enrollment_id": str(new_plan.id), "summary": summary}
+
+
+# --- Reconocimiento de estudios previos (alumno que entra con certificado parcial) --
+
+async def _current_group(session: AsyncSession, student: Student, plan_version_id) -> Group:
+    """The group the student attends now in that plan (latest active, not internal)."""
+    group = (
+        await session.exec(
+            select(Group)
+            .join(GroupEnrollment, GroupEnrollment.group_id == Group.id)
+            .where(
+                GroupEnrollment.student_id == student.id,
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                Group.plan_version_id == plan_version_id,
+                ~internal_group_clause(),
+            )
+            .order_by(GroupEnrollment.created_at.desc())  # type: ignore[attr-defined]
+        )
+    ).first()
+    if group is None:
+        raise HTTPException(status_code=404, detail="El alumno no tiene grupo en ese plan")
+    return group
+
+
+async def recognition_candidates(session: AsyncSession, student: Student, plan_version_id) -> dict:
+    """Subjects of the plan below the student's current cuatrimestre with nothing
+    recorded yet: what a partial certificate can cover (EQ/REV/CONV)."""
+    await _current_plan(session, student, plan_version_id)
+    group = await _current_group(session, student, plan_version_id)
+    recorded = set(
+        (
+            await session.exec(
+                select(GroupSubject.plan_subject_id)
+                .join(SubjectEnrollment, SubjectEnrollment.group_subject_id == GroupSubject.id)
+                .where(SubjectEnrollment.student_id == student.id)
+            )
+        ).all()
+    )
+    subjects = (
+        await session.exec(
+            select(PlanSubject)
+            .where(
+                PlanSubject.plan_version_id == plan_version_id,
+                PlanSubject.period_number < group.period_number,
+            )
+            .order_by(PlanSubject.period_number, PlanSubject.code)
+        )
+    ).all()
+    return {
+        "group_id": str(group.id), "group_code": group.code, "period_number": group.period_number,
+        "subjects": [
+            {"plan_subject_id": str(s.id), "code": s.code, "name": s.name,
+             "period_number": s.period_number, "credits": s.credits}
+            for s in subjects if s.id not in recorded
+        ],
+    }
+
+
+async def recognize_prior_studies(
+    session: AsyncSession, current_user, student: Student, plan_version_id, items: list[dict]
+) -> list[SubjectEnrollment]:
+    """Mark subjects below the current cuatrimestre as EQ/REV/CONV — pending (no
+    grade) until the authority's document arrives, or with its grade. Caller commits."""
+    plan_enrollment = await _current_plan(session, student, plan_version_id)
+    group = await _current_group(session, student, plan_version_id)
+    if not items:
+        raise HTTPException(status_code=400, detail="Seleccione al menos una materia")
+    subjects = {
+        s.id: s for s in (
+            await session.exec(select(PlanSubject).where(PlanSubject.plan_version_id == plan_version_id))
+        ).all()
+    }
+    prepared = []
+    for item in items:
+        subject = subjects.get(uuid.UUID(str(item["plan_subject_id"])))
+        if subject is None or subject.period_number >= group.period_number:
+            raise HTTPException(status_code=400, detail="Solo materias de cuatrimestres anteriores al actual")
+        if item["kind"] not in RECOGNITION_ACTIONS:
+            raise HTTPException(status_code=400, detail=f"Tipo inválido: {item['kind']}")
+        grade = item.get("grade")
+        if grade is not None and not 0 <= float(grade) <= 10:
+            raise HTTPException(status_code=400, detail=f"{subject.name}: calificación fuera de 0–10")
+        prepared.append({"subject": subject, "kind": item["kind"], "grade": grade,
+                         "origin": (item.get("origin") or "").strip()})
+    return await record_recognitions(session, current_user, student, group, plan_enrollment, prepared)
+
+
+async def set_official_grade(
+    session: AsyncSession, current_user, enrollment: SubjectEnrollment, grade: float
+) -> SubjectEnrollment:
+    """Record the authority's grade on a recognized (EQ/REV/CONV) subject."""
+    group = (
+        await session.exec(
+            select(Group)
+            .join(GroupSubject, GroupSubject.group_id == Group.id)
+            .where(GroupSubject.id == enrollment.group_subject_id)
+        )
+    ).first()
+    if group is None or recognition_kind(group.code) is None:
+        raise HTTPException(
+            status_code=400, detail="Solo materias por equivalencia, revalidación o convalidación"
+        )
+    if not 0 <= grade <= 10:
+        raise HTTPException(status_code=400, detail="La calificación debe estar entre 0 y 10")
+    before = enrollment.final_grade
+    enrollment.final_grade = float(grade)
+    enrollment.status = _status_for(grade)
+    session.add(enrollment)
+    audit.record(
+        session, actor=current_user.email, action="subject_enrollment.official_grade",
+        entity="subject_enrollment", entity_id=str(enrollment.id),
+        detail=f"{recognition_kind(group.code).upper()}: {before if before is not None else 'pendiente'} -> {grade}",
+    )
+    return enrollment

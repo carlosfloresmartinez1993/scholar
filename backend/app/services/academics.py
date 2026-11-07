@@ -39,6 +39,9 @@ PASSING_GRADE = 6.0
 # audit action of a cambio de RVOE (services/plan_change.py); the kárdex reads it to
 # chain the plan that was left with the one it led to
 PLAN_CHANGE_ACTION = "plan_enrollment.rvoe_changed"
+# audit action of each subject recognized by EQ/REV/CONV; its detail keeps the
+# origin (RVOE and subject it comes from, or the external document) shown in the kárdex
+RECOGNITION_ACTION = "subject_enrollment.recognized"
 
 # Subjects acreditadas por equivalencia / revalidación / convalidación live in an
 # internal group whose code ends with the kind (e.g. "ARQ-014-EQ"); their grade is
@@ -181,13 +184,12 @@ async def student_kardex(
 ) -> dict:
     """One kárdex per student and carrera, across every plan/RVOE of that carrera.
 
-    Rows are every subject enrollment (each attempt, each plan of the carrera) plus
-    the subjects of the current plan not yet taken. A period (cuatrimestre) is studied
-    under a single RVOE: the one of its earliest subject actually taken there, or the
-    current plan's if nothing was taken yet. In that period, recognitions of another
-    RVOE (the new plan's convalidaciones of what was studied) are not shown — they
-    would duplicate it — but owed subjects of the current plan are. Progress is
-    measured against the current plan: the inscrito one that started last.
+    The kárdex is the current plan's (the inscrito one that started last), because
+    the certificate is issued by the last RVOE: `rows` are its subjects — each
+    attempt, the ones recognized by EQ/REV/CONV with their `origin` (RVOE and
+    subject, or external document), and the ones not taken yet. What was studied
+    under earlier plans goes to `previous`, grouped by plan, as the backing of those
+    recognitions. Progress is measured against the current plan.
 
     A plan left through a cambio de RVOE (PLAN_CHANGE_ACTION in the audit log) is
     part of the kárdex of the plan it led to, even in another carrera: one history.
@@ -205,7 +207,7 @@ async def student_kardex(
     ).all()
     if not plan_enrollments:
         return {"program_id": None, "programs": [], "current_plan_version_id": None,
-                "period_type": None, "periods": [], "rows": [], "progress": None}
+                "period_type": None, "periods": [], "rows": [], "previous": [], "progress": None}
 
     def recency(row):
         return (row[0].status == PlanEnrollmentStatus.inscrito, row[1].start_date)
@@ -357,33 +359,63 @@ async def student_kardex(
 
     rows.sort(key=lambda r: (r["period_number"], r["term_start"] or "9999-12-31", r["code"], r["attempt_number"] or 0))
 
-    def studied(r: dict) -> bool:
-        return r["subject_enrollment_id"] is not None and r["recognition"] is None
-
-    by_period: dict[int, list[dict]] = defaultdict(list)
+    # where each EQ/REV/CONV comes from (RVOE and subject, or the external document)
+    recognized_ids = [r["subject_enrollment_id"] for r in rows if r["recognition"]]
+    origins: dict[str, str] = {}
+    if recognized_ids:
+        for log in (
+            await session.exec(
+                select(AuditLog).where(
+                    AuditLog.action == RECOGNITION_ACTION,
+                    AuditLog.entity_id.in_(recognized_ids),  # type: ignore[attr-defined]
+                )
+            )
+        ).all():
+            origins[log.entity_id] = json.loads(log.detail or "{}").get("origin") or ""
     for r in rows:
-        by_period[r["period_number"]].append(r)
-    periods, visible, previous = [], [], None
-    for number in sorted(by_period):
-        period_rows = by_period[number]
-        first_studied = next((r for r in period_rows if studied(r)), None)  # rows are by term
-        rvoe = first_studied["rvoe"] if first_studied else current_rvoe.agreement_number
-        periods.append({"period_number": number, "rvoe": rvoe, "rvoe_changed": rvoe != previous})
-        previous = rvoe
-        # hide only settled recognitions of another RVOE (they duplicate what was
-        # studied); owed subjects and still-pending EQ/REV stay visible
-        visible.extend(
-            r for r in period_rows
-            if r["rvoe"] == rvoe or studied(r) or r["final_grade"] is None
+        r["origin"] = origins.get(r["subject_enrollment_id"] or "")
+
+    # the kárdex is the current (final) plan's: the certificate is issued by its RVOE;
+    # what was studied under earlier RVOE goes to `previous`, as the backing of the
+    # recognitions
+    current_id = str(current.plan_version_id)
+    main = [r for r in rows if r["plan_version_id"] == current_id]
+    earlier: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        if r["plan_version_id"] != current_id:
+            earlier[r["plan_version_id"]].append(r)
+    names = {
+        str(plan.id): (rvoe.agreement_number, program.name)
+        for plan, rvoe, program in (
+            await session.exec(
+                select(PlanVersion, Rvoe, Program)
+                .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+                .join(Program, Program.id == Rvoe.program_id)
+                .where(PlanVersion.id.in_([uuid.UUID(i) for i in earlier] or [uuid.uuid4()]))  # type: ignore[attr-defined]
+            )
+        ).all()
+    }
+    previous = [
+        {"plan_version_id": plan_id, "rvoe": names.get(plan_id, ("", ""))[0],
+         "program": names.get(plan_id, ("", ""))[1], "rows": plan_rows}
+        for plan_id, plan_rows in sorted(
+            earlier.items(), key=lambda kv: min(r["term_start"] or "9999" for r in kv[1])
         )
+    ]
+    period_numbers = sorted({r["period_number"] for r in main})
+    periods = [
+        {"period_number": n, "rvoe": current_rvoe.agreement_number, "rvoe_changed": i == 0}
+        for i, n in enumerate(period_numbers)
+    ]
 
     return {
         "program_id": str(program_id),
         "programs": [{"id": str(pid), "name": name} for pid, name in programs.items()],
-        "current_plan_version_id": str(current.plan_version_id),
+        "current_plan_version_id": current_id,
         "period_type": current_plan.period_type if current_plan else None,
         "periods": periods,
-        "rows": visible,
+        "rows": main,
+        "previous": previous,
         "progress": await curricular_progress(session, student_id, current.plan_version_id),
     }
 

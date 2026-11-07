@@ -75,21 +75,33 @@ export const isRetake = (r: StudentKardexRow) => (r.attempt_number ?? 1) > 1;
 // Flat text columns for the printed and PDF kárdex. E2 only when someone has it.
 export const showE2 = (kardex: StudentKardex) => kardex.rows.some((r) => r.e2 != null);
 
-export function kardexHeaders(withE2: boolean): string[] {
+export const showOrigin = (kardex: StudentKardex) => kardex.rows.some((r) => r.origin);
+
+export function kardexHeaders(withE2: boolean, withOrigin = false): string[] {
   return [
     "Clave", "Asignatura", "Créd.", "Ciclo", "Grupo", "CF", "E1",
     ...(withE2 ? ["E2"] : []),
     ...RECOGNITION_COLUMNS.map((c) => c.label),
+    ...(withOrigin ? ["Origen"] : []),
     "Estatus",
   ];
 }
 
-export function kardexCells(r: StudentKardexRow, withE2: boolean): string[] {
+export function kardexCells(r: StudentKardexRow, withE2: boolean, withOrigin = false): string[] {
   return [
     r.code, r.name, String(r.credits), r.term_name ?? "", r.group_code ?? "",
     grade(r.cf), grade(r.e1),
     ...(withE2 ? [grade(r.e2)] : []),
     ...RECOGNITION_COLUMNS.map((c) => recognitionCell(r, c.kind)),
+    ...(withOrigin ? [r.origin ?? ""] : []),
     statusLabel(r) + (isRetake(r) ? " (recursamiento)" : ""),
   ];
 }
+
+// lo cursado bajo RVOE anteriores, para el respaldo impreso
+export const PREVIOUS_HEADERS = ["Clave", "Asignatura", "Cuatri.", "Ciclo", "Grupo", "Calif.", "Estatus"];
+
+export const previousCells = (r: StudentKardexRow): string[] => [
+  r.code, r.name, String(r.period_number), r.term_name ?? "", r.group_code ?? "",
+  grade(r.final_grade), statusLabel(r),
+];

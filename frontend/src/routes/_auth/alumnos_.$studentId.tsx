@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   ArrowRightLeft,
+  FileCheck,
   BadgeDollarSign,
   CalendarDays,
   Download,
@@ -53,11 +54,18 @@ import { printKardex } from "@/lib/kardex-print";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import { RvoeChangeDialog } from "@/components/rvoe-change-dialog";
 import {
+  OfficialGradeDialog,
+  RecognizePriorStudiesDialog,
+} from "@/components/recognition-dialogs";
+import {
   grade,
   isRetake,
   kardexSections,
+  PREVIOUS_HEADERS,
+  previousCells,
   RECOGNITION_COLUMNS,
   recognitionCell,
+  showOrigin,
   statusLabel,
 } from "@/lib/kardex";
 import {
@@ -1202,6 +1210,7 @@ function AcademicoTab({ student }: { student: Student }) {
   // carrera's current plan. Default carrera: the one of the current plan.
   const [programId, setProgramId] = useState<string | null>(null);
   const [changingRvoe, setChangingRvoe] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
   const { data: kardex, isLoading: loadingKardex } = useQuery({
     queryKey: queryKeys.studentKardex(student.id, programId),
     queryFn: () =>
@@ -1326,6 +1335,13 @@ function AcademicoTab({ student }: { student: Student }) {
               </Button>
               <Button
                 variant="outline"
+                disabled={!currentPlanId}
+                onClick={() => setRecognizing(true)}
+              >
+                <FileCheck className="size-4" /> Reconocer estudios previos
+              </Button>
+              <Button
+                variant="outline"
                 disabled={!kardex}
                 onClick={() => {
                   const data = kardexPrintData();
@@ -1361,6 +1377,13 @@ function AcademicoTab({ student }: { student: Student }) {
                 setChangingRvoe(false);
                 setProgramId(null); // the kárdex follows the new plan
               }}
+            />
+          )}
+          {recognizing && currentPlanId && (
+            <RecognizePriorStudiesDialog
+              student={student}
+              planVersionId={currentPlanId}
+              onClose={() => setRecognizing(false)}
             />
           )}
           {loadingKardex && <Skeleton className="h-40 w-full rounded-md" />}
@@ -1422,7 +1445,7 @@ function AcademicoTab({ student }: { student: Student }) {
                 </CardContent>
               </Card>
 
-              <KardexTable kardex={kardex} />
+              <KardexTable kardex={kardex} studentId={student.id} />
             </>
           )}
         </section>
@@ -1449,12 +1472,17 @@ function KardexStatusBadge({ row }: { row: StudentKardexRow }) {
   );
 }
 
-// One table, a heading row per plan period. A period is studied under one RVOE; it
-// is shown at the right of the heading only where it changes (and on the first).
-function KardexTable({ kardex }: { kardex: StudentKardex }) {
+// The final plan's kárdex (the certificate's RVOE), a heading row per period. A
+// subject recognized by EQ/REV/CONV says where it comes from (Origen) and, while its
+// grade is pending, offers to record the authority's grade. Below, what was studied
+// under earlier RVOE.
+function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: string }) {
   const showE2 = kardex.rows.some((r) => r.e2 != null);
-  const columns = 10 + (showE2 ? 1 : 0) + RECOGNITION_COLUMNS.length;
+  const withOrigin = showOrigin(kardex);
+  const columns = 10 + (showE2 ? 1 : 0) + (withOrigin ? 1 : 0) + RECOGNITION_COLUMNS.length;
+  const [grading, setGrading] = useState<StudentKardexRow | null>(null);
   return (
+    <>
     <div className="rounded-md border bg-card">
       <Table>
         <TableHeader>
@@ -1472,6 +1500,7 @@ function KardexTable({ kardex }: { kardex: StudentKardex }) {
                 {c.label}
               </TableHead>
             ))}
+            {withOrigin && <TableHead>Origen</TableHead>}
             <TableHead>Estatus</TableHead>
           </TableRow>
         </TableHeader>
@@ -1522,8 +1551,25 @@ function KardexTable({ kardex }: { kardex: StudentKardex }) {
                       {recognitionCell(r, c.kind)}
                     </TableCell>
                   ))}
+                  {withOrigin && (
+                    <TableCell className="max-w-64 text-xs text-muted-foreground">
+                      {r.origin ?? ""}
+                    </TableCell>
+                  )}
                   <TableCell>
-                    <KardexStatusBadge row={r} />
+                    <span className="flex flex-wrap items-center gap-1">
+                      <KardexStatusBadge row={r} />
+                      {r.recognition && r.final_grade == null && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => setGrading(r)}
+                        >
+                          Registrar calificación
+                        </Button>
+                      )}
+                    </span>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1542,6 +1588,39 @@ function KardexTable({ kardex }: { kardex: StudentKardex }) {
         </TableBody>
       </Table>
     </div>
+    {kardex.previous.map((p) => (
+      <div key={p.plan_version_id} className="space-y-2">
+        <h3 className="text-sm font-bold">
+          Estudios en RVOE anterior — <span data-numeric>{p.rvoe}</span> · {p.program}
+        </h3>
+        <div className="rounded-md border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {PREVIOUS_HEADERS.map((h) => (
+                  <TableHead key={h}>{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {p.rows.map((r) => (
+                <TableRow key={r.row_id} className="text-muted-foreground">
+                  {previousCells(r).map((cell, i) => (
+                    <TableCell key={i} data-numeric={i !== 1 || undefined}>
+                      {cell}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    ))}
+    {grading && (
+      <OfficialGradeDialog studentId={studentId} row={grading} onClose={() => setGrading(null)} />
+    )}
+    </>
   );
 }
 

@@ -143,9 +143,8 @@ async def group_in_new_term(client: AsyncClient, plan_id: str, period: int, code
 
 
 async def test_kardex_spans_rvoe_change(client, seed):
-    """Plan/RVOE change: one kárdex; each cuatrimestre under a single RVOE (the one
-    it was studied under), flagged where it changes. Pending subjects and progress
-    come from the new (current) plan."""
+    """Plan/RVOE change without the wizard: the kárdex is the new (final) plan's and
+    the old plan's subjects are listed apart, under their RVOE."""
     await login(client)
     campus_id = str(seed["campus"].id)
     catalog = await build_catalog(client, campus_id)
@@ -161,17 +160,15 @@ async def test_kardex_spans_rvoe_change(client, seed):
 
     k = await kardex(client, student["id"])
     assert k["current_plan_version_id"] == plan2["id"]
-    # 1.º studied under the old RVOE; the new plan's LIAS101 was not convalidated, so
-    # the student owes it and it shows there too
-    assert [r["code"] for r in k["rows"]] == ["DER101", "LIAS101", "LIAS201", "LIAS301"]
+    # the kárdex is the final plan's; nothing was recognized, so its 1.º and 2.º are
+    # owed, and what was studied under the old RVOE is listed apart
+    assert [r["code"] for r in k["rows"]] == ["LIAS101", "LIAS201", "LIAS301"]
     statuses = {r["code"]: r["status"] for r in k["rows"]}
-    assert statuses == {"DER101": "cursando", "LIAS101": "pendiente",
-                        "LIAS201": "pendiente", "LIAS301": "cursando"}
-    assert k["periods"] == [
-        {"period_number": 1, "rvoe": "20260001", "rvoe_changed": True},
-        {"period_number": 2, "rvoe": "20270002", "rvoe_changed": True},
-        {"period_number": 3, "rvoe": "20270002", "rvoe_changed": False},
+    assert statuses == {"LIAS101": "pendiente", "LIAS201": "pendiente", "LIAS301": "cursando"}
+    assert [(p["rvoe"], [r["code"] for r in p["rows"]]) for p in k["previous"]] == [
+        ("20260001", ["DER101"]),
     ]
+    assert {p["rvoe"] for p in k["periods"]} == {"20270002"}
     assert k["progress"]["total_subjects"] == 3
 
 
