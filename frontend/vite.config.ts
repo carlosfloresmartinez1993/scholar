@@ -22,7 +22,8 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        // BACKEND_URL when :8000 can't be used (e.g. Windows reserves 7908–8007)
+        target: process.env.BACKEND_URL ?? "http://localhost:8000",
         changeOrigin: true,
       },
     },
