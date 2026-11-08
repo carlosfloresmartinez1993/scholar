@@ -18,47 +18,34 @@ from app.models import (
     GroupEnrollmentStatus,
     GroupSubject,
     PlanEnrollmentStatus,
+    PlanSubject,
     Student,
     StudentPlanEnrollment,
-    SubjectEnrollment,
-    SubjectEnrollmentStatus,
     Term,
 )
 from app.models.common import utcnow
 from app.services import audit
+from app.services.academics import current_group, passed_subject_ids
 from app.services.enrollment import enroll_student_core
 
 
-async def _passed_source_group(
-    session: AsyncSession, group_enrollment_id, source_group_id
-) -> bool:
-    """True only if the student passed EVERY subject of the source group. A partial
-    enrollment (they took only some subjects) or any non-aprobada means they repeat,
-    so they don't advance."""
-    required = set(
-        (
-            await session.exec(
-                select(GroupSubject.plan_subject_id).where(
-                    GroupSubject.group_id == source_group_id
-                )
-            )
-        ).all()
-    )
+async def _passed_source_group(session: AsyncSession, student_id, source_group: Group) -> bool:
+    """True only if the student settled EVERY subject the group teaches of its own
+    cuatrimestre: passed in any group, or recognized by EQ/REV/CONV even without a
+    grade yet (the authority's dictamen stands). A subject added to the group for a
+    student's recursamiento is not asked of the others."""
+    rows = (
+        await session.exec(
+            select(GroupSubject.plan_subject_id, PlanSubject.period_number)
+            .join(PlanSubject, PlanSubject.id == GroupSubject.plan_subject_id)
+            .where(GroupSubject.group_id == source_group.id)
+        )
+    ).all()
+    required = {subject for subject, period in rows if period == source_group.period_number}
+    required = required or {subject for subject, _ in rows}
     if not required:
         return False
-    passed = set(
-        (
-            await session.exec(
-                select(GroupSubject.plan_subject_id)
-                .join(SubjectEnrollment, SubjectEnrollment.group_subject_id == GroupSubject.id)
-                .where(
-                    SubjectEnrollment.group_enrollment_id == group_enrollment_id,
-                    SubjectEnrollment.status == SubjectEnrollmentStatus.aprobada,
-                )
-            )
-        ).all()
-    )
-    return required <= passed
+    return required <= await passed_subject_ids(session, student_id)
 
 
 async def promote_cycle(
@@ -129,8 +116,14 @@ async def promote_cycle(
             if plan_en is None or plan_en.status != PlanEnrollmentStatus.inscrito:
                 skipped.append({**info, "reason": "no continúa (baja/egresado)"})
                 continue
+            # only from the group they really are in: a lower one is a recursamiento
+            source_group = await session.get(Group, target.promotes_from_group_id)
+            main_group = await current_group(session, student.id, source_group.plan_version_id)
+            if main_group is not None and main_group.period_number > source_group.period_number:
+                skipped.append({**info, "reason": f"recursa en este grupo; su grupo es {main_group.code}"})
+                continue
             # passed the whole source period?
-            if not await _passed_source_group(session, en.id, target.promotes_from_group_id):
+            if not await _passed_source_group(session, student.id, source_group):
                 skipped.append({**info, "reason": "no acreditó el periodo"})
                 continue
             if dry_run:

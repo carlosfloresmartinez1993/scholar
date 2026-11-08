@@ -90,7 +90,8 @@ async def test_proposal_matches_by_name(client, seed):
     })
     assert response.status_code == 200, response.text
     items = {i["code"]: i for i in response.json()["items"]}
-    assert set(items) == {"O101", "O102", "O201", "O202", "O203"}  # below 3.º only
+    assert set(items) == {"O101", "O102", "O201", "O202", "O203", "O301"}  # the whole plan
+    assert items["O301"]["action"] == "pendiente"  # 3.º, the destination: the group loads it
     assert items["O101"]["action"] == "conv" and items["O101"]["grade"] == 9.0  # accents ignored
     assert items["O102"]["action"] == "conv" and items["O102"]["grade"] == 8.0
     assert items["O201"]["grade"] == 10.0
@@ -186,7 +187,8 @@ async def test_prior_studies_pending_then_official_grade(client, seed):
     candidates = (await client.get(f"{API}/students/{student['id']}/recognitions/candidates",
                                    params={"plan_version_id": version["id"]})).json()
     assert candidates["group_code"] == "LX-2"
-    assert [s["code"] for s in candidates["subjects"]] == ["X101", "X102"]
+    assert {s["code"]: s["state"] for s in candidates["subjects"]} == {
+        "X101": "libre", "X102": "libre", "X201": "en_curso"}
 
     created = await post(client, f"/students/{student['id']}/recognitions", plan_version_id=version["id"], items=[
         {"plan_subject_id": ids["X101"][0], "kind": "eq", "origin": "Certificado parcial · Prepa Norte"},

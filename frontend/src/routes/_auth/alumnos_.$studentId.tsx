@@ -31,7 +31,6 @@ import type {
   ChargeConcept,
   Expediente,
   Group,
-  GroupEnrollment,
   Institution,
   IssuedDocumentKind,
   Justification,
@@ -241,19 +240,10 @@ function IdentityHeader({ student }: { student: Student }) {
       api<PlanEnrollment[]>(`/students/${student.id}/plan-enrollments`),
   });
   // current group = the active group-enrollment (latest if several)
-  const { data: groupEnrollments } = useQuery({
-    queryKey: queryKeys.groupEnrollments(student.id),
-    queryFn: () =>
-      api<GroupEnrollment[]>(`/students/${student.id}/group-enrollments`),
-  });
-  const activeGroupEnrollment = groupEnrollments
-    ?.filter((e) => e.status === "activa")
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  // the group they really are in: the active one of the highest cuatrimestre
   const { data: currentGroup } = useQuery({
-    queryKey: ["group", activeGroupEnrollment?.group_id ?? "none"],
-    queryFn: () =>
-      api<Group>(`/catalog/groups/${activeGroupEnrollment!.group_id}`),
-    enabled: !!activeGroupEnrollment,
+    queryKey: [...queryKeys.groupEnrollments(student.id), "current"],
+    queryFn: () => api<Group | null>(`/students/${student.id}/current-group`),
   });
   const planVersionLabels = usePlanVersionLabels();
   const campusName =

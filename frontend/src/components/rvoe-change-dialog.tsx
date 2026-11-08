@@ -220,9 +220,9 @@ export function RvoeChangeDialog({
         ) : (
           <div className="grid gap-4">
             <p className="text-sm">
-              Continúa en <b>{targetGroup?.code}</b> ({proposal.target_period_number}.º). Materias del
-              plan nuevo de cuatrimestres anteriores: decide qué pasa con cada una.
-              {proposal.items.length === 0 && " No hay materias anteriores: empieza desde ese cuatrimestre."}
+              Continúa en <b>{targetGroup?.code}</b> ({proposal.target_period_number}.º). Todo el plan
+              nuevo: decide qué pasa con cada materia. «Cursar ahora» solo aplica antes de ese
+              cuatrimestre; las de su cuatrimestre las carga el grupo, salvo las que reconozcas.
             </p>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,5fr)]">
             <div className="space-y-2">
@@ -304,7 +304,13 @@ export function RvoeChangeDialog({
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {(Object.keys(ACTION_LABELS) as RvoeChangeAction[]).map((a) => (
+                                {(Object.keys(ACTION_LABELS) as RvoeChangeAction[])
+                                  .filter(
+                                    (a) =>
+                                      a !== "cursar" ||
+                                      item.period_number < proposal.target_period_number,
+                                  )
+                                  .map((a) => (
                                   <SelectItem key={a} value={a}>
                                     {ACTION_LABELS[a]}
                                   </SelectItem>

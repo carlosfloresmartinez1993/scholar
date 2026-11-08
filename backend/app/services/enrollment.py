@@ -28,8 +28,9 @@ from app.models import (
 from app.services import audit
 from app.services.academics import (
     check_prerequisites,
-    internal_group_clause,
     get_or_create_plan_enrollment,
+    internal_group_clause,
+    passed_subject_ids,
     require_operable_rvoe,
 )
 from app.services.treasury import generate_enrollment_charges
@@ -278,6 +279,18 @@ async def enroll_student_core(
         group_subjects = [gs for gs in group_subjects if gs.plan_subject_id in wanted]
         if len(group_subjects) != len(wanted):
             raise HTTPException(status_code=400, detail="Alguna materia no se imparte en el grupo")
+    # what is already passed or recognized (EQ/REV/CONV) is not taken again: by default
+    # the group's subjects minus those; picked by hand, it is an error
+    settled = await passed_subject_ids(session, student.id)
+    if plan_subject_ids:
+        repeated = [gs.plan_subject_id for gs in group_subjects if gs.plan_subject_id in settled]
+        if repeated:
+            subject = await session.get(PlanSubject, repeated[0])
+            raise HTTPException(
+                status_code=409,
+                detail=f"{subject.name if subject else repeated[0]} ya está aprobada o reconocida",
+            )
+    group_subjects = [gs for gs in group_subjects if gs.plan_subject_id not in settled]
 
     if not override_prerequisites:
         for gs in group_subjects:

@@ -53,7 +53,9 @@ export function RecognizePriorStudiesDialog({
   const [grades, setGrades] = useState<Record<string, string>>({});
   const [origin, setOrigin] = useState("");
 
-  const chosen = (data?.subjects ?? []).filter((s) => (kinds[s.plan_subject_id] ?? "eq") !== SKIP);
+  // nothing is marked by default: the whole plan is on the list
+  const chosen = (data?.subjects ?? []).filter((s) => (kinds[s.plan_subject_id] ?? SKIP) !== SKIP);
+  const periods = [...new Set((data?.subjects ?? []).map((s) => s.period_number))].sort((a, b) => a - b);
   const save = useMutation({
     mutationFn: () =>
       api(`/students/${student.id}/recognitions`, {
@@ -62,7 +64,7 @@ export function RecognizePriorStudiesDialog({
           plan_version_id: planVersionId,
           items: chosen.map((s) => ({
             plan_subject_id: s.plan_subject_id,
-            kind: kinds[s.plan_subject_id] ?? "eq",
+            kind: kinds[s.plan_subject_id],
             grade: grades[s.plan_subject_id] ? Number(grades[s.plan_subject_id]) : null,
             origin,
           })),
@@ -82,9 +84,9 @@ export function RecognizePriorStudiesDialog({
         <DialogHeader>
           <DialogTitle>Reconocer estudios previos</DialogTitle>
           <DialogDescription>
-            Materias anteriores al cuatrimestre actual que acredita con un certificado parcial o
-            dictamen. Sin calificación quedan como «pendiente» hasta que la autoridad emita el
-            documento; luego se registra la nota en el kárdex.
+            Todo el plan del RVOE: marca las materias que acredita con un certificado parcial o
+            dictamen, de cualquier cuatrimestre. Sin calificación quedan como «pendiente» hasta que
+            la autoridad emita el documento; luego se registra la nota en el kárdex.
           </DialogDescription>
         </DialogHeader>
         {isLoading && <Skeleton className="h-40 w-full" />}
@@ -96,8 +98,8 @@ export function RecognizePriorStudiesDialog({
         {data && (
           <div className="grid gap-4">
             <p className="text-sm">
-              Cursa en <b>{data.group_code}</b> ({data.period_number}.º).
-              {data.subjects.length === 0 && " No hay materias anteriores sin registrar."}
+              Su grupo es <b>{data.group_code}</b> ({data.period_number}.º).
+              {data.subjects.length === 0 && " El plan no tiene materias."}
             </p>
             <div className="grid gap-2">
               <Label htmlFor="rec-origin">Origen (escuela, RVOE o documento)</Label>
@@ -109,19 +111,46 @@ export function RecognizePriorStudiesDialog({
               />
             </div>
             {data.subjects.length > 0 && (
-              <div className="divide-y rounded-md border">
-                {data.subjects.map((s) => {
-                  const kind = kinds[s.plan_subject_id] ?? "eq";
+              <div className="max-h-[50vh] overflow-y-auto rounded-md border">
+                {periods.map((period) => (
+                  <div key={period}>
+                    <p className="bg-muted/60 px-3 py-1 text-xs font-bold">{period}.º cuatrimestre</p>
+                    <div className="divide-y">
+                {data.subjects.filter((s) => s.period_number === period).map((s) => {
+                  const kind = kinds[s.plan_subject_id] ?? SKIP;
+                  const blocked = s.state === "evaluada" || s.state === "reconocida";
+                  if (blocked) {
+                    return (
+                      <div
+                        key={s.plan_subject_id}
+                        className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground"
+                      >
+                        <span className="flex-1">
+                          <span className="font-semibold" data-numeric>
+                            {s.code}
+                          </span>{" "}
+                          {s.name}
+                        </span>
+                        <span className="max-w-64 text-right text-xs">
+                          {s.state === "evaluada"
+                            ? "No se puede marcar: tiene evaluaciones registradas. Corrige su calificación en el kárdex."
+                            : "Ya reconocida: se cambia con «Corregir»."}
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={s.plan_subject_id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                      <span className="w-8 text-muted-foreground" data-numeric>
-                        {s.period_number}.º
-                      </span>
                       <span className="flex-1">
                         <span className="font-semibold" data-numeric>
                           {s.code}
                         </span>{" "}
                         {s.name}
+                        {s.state === "en_curso" && kind !== SKIP && (
+                          <span className="block text-xs text-muted-foreground">
+                            La lleva en su grupo: al reconocerla se da de baja ahí.
+                          </span>
+                        )}
                       </span>
                       <Select
                         value={kind}
@@ -156,6 +185,9 @@ export function RecognizePriorStudiesDialog({
                     </div>
                   );
                 })}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
             <DialogFooter>

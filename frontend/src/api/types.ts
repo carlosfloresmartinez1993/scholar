@@ -688,6 +688,9 @@ export interface RecognitionCandidates {
     name: string;
     period_number: number;
     credits: number;
+    // libre: nada registrado; en_curso: la lleva sin evaluaciones (se reemplaza);
+    // evaluada: tiene calificación, se corrige primero; reconocida: ya es EQ/REV/CONV
+    state: "libre" | "en_curso" | "evaluada" | "reconocida";
   }[];
 }
 

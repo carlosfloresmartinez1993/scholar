@@ -30,6 +30,7 @@ from app.models import (
     BulkIntakeResult,
     Group,
     GroupEnrollment,
+    GroupPublic,
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
     OfficialGradeIn,
@@ -65,7 +66,7 @@ from app.models import (
     WizardIntakeResult,
 )
 from app.services import audit, calendar, treasury
-from app.services.academics import internal_group_clause, require_operable_rvoe
+from app.services.academics import current_group, internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
 from app.services.enrollment_changes import change_group, drop_subjects
@@ -490,6 +491,14 @@ async def _student_and_group(session, scope, student_id, group_id) -> tuple[Stud
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
     ensure_in_scope(scope, group.campus_id)
     return student, group
+
+
+@router.get("/{student_id}/current-group")
+async def student_current_group(
+    session: SessionDep, _: AnyStaff, student_id: uuid.UUID
+) -> GroupPublic | None:
+    """The group the student really is in: the active one of the highest cuatrimestre."""
+    return await current_group(session, student_id)
 
 
 @router.get("/{student_id}/rvoe-change/proposal")

@@ -6,7 +6,7 @@ import uuid
 from collections import defaultdict
 
 from fastapi import HTTPException
-from sqlmodel import func, or_, select
+from sqlmodel import and_, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
@@ -20,6 +20,7 @@ from app.models import (
     Grade,
     Group,
     GroupEnrollment,
+    GroupEnrollmentStatus,
     GroupSubject,
     PlanEnrollmentStatus,
     PlanSubject,
@@ -115,16 +116,44 @@ async def require_operable_rvoe(session: AsyncSession, plan_version_id: uuid.UUI
 
 
 async def passed_subject_ids(session: AsyncSession, student_id: uuid.UUID) -> set[uuid.UUID]:
-    """PlanSubject ids the student has passed (any attempt)."""
+    """PlanSubject ids the student has settled: passed in any attempt, or recognized
+    by EQ/REV/CONV even while the grade is pending (the authority's dictamen stands)."""
     result = await session.exec(
         select(GroupSubject.plan_subject_id)
         .join(SubjectEnrollment, SubjectEnrollment.group_subject_id == GroupSubject.id)
+        .join(Group, Group.id == GroupSubject.group_id)
         .where(
             SubjectEnrollment.student_id == student_id,
-            SubjectEnrollment.status == SubjectEnrollmentStatus.aprobada,
+            or_(
+                SubjectEnrollment.status == SubjectEnrollmentStatus.aprobada,
+                and_(SubjectEnrollment.status == SubjectEnrollmentStatus.cursando, internal_group_clause()),
+            ),
         )
     )
     return set(result.all())
+
+
+async def current_group(
+    session: AsyncSession, student_id: uuid.UUID, plan_version_id: uuid.UUID | None = None
+) -> Group | None:
+    """The group the student really is in: the active one of the highest cuatrimestre
+    (of that plan, or of the plans in course). A lower one is a recursamiento;
+    recognized subjects (internal groups) say nothing about where they are."""
+    query = (
+        select(Group)
+        .join(GroupEnrollment, GroupEnrollment.group_id == Group.id)
+        .join(StudentPlanEnrollment, StudentPlanEnrollment.id == GroupEnrollment.plan_enrollment_id)
+        .where(
+            GroupEnrollment.student_id == student_id,
+            GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            StudentPlanEnrollment.status == PlanEnrollmentStatus.inscrito,
+            ~internal_group_clause(),
+        )
+        .order_by(Group.period_number.desc(), GroupEnrollment.created_at.desc())  # type: ignore[attr-defined]
+    )
+    if plan_version_id is not None:
+        query = query.where(Group.plan_version_id == plan_version_id)
+    return (await session.exec(query)).first()
 
 
 async def check_prerequisites(
