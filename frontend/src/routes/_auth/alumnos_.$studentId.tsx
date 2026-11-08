@@ -1558,7 +1558,7 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
                     </TableCell>
                   ))}
                   {withOrigin && (
-                    <TableCell className="max-w-64 text-xs text-muted-foreground">
+                    <TableCell className="max-w-64 whitespace-normal text-xs text-muted-foreground">
                       {r.origin ?? ""}
                     </TableCell>
                   )}
