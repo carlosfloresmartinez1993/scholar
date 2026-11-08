@@ -218,7 +218,8 @@ async def test_change_closes_old_group_and_revert_restores_it(client, seed):
     twice = await client.post(f"{API}/students/{student['id']}/rvoe-change/revert", json={
         "change_id": change_id, "reason": REASON,
     })
-    assert twice.status_code == 404  # the plan it led to is gone
+    assert twice.status_code == 409
+    assert "ya fue revertido" in twice.json()["detail"]
 
     # the change can be made again, right this time
     await change(client, student, catalog, target,

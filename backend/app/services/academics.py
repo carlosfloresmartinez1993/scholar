@@ -1,7 +1,6 @@
 """Academic business rules: RVOE operability (RT-03), seriación (RF-C07),
 kardex and curricular progress (RF-C05/C06/C08), attendance right-to-exam
 (RF-A02/A05)."""
-import json
 import uuid
 from collections import defaultdict
 
@@ -11,7 +10,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
     AttendanceRecord,
-    AuditLog,
     AttendanceStatus,
     Campus,
     ClassSession,
@@ -22,6 +20,7 @@ from app.models import (
     GroupEnrollment,
     GroupEnrollmentStatus,
     GroupSubject,
+    PlanChange,
     PlanEnrollmentStatus,
     PlanSubject,
     PlanVersion,
@@ -32,18 +31,17 @@ from app.models import (
     SubjectEnrollment,
     SubjectEnrollmentStatus,
     SubjectPrerequisite,
+    SubjectRecognition,
     Term,
 )
 
 PASSING_GRADE = 6.0
 
 # audit action of a cambio de RVOE (services/plan_change.py); the kárdex reads it to
-# chain the plan that was left with the one it led to
+# audit log entries, history only: nothing is read back from them (the data lives in
+# plan_changes and subject_recognitions)
 PLAN_CHANGE_ACTION = "plan_enrollment.rvoe_changed"
-# audit action of each subject recognized by EQ/REV/CONV; its detail keeps the
-# origin (RVOE and subject it comes from, or the external document) shown in the kárdex
 RECOGNITION_ACTION = "subject_enrollment.recognized"
-# a reverted cambio de RVOE: its entity_id is the audit entry of that change
 PLAN_CHANGE_REVERTED_ACTION = "plan_enrollment.rvoe_change_reverted"
 
 # Subjects acreditadas por equivalencia / revalidación / convalidación live in an
@@ -75,30 +73,19 @@ def internal_group_clause():
     return or_(*[Group.code.ilike(f"%{suffix}") for suffix in RECOGNITION_SUFFIXES])  # type: ignore[attr-defined]
 
 
-async def active_plan_changes(session: AsyncSession, plan_enrollment_ids: list[str]) -> list[AuditLog]:
+async def active_plan_changes(session: AsyncSession, plan_enrollment_ids: list) -> list[PlanChange]:
     """Cambios de RVOE that led to these plan enrollments and were not reverted,
     oldest first."""
-    logs = (
+    return (
         await session.exec(
-            select(AuditLog)
+            select(PlanChange)
             .where(
-                AuditLog.action == PLAN_CHANGE_ACTION,
-                AuditLog.entity_id.in_(plan_enrollment_ids),  # type: ignore[attr-defined]
+                PlanChange.to_plan_enrollment_id.in_(plan_enrollment_ids),  # type: ignore[union-attr]
+                PlanChange.reverted_at.is_(None),  # type: ignore[union-attr]
             )
-            .order_by(AuditLog.created_at)
+            .order_by(PlanChange.created_at)
         )
     ).all()
-    reverted = set(
-        (
-            await session.exec(
-                select(AuditLog.entity_id).where(
-                    AuditLog.action == PLAN_CHANGE_REVERTED_ACTION,
-                    AuditLog.entity_id.in_([str(log.id) for log in logs] or [""]),  # type: ignore[attr-defined]
-                )
-            )
-        ).all()
-    )
-    return [log for log in logs if str(log.id) not in reverted]
 
 
 async def require_operable_rvoe(session: AsyncSession, plan_version_id: uuid.UUID) -> Rvoe:
@@ -115,45 +102,75 @@ async def require_operable_rvoe(session: AsyncSession, plan_version_id: uuid.UUI
     return rvoe
 
 
-async def passed_subject_ids(session: AsyncSession, student_id: uuid.UUID) -> set[uuid.UUID]:
-    """PlanSubject ids the student has settled: passed in any attempt, or recognized
-    by EQ/REV/CONV even while the grade is pending (the authority's dictamen stands)."""
-    result = await session.exec(
-        select(GroupSubject.plan_subject_id)
-        .join(SubjectEnrollment, SubjectEnrollment.group_subject_id == GroupSubject.id)
+def _settled_query():
+    """(student, plan subject) settled: passed in any attempt, or recognized by
+    EQ/REV/CONV even while the grade is pending (the authority's dictamen stands)."""
+    return (
+        select(SubjectEnrollment.student_id, GroupSubject.plan_subject_id)
+        .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
         .join(Group, Group.id == GroupSubject.group_id)
         .where(
-            SubjectEnrollment.student_id == student_id,
             or_(
                 SubjectEnrollment.status == SubjectEnrollmentStatus.aprobada,
                 and_(SubjectEnrollment.status == SubjectEnrollmentStatus.cursando, internal_group_clause()),
             ),
         )
     )
-    return set(result.all())
 
 
-async def current_group(
-    session: AsyncSession, student_id: uuid.UUID, plan_version_id: uuid.UUID | None = None
-) -> Group | None:
-    """The group the student really is in: the active one of the highest cuatrimestre
-    (of that plan, or of the plans in course). A lower one is a recursamiento;
-    recognized subjects (internal groups) say nothing about where they are."""
-    query = (
-        select(Group)
+async def passed_subject_ids(session: AsyncSession, student_id: uuid.UUID) -> set[uuid.UUID]:
+    """PlanSubject ids the student has settled."""
+    result = await session.exec(_settled_query().where(SubjectEnrollment.student_id == student_id))
+    return {subject_id for _, subject_id in result.all()}
+
+
+async def settled_subjects_of(session: AsyncSession, students) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """The same for many students at once; `students` is a subquery of their ids."""
+    settled: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
+    for student_id, subject_id in (
+        await session.exec(_settled_query().where(SubjectEnrollment.student_id.in_(students)))  # type: ignore[attr-defined]
+    ).all():
+        settled[student_id].add(subject_id)
+    return settled
+
+
+def _current_group_query():
+    """Active groups of the plans in course, the highest cuatrimestre first. A lower
+    one is a recursamiento; recognized subjects (internal groups) say nothing about
+    where the student is."""
+    return (
+        select(GroupEnrollment.student_id, Group)
         .join(GroupEnrollment, GroupEnrollment.group_id == Group.id)
         .join(StudentPlanEnrollment, StudentPlanEnrollment.id == GroupEnrollment.plan_enrollment_id)
         .where(
-            GroupEnrollment.student_id == student_id,
             GroupEnrollment.status == GroupEnrollmentStatus.activa,
             StudentPlanEnrollment.status == PlanEnrollmentStatus.inscrito,
             ~internal_group_clause(),
         )
         .order_by(Group.period_number.desc(), GroupEnrollment.created_at.desc())  # type: ignore[attr-defined]
     )
+
+
+async def current_group(
+    session: AsyncSession, student_id: uuid.UUID, plan_version_id: uuid.UUID | None = None
+) -> Group | None:
+    """The group the student really is in: the active one of the highest cuatrimestre
+    (of that plan, or of the plans in course)."""
+    query = _current_group_query().where(GroupEnrollment.student_id == student_id)
     if plan_version_id is not None:
         query = query.where(Group.plan_version_id == plan_version_id)
-    return (await session.exec(query)).first()
+    row = (await session.exec(query)).first()
+    return row[1] if row else None
+
+
+async def current_groups_of(session: AsyncSession, students) -> dict[tuple, Group]:
+    """(student, plan version) -> their group, for many students at once."""
+    groups: dict[tuple, Group] = {}
+    for student_id, group in (
+        await session.exec(_current_group_query().where(GroupEnrollment.student_id.in_(students)))  # type: ignore[attr-defined]
+    ).all():
+        groups.setdefault((student_id, group.plan_version_id), group)
+    return groups
 
 
 async def check_prerequisites(
@@ -249,7 +266,7 @@ async def student_kardex(
     under earlier plans goes to `previous`, grouped by plan, as the backing of those
     recognitions. Progress is measured against the current plan.
 
-    A plan left through a cambio de RVOE (PLAN_CHANGE_ACTION in the audit log) is
+    A plan left through a cambio de RVOE (plan_changes, not reverted) is
     part of the kárdex of the plan it led to, even in another carrera: one history.
     A student with two active carreras has one kárdex each; `program_id` picks it
     (default: the carrera of the current plan)."""
@@ -274,12 +291,11 @@ async def student_kardex(
     # cambio de RVOE links: new plan enrollment -> the one it replaced
     by_id = {row[0].id: row for row in plan_enrollments}
     came_from: dict[uuid.UUID, uuid.UUID] = {}
-    last_change: dict[uuid.UUID, AuditLog] = {}
-    for log in await active_plan_changes(session, [str(i) for i in by_id]):
-        previous = json.loads(log.detail or "{}").get("from_plan_enrollment_id")
-        if previous and uuid.UUID(previous) in by_id:
-            came_from[uuid.UUID(log.entity_id)] = uuid.UUID(previous)
-            last_change[uuid.UUID(log.entity_id)] = log
+    last_change: dict[uuid.UUID, PlanChange] = {}
+    for change in await active_plan_changes(session, list(by_id)):
+        if change.from_plan_enrollment_id in by_id:
+            came_from[change.to_plan_enrollment_id] = change.from_plan_enrollment_id
+            last_change[change.to_plan_enrollment_id] = change
     replaced = set(came_from.values())
     # (a plan the student came back to is replaced and current at once)
     heads = [row for row in plan_enrollments
@@ -420,17 +436,16 @@ async def student_kardex(
     recognized_ids = [r["subject_enrollment_id"] for r in rows if r["recognition"]]
     origins: dict[str, str] = {}
     if recognized_ids:
-        for log in (
+        for recognition in (
             await session.exec(
-                select(AuditLog)
-                .where(
-                    AuditLog.action == RECOGNITION_ACTION,
-                    AuditLog.entity_id.in_(recognized_ids),  # type: ignore[attr-defined]
+                select(SubjectRecognition).where(
+                    SubjectRecognition.subject_enrollment_id.in_(  # type: ignore[attr-defined]
+                        [uuid.UUID(i) for i in recognized_ids]
+                    )
                 )
-                .order_by(AuditLog.created_at)  # a corrected origin wins
             )
         ).all():
-            origins[log.entity_id] = json.loads(log.detail or "{}").get("origin") or ""
+            origins[str(recognition.subject_enrollment_id)] = recognition.origin
     for r in rows:
         r["origin"] = origins.get(r["subject_enrollment_id"] or "")
 

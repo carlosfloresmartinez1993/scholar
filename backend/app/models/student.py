@@ -8,6 +8,7 @@ from datetime import date, datetime
 from enum import Enum
 
 from pydantic import field_validator, model_validator
+from sqlalchemy import JSON, Column, Text
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.models.common import utcnow
@@ -438,6 +439,34 @@ class SubjectEnrollment(SQLModel, table=True):
     status: SubjectEnrollmentStatus = SubjectEnrollmentStatus.cursando
     final_grade: float | None = Field(default=None, ge=0, le=10)
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class SubjectRecognition(SQLModel, table=True):
+    """Where an EQ/REV/CONV comes from (RVOE and subject, or external document). Its
+    kind is the internal group's; its grade, the subject enrollment's."""
+    __tablename__ = "subject_recognitions"
+    subject_enrollment_id: uuid.UUID = Field(foreign_key="subject_enrollments.id", primary_key=True)
+    origin: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class PlanChange(SQLModel, table=True):
+    """A cambio de RVOE: it chains the plan left with the one it led to, which is how
+    the kárdex is one history. `detail` keeps what is needed to revert it."""
+    __tablename__ = "plan_changes"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    student_id: uuid.UUID = Field(foreign_key="students.id", index=True)
+    # empty only once reverted and that plan enrollment is gone
+    from_plan_enrollment_id: uuid.UUID | None = Field(
+        default=None, foreign_key="student_plan_enrollments.id", index=True)
+    to_plan_enrollment_id: uuid.UUID | None = Field(
+        default=None, foreign_key="student_plan_enrollments.id", index=True)
+    detail: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    changed_by: str = Field(default="", max_length=255)
+    created_at: datetime = Field(default_factory=utcnow)
+    reverted_at: datetime | None = None
+    reverted_by: str = Field(default="", max_length=255)
+    revert_reason: str = Field(default="", max_length=255)
 
 
 class SubjectEnrollmentPublic(SQLModel):

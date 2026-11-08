@@ -66,6 +66,8 @@ from app.models.student import (
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
     OfficialGradeIn,
+    PlanChange,
+    SubjectRecognition,
     SubjectDropIn,
     RecognitionUpdateIn,
     RecognitionUndoIn,

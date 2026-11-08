@@ -5,9 +5,8 @@ convalidar / equivalencia / revalidación (recognized, with a grade), cursar aho
 (loaded right away in a group of the term) or pendiente (owed).
 
 A student is never in two RVOE at once: the old plan enrollment is closed (baja) and
-the change is recorded in the audit log (action PLAN_CHANGE_ACTION, entity = the new plan
-enrollment, detail = JSON with the old one), which is how the kárdex chains both
-plans into a single history. No schema change."""
+the change is recorded in plan_changes, which is how the kárdex chains both plans into
+a single history (and how it is reverted)."""
 import json
 import re
 import unicodedata
@@ -20,7 +19,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
-    AuditLog,
     Charge,
     ChargeStatus,
     Grade,
@@ -29,6 +27,7 @@ from app.models import (
     GroupEnrollmentKind,
     GroupEnrollmentStatus,
     GroupSubject,
+    PlanChange,
     PlanEnrollmentStatus,
     PlanSubject,
     PlanVersion,
@@ -37,6 +36,7 @@ from app.models import (
     StudentPlanEnrollment,
     SubjectEnrollment,
     SubjectEnrollmentStatus,
+    SubjectRecognition,
     Term,
 )
 from app.models.common import utcnow
@@ -248,39 +248,55 @@ async def _plan_rvoe(session: AsyncSession, plan_version_id) -> str:
     return rvoe.agreement_number if rvoe else ""
 
 
-async def _subject_state(
-    session: AsyncSession, student_id, plan_subject_id
-) -> tuple[str, list[SubjectEnrollment]]:
+def _classify(rows: list[tuple[SubjectEnrollment, Group]], captured: set) -> tuple[str, list[SubjectEnrollment]]:
     """Where a subject of the plan stands for a recognition: libre (nothing recorded),
     en_curso (loaded in a group, no evaluations: returned so it can be replaced),
     evaluada (has a final grade or captures) or reconocida (already EQ/REV/CONV)."""
-    rows = (
+    if any(recognition_kind(group.code) for _, group in rows):
+        return "reconocida", []
+    enrollments = [se for se, _ in rows]
+    if any(
+        se.id in captured or se.final_grade is not None or se.status != SubjectEnrollmentStatus.cursando
+        for se in enrollments
+    ):
+        return "evaluada", []
+    return ("en_curso", enrollments) if enrollments else ("libre", [])
+
+
+async def _subject_rows(session: AsyncSession, student_id, *conditions) -> tuple[dict, set]:
+    """Non-dropped rows of the student per plan subject, and which have captures."""
+    rows: dict = {}
+    for se, group, subject_id in (
         await session.exec(
-            select(SubjectEnrollment, Group)
+            select(SubjectEnrollment, Group, GroupSubject.plan_subject_id)
             .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
             .join(Group, Group.id == GroupSubject.group_id)
             .where(
                 SubjectEnrollment.student_id == student_id,
-                GroupSubject.plan_subject_id == plan_subject_id,
                 SubjectEnrollment.status != SubjectEnrollmentStatus.baja,
+                *conditions,
             )
         )
-    ).all()
-    if any(recognition_kind(group.code) for _, group in rows):
-        return "reconocida", []
-    enrollments = [se for se, _ in rows]
-    captured = (
-        await session.exec(
-            select(Grade.id).where(
-                Grade.subject_enrollment_id.in_([se.id for se in enrollments] or [uuid.uuid4()])  # type: ignore[attr-defined]
+    ).all():
+        rows.setdefault(subject_id, []).append((se, group))
+    ids = [se.id for found in rows.values() for se, _ in found]
+    captured = set(
+        (
+            await session.exec(
+                select(Grade.subject_enrollment_id).where(
+                    Grade.subject_enrollment_id.in_(ids or [uuid.uuid4()])  # type: ignore[attr-defined]
+                )
             )
-        )
-    ).first()
-    if captured or any(
-        se.final_grade is not None or se.status != SubjectEnrollmentStatus.cursando for se in enrollments
-    ):
-        return "evaluada", []
-    return ("en_curso", enrollments) if enrollments else ("libre", [])
+        ).all()
+    )
+    return rows, captured
+
+
+async def _subject_state(
+    session: AsyncSession, student_id, plan_subject_id
+) -> tuple[str, list[SubjectEnrollment]]:
+    rows, captured = await _subject_rows(session, student_id, GroupSubject.plan_subject_id == plan_subject_id)
+    return _classify(rows.get(plan_subject_id, []), captured)
 
 
 async def record_recognitions(
@@ -291,8 +307,8 @@ async def record_recognitions(
     the internal group of `anchor_group` ("<code>-EQ", ...). Each item: subject
     (PlanSubject), kind (eq|rev|conv), grade (None = pending the authority's
     document) and origin (where it comes from: RVOE and subject, or the external
-    school / document). The origin is kept in the audit log (RECOGNITION_ACTION),
-    one entry per recognized subject, which the kárdex shows. Caller commits."""
+    school / document), kept in subject_recognitions and shown in the kárdex.
+    Caller commits."""
     created = []
     enrollments: dict[str, GroupEnrollment] = {}
     for item in items:
@@ -354,6 +370,7 @@ async def record_recognitions(
         )
         session.add(recognized)
         await session.flush()
+        session.add(SubjectRecognition(subject_enrollment_id=recognized.id, origin=item.get("origin") or ""))
         audit.record(
             session, actor=current_user.email, action=RECOGNITION_ACTION,
             entity="subject_enrollment", entity_id=str(recognized.id),
@@ -499,21 +516,25 @@ async def apply_change(
         subjects[uuid.UUID(str(d["plan_subject_id"]))].code for d in decisions if d["action"] == "pendiente"
     ]
 
-    audit.record(
-        session, actor=current_user.email, action=PLAN_CHANGE_ACTION,
-        entity="plan_enrollment", entity_id=str(new_plan.id),
-        detail=json.dumps({
-            "from_plan_enrollment_id": str(old_plan.id),
-            "from_plan_version_id": str(old_plan.plan_version_id),
-            "to_plan_version_id": str(target_group.plan_version_id),
+    session.add(PlanChange(
+        student_id=student.id, from_plan_enrollment_id=old_plan.id, to_plan_enrollment_id=new_plan.id,
+        changed_by=current_user.email,
+        detail=json.loads(json.dumps({
+            "from_plan_version_id": old_plan.plan_version_id,
+            "to_plan_version_id": target_group.plan_version_id,
             "target_group": target_group.code, "term": term.name if term else None,
             "decisions": decisions,
             # to revert it
-            "started_at": started_at.isoformat(), "from_campus_id": str(from_campus_id),
+            "started_at": started_at.isoformat(), "from_campus_id": from_campus_id,
             "new_plan_created": new_plan_created,
             "closed_group_enrollment_ids": closed_group_ids,
             "dropped_subject_enrollment_ids": dropped_subject_ids,
-        }, ensure_ascii=False, default=str),
+        }, default=str)),
+    ))
+    audit.record(
+        session, actor=current_user.email, action=PLAN_CHANGE_ACTION,
+        entity="plan_enrollment", entity_id=str(new_plan.id),
+        detail=f"{old_plan.plan_version_id} -> {target_group.plan_version_id}, grupo {target_group.code}",
     )
     await session.flush()
     return {"new_plan_enrollment_id": str(new_plan.id), "summary": summary}
@@ -541,7 +562,10 @@ async def recognition_candidates(session: AsyncSession, student: Student, plan_v
             .order_by(PlanSubject.period_number, PlanSubject.code)
         )
     ).all()
-    states = {s.id: (await _subject_state(session, student.id, s.id))[0] for s in subjects}
+    rows, captured = await _subject_rows(
+        session, student.id, GroupSubject.plan_subject_id.in_([s.id for s in subjects] or [uuid.uuid4()])  # type: ignore[attr-defined]
+    )
+    states = {s.id: _classify(rows.get(s.id, []), captured)[0] for s in subjects}
     return {
         "group_id": str(group.id), "group_code": group.code, "period_number": group.period_number,
         "subjects": [
@@ -676,7 +700,13 @@ async def update_recognition(
     enrollment.final_grade = float(grade) if grade is not None else None
     enrollment.status = _status_for(grade)
     session.add(enrollment)
-    # a new entry: the kárdex reads the latest origin; the earlier ones stay as history
+    recognition = await session.get(SubjectRecognition, enrollment.id)
+    if recognition is None:
+        recognition = SubjectRecognition(subject_enrollment_id=enrollment.id)
+    recognition.origin = origin.strip()
+    recognition.updated_at = utcnow()
+    session.add(recognition)
+    # the audit log keeps the earlier values as history
     audit.record(
         session, actor=current_user.email, action=RECOGNITION_ACTION,
         entity="subject_enrollment", entity_id=str(enrollment.id),
@@ -687,6 +717,14 @@ async def update_recognition(
     )
     await session.flush()
     return enrollment
+
+
+async def _delete_enrollment(session: AsyncSession, enrollment: SubjectEnrollment) -> None:
+    recognition = await session.get(SubjectRecognition, enrollment.id)
+    if recognition is not None:
+        await session.delete(recognition)
+        await session.flush()
+    await session.delete(enrollment)
 
 
 async def undo_recognition(
@@ -709,7 +747,7 @@ async def undo_recognition(
         detail=json.dumps({"kind": kind, "grade": enrollment.final_grade, "subject": subject.code,
                            "group": group.code, "reason": reason.strip()}, ensure_ascii=False),
     )
-    await session.delete(enrollment)
+    await _delete_enrollment(session, enrollment)
     await session.flush()
 
 
@@ -721,19 +759,19 @@ async def revert_change(
     while the new plan holds captured grades (they are not the change's to erase:
     each one is corrected first, leaving it empty). Charges without payment are cancelled;
     those with a payment stay on the student's account for Tesorería. Caller commits."""
-    log = await session.get(AuditLog, change_id)
-    new_plan = None
-    if log is not None and log.action == PLAN_CHANGE_ACTION:
-        new_plan = await session.get(StudentPlanEnrollment, uuid.UUID(log.entity_id))
-    if new_plan is None or new_plan.student_id != student.id:
+    change = await session.get(PlanChange, change_id)
+    if change is None or change.student_id != student.id:
         raise HTTPException(status_code=404, detail="Cambio de RVOE no encontrado")
-    active = await active_plan_changes(session, [str(new_plan.id)])
-    if not active or active[-1].id != log.id:
+    if change.reverted_at is not None:
         raise HTTPException(status_code=409, detail="Ese cambio de RVOE ya fue revertido")
+    new_plan = await session.get(StudentPlanEnrollment, change.to_plan_enrollment_id)
+    active = await active_plan_changes(session, [change.to_plan_enrollment_id])
+    if new_plan is None or not active or active[-1].id != change.id:
+        raise HTTPException(status_code=409, detail="Hay un cambio de RVOE posterior; revierta primero ese")
     if new_plan.status != PlanEnrollmentStatus.inscrito:
         raise HTTPException(status_code=409, detail="Hay un cambio de RVOE posterior; revierta primero ese")
-    detail = json.loads(log.detail or "{}")
-    old_plan = await session.get(StudentPlanEnrollment, uuid.UUID(detail["from_plan_enrollment_id"]))
+    detail = change.detail
+    old_plan = await session.get(StudentPlanEnrollment, change.from_plan_enrollment_id)
     if old_plan is None:
         raise HTTPException(status_code=409, detail="El plan anterior ya no existe")
     since = datetime.fromisoformat(detail["started_at"]) if detail.get("started_at") else None
@@ -768,7 +806,7 @@ async def revert_change(
             + ". Con «Corregir» déjelas vacías antes de revertir.",
         )
     for se, *_ in created:
-        await session.delete(se)
+        await _delete_enrollment(session, se)
     await session.flush()
 
     # the group enrollments of the change, their charges with them
@@ -804,7 +842,26 @@ async def revert_change(
     left = (
         await session.exec(select(GroupEnrollment.id).where(GroupEnrollment.plan_enrollment_id == new_plan.id))
     ).first()
+    change.reverted_at = utcnow()
+    change.reverted_by = current_user.email
+    change.revert_reason = reason.strip()[:255]
+    session.add(change)
     if left is None and detail.get("new_plan_created", True):
+        # the changes already reverted that mention it let go of it
+        for mention in (
+            await session.exec(
+                select(PlanChange).where(
+                    (PlanChange.to_plan_enrollment_id == new_plan.id)
+                    | (PlanChange.from_plan_enrollment_id == new_plan.id)
+                )
+            )
+        ).all():
+            if mention.to_plan_enrollment_id == new_plan.id:
+                mention.to_plan_enrollment_id = None
+            if mention.from_plan_enrollment_id == new_plan.id:
+                mention.from_plan_enrollment_id = None
+            session.add(mention)
+        await session.flush()
         await session.delete(new_plan)
     else:
         new_plan.status = PlanEnrollmentStatus.baja
@@ -838,7 +895,7 @@ async def revert_change(
         session.add(student)
     audit.record(
         session, actor=current_user.email, action=PLAN_CHANGE_REVERTED_ACTION,
-        entity="audit_log", entity_id=str(log.id),
+        entity="plan_change", entity_id=str(change.id),
         detail=json.dumps({
             "reason": reason.strip(), "removed_subjects": [ps.code for _, _, ps in created],
             "cancelled_charges": cancelled, "paid_charges_kept": kept,

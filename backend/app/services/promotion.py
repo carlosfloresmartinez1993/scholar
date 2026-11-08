@@ -4,6 +4,7 @@ enrolling + auto-billing reinscripción and the new term's colegiaturas. Idempot
 (re-runs skip already-promoted students), supports a dry-run preview, and isolates
 each student in a SAVEPOINT so one failure never rolls back the batch. Driven by a
 Railway cron that fires PROMOTION_LEAD_DAYS before a term's start_date."""
+from collections import defaultdict
 from datetime import date, timedelta
 
 from fastapi import HTTPException
@@ -25,27 +26,8 @@ from app.models import (
 )
 from app.models.common import utcnow
 from app.services import audit
-from app.services.academics import current_group, passed_subject_ids
+from app.services.academics import current_groups_of, settled_subjects_of
 from app.services.enrollment import enroll_student_core
-
-
-async def _passed_source_group(session: AsyncSession, student_id, source_group: Group) -> bool:
-    """True only if the student settled EVERY subject the group teaches of its own
-    cuatrimestre: passed in any group, or recognized by EQ/REV/CONV even without a
-    grade yet (the authority's dictamen stands). A subject added to the group for a
-    student's recursamiento is not asked of the others."""
-    rows = (
-        await session.exec(
-            select(GroupSubject.plan_subject_id, PlanSubject.period_number)
-            .join(PlanSubject, PlanSubject.id == GroupSubject.plan_subject_id)
-            .where(GroupSubject.group_id == source_group.id)
-        )
-    ).all()
-    required = {subject for subject, period in rows if period == source_group.period_number}
-    required = required or {subject for subject, _ in rows}
-    if not required:
-        return False
-    return required <= await passed_subject_ids(session, student_id)
 
 
 async def promote_cycle(
@@ -82,18 +64,61 @@ async def promote_cycle(
 
     promoted: list[dict] = []
     skipped: list[dict] = []
-    for target, term in targets:
-        enrollments = (
+    # everything the decision needs is read once for all the students; a promotion
+    # with thousands of them is not thousands of round trips for each question
+    source_ids = {target.promotes_from_group_id for target, _ in targets}
+    target_ids = {target.id for target, _ in targets}
+    in_sources = select(GroupEnrollment.student_id).where(
+        GroupEnrollment.group_id.in_(source_ids),  # type: ignore[attr-defined]
+        GroupEnrollment.status == GroupEnrollmentStatus.activa,
+    )
+    by_source: dict = defaultdict(list)
+    for en, student, plan_status in (
+        await session.exec(
+            select(GroupEnrollment, Student, StudentPlanEnrollment.status)
+            .join(Student, Student.id == GroupEnrollment.student_id)
+            .join(StudentPlanEnrollment, StudentPlanEnrollment.id == GroupEnrollment.plan_enrollment_id)
+            .where(
+                GroupEnrollment.group_id.in_(source_ids),  # type: ignore[attr-defined]
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            )
+        )
+    ).all():
+        by_source[en.group_id].append((en, student, plan_status))
+    already = set(
+        (
             await session.exec(
-                select(GroupEnrollment, Student)
-                .join(Student, Student.id == GroupEnrollment.student_id)
-                .where(
-                    GroupEnrollment.group_id == target.promotes_from_group_id,
-                    GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                select(GroupEnrollment.student_id, GroupEnrollment.group_id).where(
+                    GroupEnrollment.group_id.in_(target_ids)  # type: ignore[attr-defined]
                 )
             )
         ).all()
-        for en, student in enrollments:
+    )
+    source_groups = {
+        g.id: g for g in (await session.exec(select(Group).where(Group.id.in_(source_ids)))).all()  # type: ignore[attr-defined]
+    }
+    # what each group asks: the subjects it teaches of its own cuatrimestre (one added
+    # for a student's recursamiento is not asked of the others); passed in any group,
+    # or recognized by EQ/REV/CONV even without a grade yet
+    taught: dict = defaultdict(list)
+    for group_id, subject_id, period in (
+        await session.exec(
+            select(GroupSubject.group_id, GroupSubject.plan_subject_id, PlanSubject.period_number)
+            .join(PlanSubject, PlanSubject.id == GroupSubject.plan_subject_id)
+            .where(GroupSubject.group_id.in_(source_ids))  # type: ignore[attr-defined]
+        )
+    ).all():
+        taught[group_id].append((subject_id, period))
+    required = {}
+    for group_id, subjects in taught.items():
+        own = {subject for subject, period in subjects if period == source_groups[group_id].period_number}
+        required[group_id] = own or {subject for subject, _ in subjects}
+    settled = await settled_subjects_of(session, in_sources)
+    main_groups = await current_groups_of(session, in_sources)
+
+    for target, term in targets:
+        source_group = source_groups[target.promotes_from_group_id]
+        for en, student, plan_status in by_source[source_group.id]:
             info = {
                 "student": student.full_name,
                 "matricula": student.enrollment_number,
@@ -101,29 +126,20 @@ async def promote_cycle(
                 "term": term.name,
             }
             # idempotent: already in the target group?
-            already = (
-                await session.exec(
-                    select(GroupEnrollment.id).where(
-                        GroupEnrollment.student_id == student.id,
-                        GroupEnrollment.group_id == target.id,
-                    )
-                )
-            ).first()
-            if already:
+            if (student.id, target.id) in already:
                 continue
             # continuing? plan enrollment must be inscrito (not baja/egresado/titulado)
-            plan_en = await session.get(StudentPlanEnrollment, en.plan_enrollment_id)
-            if plan_en is None or plan_en.status != PlanEnrollmentStatus.inscrito:
+            if plan_status != PlanEnrollmentStatus.inscrito:
                 skipped.append({**info, "reason": "no continúa (baja/egresado)"})
                 continue
             # only from the group they really are in: a lower one is a recursamiento
-            source_group = await session.get(Group, target.promotes_from_group_id)
-            main_group = await current_group(session, student.id, source_group.plan_version_id)
+            main_group = main_groups.get((student.id, source_group.plan_version_id))
             if main_group is not None and main_group.period_number > source_group.period_number:
                 skipped.append({**info, "reason": f"recursa en este grupo; su grupo es {main_group.code}"})
                 continue
             # passed the whole source period?
-            if not await _passed_source_group(session, student.id, source_group):
+            wanted = required.get(source_group.id)
+            if not wanted or not wanted <= settled.get(student.id, set()):
                 skipped.append({**info, "reason": "no acreditó el periodo"})
                 continue
             if dry_run:
