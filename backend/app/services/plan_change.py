@@ -668,13 +668,37 @@ async def update_recognition(
     return enrollment
 
 
+async def undo_recognition(
+    session: AsyncSession, current_user, enrollment: SubjectEnrollment, reason: str
+) -> None:
+    """The subject should not have been recognized. It stays in its period of the
+    plan (the RVOE is untouchable), pending; only the recognition goes, kept in the
+    audit log. Caller commits."""
+    gs = await session.get(GroupSubject, enrollment.group_subject_id)
+    group = await session.get(Group, gs.group_id) if gs else None
+    kind = recognition_kind(group.code) if group else None
+    if kind is None:
+        raise HTTPException(
+            status_code=400, detail="Solo materias por equivalencia, revalidación o convalidación"
+        )
+    subject = await session.get(PlanSubject, gs.plan_subject_id)
+    audit.record(
+        session, actor=current_user.email, action="subject_enrollment.recognition_undone",
+        entity="subject_enrollment", entity_id=str(enrollment.id),
+        detail=json.dumps({"kind": kind, "grade": enrollment.final_grade, "subject": subject.code,
+                           "group": group.code, "reason": reason.strip()}, ensure_ascii=False),
+    )
+    await session.delete(enrollment)
+    await session.flush()
+
+
 async def revert_change(
     session: AsyncSession, current_user, student: Student, change_id, reason: str
 ) -> dict:
     """Undo a cambio de RVOE: the old plan, its groups and the subjects it had in
     course come back; what the change created in the new plan goes away. Refused
     while the new plan holds captured grades (they are not the change's to erase:
-    each one is corrected or removed first). Charges without payment are cancelled;
+    each one is corrected first, leaving it empty). Charges without payment are cancelled;
     those with a payment stay on the student's account for Tesorería. Caller commits."""
     log = await session.get(AuditLog, change_id)
     new_plan = None
@@ -720,7 +744,7 @@ async def revert_change(
         raise HTTPException(
             status_code=409,
             detail="Ya tiene calificaciones en el plan nuevo: " + ", ".join(sorted(graded))
-            + ". Corríjalas o quítelas del historial antes de revertir.",
+            + ". Con «Corregir» déjelas vacías antes de revertir.",
         )
     for se, *_ in created:
         await session.delete(se)

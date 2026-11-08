@@ -58,8 +58,8 @@ function ReasonField({ value, onChange }: { value: string; onChange: (v: string)
   );
 }
 
-// «Quitar del historial», shared: it asks for confirmation on the same button
-function RemoveFromRecordButton({
+// The recognition was a mistake: the subject stays in its period of the RVOE, pending.
+function UndoRecognitionButton({
   row,
   reason,
   onDone,
@@ -69,27 +69,27 @@ function RemoveFromRecordButton({
   onDone: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const remove = useMutation({
+  const undo = useMutation({
     mutationFn: () =>
-      api(`/students/subject-enrollments/${row.subject_enrollment_id}/remove-from-record`, {
+      api(`/students/subject-enrollments/${row.subject_enrollment_id}/recognition/undo`, {
         method: "POST",
         body: JSON.stringify({ reason }),
       }),
     onSuccess: () => {
-      toast.success(`${row.code} se quitó del historial`);
+      toast.success(`${row.code} queda pendiente de cursar`);
       onDone();
     },
-    onError: (e) => toast.error(errorText(e, "No se pudo quitar"), { duration: 8000 }),
+    onError: (e) => toast.error(errorText(e, "No se pudo corregir"), { duration: 8000 }),
   });
   return (
     <Button
       type="button"
-      variant="destructive"
+      variant="outline"
       className="mr-auto"
-      disabled={remove.isPending || reason.trim().length < 3}
-      onClick={() => (confirming ? remove.mutate() : setConfirming(true))}
+      disabled={undo.isPending || reason.trim().length < 3}
+      onClick={() => (confirming ? undo.mutate() : setConfirming(true))}
     >
-      {confirming ? "Confirmar: quitar del historial" : "Quitar del historial"}
+      {confirming ? "Confirmar: sin reconocimiento" : "No debía reconocerse"}
     </Button>
   );
 }
@@ -164,7 +164,7 @@ function RecognitionForm({
       </div>
       <ReasonField value={reason} onChange={setReason} />
       <DialogFooter className="sm:justify-between">
-        <RemoveFromRecordButton row={row} reason={reason} onDone={onDone} />
+        <UndoRecognitionButton row={row} reason={reason} onDone={onDone} />
         <Button
           type="submit"
           className="font-bold"
@@ -270,8 +270,7 @@ function GradeForm({
         </div>
       )}
       <ReasonField value={reason} onChange={setReason} />
-      <DialogFooter className="sm:justify-between">
-        <RemoveFromRecordButton row={row} reason={reason} onDone={onDone} />
+      <DialogFooter>
         <Button
           type="submit"
           className="font-bold"
@@ -308,9 +307,9 @@ export function CorrectRowDialog({
           <DialogDescription>
             {row.recognition
               ? "Cambia el tipo de reconocimiento, la calificación (vacía = pendiente) o el origen."
-              : `Cursada en ${row.group_code ?? ""}${row.term_name ? ` · ${row.term_name}` : ""}.`}{" "}
-            «Quitar del historial» es para una materia registrada por error: vuelve a quedar por
-            cursar. El cambio y lo que tenía quedan en la bitácora.
+              : `Cursada en ${row.group_code ?? ""}${row.term_name ? ` · ${row.term_name}` : ""}. Una calificación vacía se borra.`}{" "}
+            La materia sigue en su periodo: eso solo lo define el RVOE. La corrección queda en la
+            bitácora.
           </DialogDescription>
         </DialogHeader>
         {row.recognition ? (
@@ -363,7 +362,7 @@ export function RevertRvoeDialog({
             las materias que llevaba en curso. Se quita lo que el cambio creó en{" "}
             <b>{change.to_rvoe}</b>: sus EQ/REV/CONV y sus materias. Los cargos sin pago se
             cancelan. No se puede si ya tiene calificaciones capturadas en el plan nuevo: primero
-            corrígelas o quítalas del historial.
+            déjalas vacías con «Corregir».
           </DialogDescription>
         </DialogHeader>
         <form

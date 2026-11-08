@@ -1,8 +1,9 @@
 """Bajas de materia y cambio de grupo de un alumno ya inscrito.
 
 - Baja de materia: the subject enrollment is kept (history, audit) with status
-  «baja»; it leaves the group's lists (calificaciones, asistencia, actas) and the
-  kárdex, and does not count as an attempt. Only a subject still in course (no
+  «baja»; it leaves the group's lists (calificaciones, asistencia, actas) and does
+  not count as an attempt. The subject belongs to the RVOE: in the kárdex it stays
+  in its period, pending again. Only a subject still in course (no
   final grade) can be dropped. If nothing is left in the group, the student's
   enrollment in the group is closed (baja) too.
 - Cambio de grupo: within the same term and plan, the subjects in course move to
@@ -12,8 +13,6 @@
   campus moves the student's campus (e.g. presencial → online).
 
 No schema change. Neither function commits."""
-import json
-
 from fastapi import HTTPException
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -238,58 +237,3 @@ async def change_group(
     )
     await session.flush()
     return target
-
-
-async def remove_from_record(
-    session: AsyncSession, user, enrollment: SubjectEnrollment, reason: str
-) -> None:
-    """Quitar del historial una materia registrada por error, tenga o no calificación.
-    A recognition (EQ/REV/CONV) disappears; a subject taken stays as «baja» without its
-    grades. What it had is kept in the audit log. Caller commits."""
-    gs = await session.get(GroupSubject, enrollment.group_subject_id)
-    group = await session.get(Group, gs.group_id) if gs else None
-    subject = await session.get(PlanSubject, gs.plan_subject_id) if gs else None
-    if enrollment.status == SubjectEnrollmentStatus.baja:
-        raise HTTPException(status_code=409, detail="La materia ya está dada de baja")
-    grades = (
-        await session.exec(select(Grade).where(Grade.subject_enrollment_id == enrollment.id))
-    ).all()
-    detail = json.dumps({
-        "subject": subject.code if subject else None, "group": group.code if group else None,
-        "status": enrollment.status, "final_grade": enrollment.final_grade,
-        "grades": {str(g.component_id): g.value for g in grades}, "reason": reason.strip(),
-    }, ensure_ascii=False)
-    enrollment_id = str(enrollment.id)
-    for grade in grades:
-        await session.delete(grade)
-    if group is not None and recognition_kind(group.code):
-        await session.delete(enrollment)
-    else:
-        enrollment.status = SubjectEnrollmentStatus.baja
-        enrollment.final_grade = None
-        session.add(enrollment)
-        await session.flush()
-        # the attempts left are renumbered: this one never happened
-        attempts = (
-            await session.exec(
-                select(SubjectEnrollment)
-                .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
-                .where(
-                    SubjectEnrollment.student_id == enrollment.student_id,
-                    GroupSubject.plan_subject_id == gs.plan_subject_id,
-                    SubjectEnrollment.status != SubjectEnrollmentStatus.baja,
-                )
-                .order_by(SubjectEnrollment.attempt_number)
-            )
-        ).all()
-        for number, attempt in enumerate(attempts, start=1):
-            attempt.attempt_number = number
-            session.add(attempt)
-        ge = await session.get(GroupEnrollment, enrollment.group_enrollment_id)
-        if ge is not None:
-            await _close_if_empty(session, ge)
-    audit.record(
-        session, actor=user.email, action="subject_enrollment.removed_from_record",
-        entity="subject_enrollment", entity_id=enrollment_id, detail=detail,
-    )
-    await session.flush()

@@ -68,7 +68,7 @@ from app.models.student import (
     OfficialGradeIn,
     SubjectDropIn,
     RecognitionUpdateIn,
-    RecordRemovalIn,
+    RecognitionUndoIn,
     RvoeChangeRevertIn,
     GroupChangeIn,
     RecognitionItem,

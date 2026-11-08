@@ -35,7 +35,7 @@ from app.models import (
     OfficialGradeIn,
     SubjectDropIn,
     RecognitionUpdateIn,
-    RecordRemovalIn,
+    RecognitionUndoIn,
     RvoeChangeRevertIn,
     GroupChangeIn,
     RecognitionsIn,
@@ -68,10 +68,11 @@ from app.services import audit, calendar, treasury
 from app.services.academics import internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
-from app.services.enrollment_changes import change_group, drop_subjects, remove_from_record
+from app.services.enrollment_changes import change_group, drop_subjects
 from app.services.files import save_upload
 from app.services.plan_change import (
     revert_change,
+    undo_recognition,
     update_recognition,
     apply_change,
     change_proposal,
@@ -586,17 +587,17 @@ async def correct_recognition(
     return enrollment
 
 
-@router.post("/subject-enrollments/{subject_enrollment_id}/remove-from-record", status_code=204)
-async def remove_subject_from_record(
+@router.post("/subject-enrollments/{subject_enrollment_id}/recognition/undo", status_code=204)
+async def undo_subject_recognition(
     session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
-    subject_enrollment_id: uuid.UUID, body: RecordRemovalIn,
+    subject_enrollment_id: uuid.UUID, body: RecognitionUndoIn,
 ) -> None:
-    """Quitar del historial una materia registrada por error (queda en la bitácora)."""
+    """La materia no debía reconocerse: sigue en su periodo del RVOE, pendiente."""
     enrollment = await session.get(SubjectEnrollment, subject_enrollment_id)
     if enrollment is None:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
     await _student_in_scope(session, scope, enrollment.student_id)
-    await remove_from_record(session, current_user, enrollment, body.reason)
+    await undo_recognition(session, current_user, enrollment, body.reason)
     await session.commit()
 
 

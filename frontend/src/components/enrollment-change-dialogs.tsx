@@ -35,8 +35,8 @@ export interface GroupStudentSubjects {
   }[];
 }
 
-// Baja de materias: they leave the group's lists and the kárdex (history kept in
-// the bitácora). Only subjects without a final grade; dropping all of them closes
+// Baja de materias: they leave the group's lists; in the kárdex the subject stays in
+// its period, pending (history kept in the bitácora). Only subjects without a final grade; dropping all of them closes
 // the student's enrollment in the group.
 export function DropSubjectsDialog({
   group,
@@ -80,8 +80,8 @@ export function DropSubjectsDialog({
           <DialogTitle>Baja de materias — {student.name}</DialogTitle>
           <DialogDescription>
             La materia deja de aparecer en las listas de {group.code} (calificaciones,
-            asistencia, actas) y en el kárdex; queda registrada en la bitácora. Solo
-            materias sin calificación final.
+            asistencia, actas). En el kárdex sigue en su periodo, pendiente de cursar; la baja
+            queda en la bitácora. Solo materias sin calificación final.
           </DialogDescription>
         </DialogHeader>
         <form

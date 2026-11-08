@@ -76,12 +76,13 @@ async def test_correct_and_remove_recognition(client, seed):
     row = next(r for r in k["rows"] if r["code"] == "ADM101")
     assert row["final_grade"] is None and row["status"] == "cursando"
 
-    no_reason = await client.post(f"{url}/remove-from-record", json={"reason": ""})
+    # it should not have been recognized: the subject stays in its period, owed
+    no_reason = await client.post(f"{url}/recognition/undo", json={"reason": ""})
     assert no_reason.status_code == 422
-    removed = await client.post(f"{url}/remove-from-record", json={"reason": REASON})
-    assert removed.status_code == 204, removed.text
+    undone = await client.post(f"{url}/recognition/undo", json={"reason": REASON})
+    assert undone.status_code == 204, undone.text
     row = next(r for r in (await kardex(client, student["id"]))["rows"] if r["code"] == "ADM101")
-    assert row["status"] == "pendiente"  # owed again
+    assert (row["status"], row["period_number"]) == ("pendiente", 1)
 
     # it can be recognized again
     again = await client.post(f"{API}/students/{student['id']}/recognitions", json={
@@ -139,12 +140,40 @@ async def test_correct_grades_with_the_window_closed(client, seed):
     loaded = await client.post(f"{url}/correct", json={"reason": REASON, "final_grade": 5})
     assert loaded.json() == {"final_grade": 5, "status": "reprobada"}
 
-    # a graded subject registered by mistake leaves the record
-    removed = await client.post(f"{API}/students/subject-enrollments/{se['id']}/remove-from-record",
-                                json={"reason": REASON})
-    assert removed.status_code == 204, removed.text
+    # a subject of the RVOE can't be taken off the kárdex, only its data corrected
+    gone = await client.post(f"{API}/students/subject-enrollments/{se['id']}/remove-from-record",
+                             json={"reason": REASON})
+    assert gone.status_code in (404, 405)
+    undo = await client.post(f"{API}/students/subject-enrollments/{se['id']}/recognition/undo",
+                             json={"reason": REASON})
+    assert undo.status_code == 400  # not a recognition
     row = next(r for r in (await kardex(client, student["id"]))["rows"] if r["code"] == "DER101")
-    assert row["status"] == "pendiente"
+    assert row["status"] == "reprobada" and row["period_number"] == 1
+
+
+async def test_take_an_earlier_subject_never_taken(client, seed):
+    """In a later period the student takes a subject of 1.º never taken: it counts in
+    its own period of the plan, not in the group's."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])
+    [first] = (await client.get(f"{API}/students/{student['id']}/subject-enrollments")).json()
+    assert (await client.post(f"{API}/students/subject-enrollments/drop", json={
+        "subject_enrollment_ids": [first["id"]]})).status_code == 200  # never took it
+    group2 = await group_in_new_term(client, catalog["plan"]["id"], 2, "LD-2A")
+    enrolled = await client.post(f"{API}/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": group2["id"], "override_prerequisites": True,
+    })
+    assert enrolled.status_code == 201, enrolled.text
+    added = await client.post(f"{API}/students/group-enrollments/subjects", json={
+        "student_id": student["id"], "group_id": group2["id"],
+        "plan_subject_ids": [catalog["subject_a"]["id"]],
+    })
+    assert added.status_code == 201, added.text
+    assert added.json()[0]["attempt_number"] == 1
+    row = next(r for r in (await kardex(client, student["id"]))["rows"] if r["code"] == "DER101")
+    assert (row["period_number"], row["group_code"], row["status"]) == (1, "LD-2A", "cursando")
 
 
 async def test_change_closes_old_group_and_revert_restores_it(client, seed):
@@ -220,10 +249,11 @@ async def test_revert_refused_while_new_plan_has_grades(client, seed):
     assert refused.status_code == 409
     assert "Administración II" in refused.json()["detail"]
 
-    # removed from the record, the revert goes through
+    # with the capture left empty, the revert goes through
     assert (await client.post(
-        f"{API}/students/subject-enrollments/{row['subject_enrollment_id']}/remove-from-record",
-        json={"reason": REASON})).status_code == 204
+        f"{API}/grades/subject-enrollments/{row['subject_enrollment_id']}/correct",
+        json={"reason": REASON, "components": [{"component_id": component["id"], "value": None}]},
+    )).status_code == 200
     assert (await client.post(url, json=body)).status_code == 200
 
 

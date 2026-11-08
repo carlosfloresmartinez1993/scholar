@@ -384,8 +384,8 @@ class RecognitionUpdateIn(SQLModel):
     reason: str = Field(min_length=3, max_length=255)
 
 
-class RecordRemovalIn(SQLModel):
-    """Quitar del historial una materia registrada por error."""
+class RecognitionUndoIn(SQLModel):
+    """La materia no debía reconocerse: sigue en su periodo, pendiente de cursar."""
     reason: str = Field(min_length=3, max_length=255)
 
 
