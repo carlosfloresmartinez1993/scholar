@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   ArrowRightLeft,
+  Undo2,
   FileCheck,
   BadgeDollarSign,
   CalendarDays,
@@ -53,6 +54,7 @@ import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import { RvoeChangeDialog } from "@/components/rvoe-change-dialog";
+import { CorrectRowDialog, RevertRvoeDialog } from "@/components/record-correction-dialogs";
 import {
   OfficialGradeDialog,
   RecognizePriorStudiesDialog,
@@ -1211,6 +1213,7 @@ function AcademicoTab({ student }: { student: Student }) {
   const [programId, setProgramId] = useState<string | null>(null);
   const [changingRvoe, setChangingRvoe] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const { data: kardex, isLoading: loadingKardex } = useQuery({
     queryKey: queryKeys.studentKardex(student.id, programId),
     queryFn: () =>
@@ -1325,7 +1328,7 @@ function AcademicoTab({ student }: { student: Student }) {
                 </Select>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <Button
                 variant="outline"
                 disabled={!currentPlanId}
@@ -1340,6 +1343,11 @@ function AcademicoTab({ student }: { student: Student }) {
               >
                 <FileCheck className="size-4" /> Reconocer estudios previos
               </Button>
+              {kardex?.rvoe_change && (
+                <Button variant="outline" onClick={() => setReverting(true)}>
+                  <Undo2 className="size-4" /> Revertir cambio de RVOE
+                </Button>
+              )}
               <Button
                 variant="outline"
                 disabled={!kardex}
@@ -1377,6 +1385,13 @@ function AcademicoTab({ student }: { student: Student }) {
                 setChangingRvoe(false);
                 setProgramId(null); // the kárdex follows the new plan
               }}
+            />
+          )}
+          {reverting && kardex?.rvoe_change && (
+            <RevertRvoeDialog
+              studentId={student.id}
+              change={kardex.rvoe_change}
+              onClose={() => setReverting(false)}
             />
           )}
           {recognizing && currentPlanId && (
@@ -1481,6 +1496,7 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
   const withOrigin = showOrigin(kardex);
   const columns = 10 + (showE2 ? 1 : 0) + (withOrigin ? 1 : 0) + RECOGNITION_COLUMNS.length;
   const [grading, setGrading] = useState<StudentKardexRow | null>(null);
+  const [correcting, setCorrecting] = useState<StudentKardexRow | null>(null);
   return (
     <>
     <div className="rounded-md border bg-card">
@@ -1569,6 +1585,16 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
                           Registrar calificación
                         </Button>
                       )}
+                      {r.subject_enrollment_id && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => setCorrecting(r)}
+                        >
+                          Corregir
+                        </Button>
+                      )}
                     </span>
                   </TableCell>
                 </TableRow>
@@ -1600,6 +1626,7 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
                 {PREVIOUS_HEADERS.map((h) => (
                   <TableHead key={h}>{h}</TableHead>
                 ))}
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1610,6 +1637,18 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
                       {cell}
                     </TableCell>
                   ))}
+                  <TableCell className="text-right">
+                    {r.subject_enrollment_id && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setCorrecting(r)}
+                      >
+                        Corregir
+                      </Button>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -1617,6 +1656,13 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
         </div>
       </div>
     ))}
+    {correcting && (
+      <CorrectRowDialog
+        studentId={studentId}
+        row={correcting}
+        onClose={() => setCorrecting(null)}
+      />
+    )}
     {grading && (
       <OfficialGradeDialog studentId={studentId} row={grading} onClose={() => setGrading(null)} />
     )}

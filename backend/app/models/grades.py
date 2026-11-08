@@ -54,6 +54,19 @@ class EvaluationComponentPublic(EvaluationComponentBase):
     plan_subject_id: uuid.UUID
 
 
+class ComponentCorrection(SQLModel):
+    component_id: uuid.UUID
+    value: float | None = Field(default=None, ge=0, le=10)  # None: remove the capture
+
+
+class GradeCorrectionIn(SQLModel):
+    """Corregir el historial fuera de la ventana de captura: los componentes si los
+    tiene capturados; si no (historial cargado), la calificación final."""
+    reason: str = Field(min_length=3, max_length=255)
+    components: list[ComponentCorrection] = []
+    final_grade: float | None = Field(default=None, ge=0, le=10)  # None: back to in course
+
+
 class Grade(SQLModel, table=True):
     """One captured grade for one evaluation component of a subject enrollment.
     Every change is audited with previous value (RT-08)."""

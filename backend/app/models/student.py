@@ -376,6 +376,24 @@ class OfficialGradeIn(SQLModel):
     grade: float = Field(ge=0, le=10)
 
 
+class RecognitionUpdateIn(SQLModel):
+    """Corregir una materia reconocida: tipo, calificación (None = pendiente) y origen."""
+    kind: str  # eq | rev | conv
+    grade: float | None = Field(default=None, ge=0, le=10)
+    origin: str = Field(default="", max_length=255)
+    reason: str = Field(min_length=3, max_length=255)
+
+
+class RecordRemovalIn(SQLModel):
+    """Quitar del historial una materia registrada por error."""
+    reason: str = Field(min_length=3, max_length=255)
+
+
+class RvoeChangeRevertIn(SQLModel):
+    change_id: uuid.UUID  # the cambio de RVOE (its audit entry)
+    reason: str = Field(min_length=3, max_length=255)
+
+
 class SubjectDropIn(SQLModel):
     """Baja de materias en curso (mismo alumno)."""
     subject_enrollment_ids: list[uuid.UUID]

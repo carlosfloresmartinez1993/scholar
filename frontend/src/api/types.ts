@@ -617,6 +617,23 @@ export interface StudentKardex {
   rows: StudentKardexRow[];
   previous: StudentKardexPrevious[];
   progress: CurricularProgress | null;
+  rvoe_change: RvoeChangeInfo | null; // el cambio que llevó al plan actual (se puede revertir)
+}
+
+export interface RvoeChangeInfo {
+  change_id: string;
+  from_rvoe: string;
+  from_program: string;
+  to_rvoe: string;
+  changed_at: string;
+}
+
+// corregir una materia del historial
+export interface GradeCorrectionForm {
+  final_grade: number | null;
+  status: SubjectEnrollmentStatus;
+  by_components: boolean; // false: historial cargado, se corrige la final
+  components: { id: string; label: string; kind: string; weight_pct: number; value: number | null }[];
 }
 
 // Cambio de RVOE: decision for each subject of the new plan below the destination

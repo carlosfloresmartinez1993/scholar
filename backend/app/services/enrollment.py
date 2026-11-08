@@ -463,6 +463,7 @@ async def add_subjects_core(
         if dropped_here is not None:  # dropped earlier in this same group: back in course
             subject_enrollment = dropped_here
             subject_enrollment.status = SubjectEnrollmentStatus.cursando
+            subject_enrollment.final_grade = None
             subject_enrollment.attempt_number = len(attempts) + 1
         else:
             subject_enrollment = SubjectEnrollment(

@@ -42,6 +42,8 @@ PLAN_CHANGE_ACTION = "plan_enrollment.rvoe_changed"
 # audit action of each subject recognized by EQ/REV/CONV; its detail keeps the
 # origin (RVOE and subject it comes from, or the external document) shown in the kárdex
 RECOGNITION_ACTION = "subject_enrollment.recognized"
+# a reverted cambio de RVOE: its entity_id is the audit entry of that change
+PLAN_CHANGE_REVERTED_ACTION = "plan_enrollment.rvoe_change_reverted"
 
 # Subjects acreditadas por equivalencia / revalidación / convalidación live in an
 # internal group whose code ends with the kind (e.g. "ARQ-014-EQ"); their grade is
@@ -70,6 +72,32 @@ def internal_group_clause():
     """SQL condition for those internal recognition groups — kept out of the group
     lists, the SEP export and enrollment counts (nobody attends them)."""
     return or_(*[Group.code.ilike(f"%{suffix}") for suffix in RECOGNITION_SUFFIXES])  # type: ignore[attr-defined]
+
+
+async def active_plan_changes(session: AsyncSession, plan_enrollment_ids: list[str]) -> list[AuditLog]:
+    """Cambios de RVOE that led to these plan enrollments and were not reverted,
+    oldest first."""
+    logs = (
+        await session.exec(
+            select(AuditLog)
+            .where(
+                AuditLog.action == PLAN_CHANGE_ACTION,
+                AuditLog.entity_id.in_(plan_enrollment_ids),  # type: ignore[attr-defined]
+            )
+            .order_by(AuditLog.created_at)
+        )
+    ).all()
+    reverted = set(
+        (
+            await session.exec(
+                select(AuditLog.entity_id).where(
+                    AuditLog.action == PLAN_CHANGE_REVERTED_ACTION,
+                    AuditLog.entity_id.in_([str(log.id) for log in logs] or [""]),  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+    )
+    return [log for log in logs if str(log.id) not in reverted]
 
 
 async def require_operable_rvoe(session: AsyncSession, plan_version_id: uuid.UUID) -> Rvoe:
@@ -208,7 +236,8 @@ async def student_kardex(
     ).all()
     if not plan_enrollments:
         return {"program_id": None, "programs": [], "current_plan_version_id": None,
-                "period_type": None, "periods": [], "rows": [], "previous": [], "progress": None}
+                "period_type": None, "periods": [], "rows": [], "previous": [], "progress": None,
+                "rvoe_change": None}
 
     def recency(row):
         return (row[0].status == PlanEnrollmentStatus.inscrito, row[1].start_date)
@@ -216,19 +245,16 @@ async def student_kardex(
     # cambio de RVOE links: new plan enrollment -> the one it replaced
     by_id = {row[0].id: row for row in plan_enrollments}
     came_from: dict[uuid.UUID, uuid.UUID] = {}
-    for log in (
-        await session.exec(
-            select(AuditLog).where(
-                AuditLog.action == PLAN_CHANGE_ACTION,
-                AuditLog.entity_id.in_([str(i) for i in by_id]),  # type: ignore[attr-defined]
-            )
-        )
-    ).all():
+    last_change: dict[uuid.UUID, AuditLog] = {}
+    for log in await active_plan_changes(session, [str(i) for i in by_id]):
         previous = json.loads(log.detail or "{}").get("from_plan_enrollment_id")
         if previous and uuid.UUID(previous) in by_id:
             came_from[uuid.UUID(log.entity_id)] = uuid.UUID(previous)
+            last_change[uuid.UUID(log.entity_id)] = log
     replaced = set(came_from.values())
-    heads = [row for row in plan_enrollments if row[0].id not in replaced]
+    # (a plan the student came back to is replaced and current at once)
+    heads = [row for row in plan_enrollments
+             if row[0].id not in replaced or row[0].status == PlanEnrollmentStatus.inscrito]
 
     programs: dict[uuid.UUID, str] = {}
     for _, _, _, program in sorted(heads, key=recency, reverse=True):
@@ -367,10 +393,12 @@ async def student_kardex(
     if recognized_ids:
         for log in (
             await session.exec(
-                select(AuditLog).where(
+                select(AuditLog)
+                .where(
                     AuditLog.action == RECOGNITION_ACTION,
                     AuditLog.entity_id.in_(recognized_ids),  # type: ignore[attr-defined]
                 )
+                .order_by(AuditLog.created_at)  # a corrected origin wins
             )
         ).all():
             origins[log.entity_id] = json.loads(log.detail or "{}").get("origin") or ""
@@ -404,6 +432,15 @@ async def student_kardex(
             earlier.items(), key=lambda kv: min(r["term_start"] or "9999" for r in kv[1])
         )
     ]
+    change = last_change.get(current.id)
+    rvoe_change = None
+    if change is not None and current.status == PlanEnrollmentStatus.inscrito:
+        source = by_id[came_from[current.id]]
+        rvoe_change = {
+            "change_id": str(change.id), "from_rvoe": source[2].agreement_number,
+            "from_program": source[3].name, "to_rvoe": current_rvoe.agreement_number,
+            "changed_at": change.created_at.isoformat(),
+        }
     period_numbers = sorted({r["period_number"] for r in main})
     periods = [
         {"period_number": n, "rvoe": current_rvoe.agreement_number, "rvoe_changed": i == 0}
@@ -419,6 +456,7 @@ async def student_kardex(
         "rows": main,
         "previous": previous,
         "progress": await curricular_progress(session, student_id, current.plan_version_id),
+        "rvoe_change": rvoe_change,
     }
 
 

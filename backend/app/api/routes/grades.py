@@ -8,7 +8,15 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, CurrentUser, ServiciosEscolares, SessionDep, TeacherOrAcademic
+from app.api.deps import (
+    AnyStaff,
+    CampusScope,
+    CurrentUser,
+    ServiciosEscolares,
+    SessionDep,
+    TeacherOrAcademic,
+    ensure_in_scope,
+)
 from app.api.routes.catalog import get_default_institution
 from app.models import (
     ActaKind,
@@ -21,9 +29,11 @@ from app.models import (
     GradeActa,
     GradeActaPublic,
     GradeCaptureIn,
+    GradeCorrectionIn,
     GradePublic,
     Group,
     GroupSubject,
+    PlanSubject,
     Student,
     SubjectEnrollment,
     SubjectEnrollmentStatus,
@@ -35,6 +45,7 @@ from app.services import audit
 from app.services.academics import (
     PASSING_GRADE,
     curricular_progress,
+    recognition_kind,
     kardex_rows,
     ordinary_grade,
     student_kardex,
@@ -136,7 +147,9 @@ async def _components_and_grades(
     return list(components), {g.component_id: g.value for g in grades}
 
 
-async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -> None:
+async def _recompute_final(
+    session: SessionDep, enrollment: SubjectEnrollment, *, reset: bool = False
+) -> None:
     """Weighted final from counting components once all are captured. Extraordinario
     and título de suficiencia replace it, but only when the ordinario was failed (or
     is not there, e.g. loaded history): fixing a parcial up to a pass drops them."""
@@ -160,10 +173,14 @@ async def _recompute_final(session: SessionDep, enrollment: SubjectEnrollment) -
             else SubjectEnrollmentStatus.reprobada
         )
         session.add(enrollment)
+    elif reset:  # a correction removed what made it final: in course again
+        enrollment.final_grade = None
+        enrollment.status = SubjectEnrollmentStatus.cursando
+        session.add(enrollment)
 
 
 async def _apply_capture(
-    session: SessionDep, current_user: User, body: GradeCaptureIn
+    session: SessionDep, current_user: User, body: GradeCaptureIn, *, check_window: bool = True
 ) -> Grade:
     """Validate and upsert one grade (no commit). Shared by single + batch."""
     enrollment = await session.get(SubjectEnrollment, body.subject_enrollment_id)
@@ -175,7 +192,8 @@ async def _apply_capture(
     if group_subject is None:
         raise HTTPException(status_code=404, detail="Materia de grupo no encontrada")
     await _can_capture(session, current_user, group_subject)
-    await _capture_window_open(session, group_subject)
+    if check_window:  # a correction of the record happens with the term closed too
+        await _capture_window_open(session, group_subject)
     component = await session.get(EvaluationComponent, body.component_id)
     if component is None or component.plan_subject_id != group_subject.plan_subject_id:
         raise HTTPException(status_code=400, detail="Componente de evaluación inválido")
@@ -270,6 +288,103 @@ async def capture_grades_batch(
 
 
 # --- Actas (RF-C03) ----------------------------------------------------------------
+
+async def _correctable(session, scope, subject_enrollment_id) -> tuple[SubjectEnrollment, GroupSubject]:
+    enrollment = await session.get(SubjectEnrollment, subject_enrollment_id)
+    if enrollment is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    student = await session.get(Student, enrollment.student_id)
+    ensure_in_scope(scope, student.campus_id)
+    group_subject = await session.get(GroupSubject, enrollment.group_subject_id)
+    group = await session.get(Group, group_subject.group_id)
+    if recognition_kind(group.code):
+        raise HTTPException(status_code=400, detail="Es una EQ/REV/CONV: se corrige como reconocimiento")
+    if enrollment.status == SubjectEnrollmentStatus.baja:
+        raise HTTPException(status_code=409, detail="La materia está dada de baja")
+    return enrollment, group_subject
+
+
+@router.get("/subject-enrollments/{subject_enrollment_id}/correction")
+async def correction_form(
+    session: SessionDep, _: ServiciosEscolares, scope: CampusScope, subject_enrollment_id: uuid.UUID
+) -> dict:
+    """What a subject of the record has captured, to correct it."""
+    enrollment, group_subject = await _correctable(session, scope, subject_enrollment_id)
+    components, captured = await _components_and_grades(session, enrollment)
+    return {
+        "final_grade": enrollment.final_grade,
+        "status": enrollment.status,
+        "by_components": bool(captured),  # nothing captured (loaded history): the final is edited
+        "components": [
+            {"id": str(c.id), "label": c.label, "kind": c.kind, "weight_pct": c.weight_pct,
+             "value": captured.get(c.id)}
+            for c in sorted(components, key=lambda c: c.sequence)
+        ],
+    }
+
+
+@router.post("/subject-enrollments/{subject_enrollment_id}/correct")
+async def correct_grade(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    subject_enrollment_id: uuid.UUID, body: GradeCorrectionIn,
+) -> dict:
+    """Corregir una calificación del historial, con motivo y a cualquier hora."""
+    enrollment, group_subject = await _correctable(session, scope, subject_enrollment_id)
+    subject = await session.get(PlanSubject, group_subject.plan_subject_id)
+    before = enrollment.final_grade
+    _, captured = await _components_and_grades(session, enrollment)
+    if body.components:
+        known = {c.id: c for c in (await _components_and_grades(session, enrollment))[0]}
+        changes = [c for c in body.components if captured.get(c.component_id) != c.value]
+        if any(c.component_id not in known for c in changes):
+            raise HTTPException(status_code=400, detail="Componente de evaluación inválido")
+        # removals first, then parciales: an extraordinario is checked against them
+        for change in [c for c in changes if c.value is None]:
+            grade = (
+                await session.exec(
+                    select(Grade).where(
+                        Grade.subject_enrollment_id == enrollment.id,
+                        Grade.component_id == change.component_id,
+                    )
+                )
+            ).first()
+            if grade is not None:
+                await session.delete(grade)
+        await session.flush()
+        for change in sorted(
+            [c for c in changes if c.value is not None],
+            key=lambda c: known[c.component_id].kind in REPLACEMENT_KINDS,
+        ):
+            await _apply_capture(
+                session, current_user,
+                GradeCaptureIn(subject_enrollment_id=enrollment.id, component_id=change.component_id,
+                               value=change.value),
+                check_window=False,
+            )
+        await session.flush()
+        await _recompute_final(session, enrollment, reset=True)
+    else:
+        if captured:
+            raise HTTPException(
+                status_code=409, detail="Tiene componentes capturados: corrija cada componente"
+            )
+        enrollment.final_grade = body.final_grade
+        if body.final_grade is None:
+            enrollment.status = SubjectEnrollmentStatus.cursando
+        elif body.final_grade >= PASSING_GRADE:
+            enrollment.status = SubjectEnrollmentStatus.aprobada
+        else:
+            enrollment.status = SubjectEnrollmentStatus.reprobada
+        session.add(enrollment)
+    audit.record(
+        session, actor=current_user.email, action="subject_enrollment.corrected",
+        entity="subject_enrollment", entity_id=str(enrollment.id),
+        detail=f"{subject.code if subject else ''}: {before} -> {enrollment.final_grade} — {body.reason.strip()}",
+    )
+    await session.commit()
+    await session.refresh(enrollment)
+    return {"final_grade": enrollment.final_grade, "status": enrollment.status}
+
 
 @router.post("/group-subjects/{group_subject_id}/actas", status_code=201)
 async def generate_acta(

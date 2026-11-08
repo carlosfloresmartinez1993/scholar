@@ -67,6 +67,9 @@ from app.models.student import (
     GroupEnrollmentSubjectsAdd,
     OfficialGradeIn,
     SubjectDropIn,
+    RecognitionUpdateIn,
+    RecordRemovalIn,
+    RvoeChangeRevertIn,
     GroupChangeIn,
     RecognitionItem,
     RecognitionsIn,
@@ -109,6 +112,7 @@ from app.models.grades import (
     GradeActaPublic,
     REPLACEMENT_KINDS,
     GradeCaptureIn,
+    GradeCorrectionIn,
     GradePublic,
 )
 from app.models.attendance import (

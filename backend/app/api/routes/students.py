@@ -34,6 +34,9 @@ from app.models import (
     GroupEnrollmentSubjectsAdd,
     OfficialGradeIn,
     SubjectDropIn,
+    RecognitionUpdateIn,
+    RecordRemovalIn,
+    RvoeChangeRevertIn,
     GroupChangeIn,
     RecognitionsIn,
     RvoeChangeIn,
@@ -65,9 +68,11 @@ from app.services import audit, calendar, treasury
 from app.services.academics import internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
 from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
-from app.services.enrollment_changes import change_group, drop_subjects
+from app.services.enrollment_changes import change_group, drop_subjects, remove_from_record
 from app.services.files import save_upload
 from app.services.plan_change import (
+    revert_change,
+    update_recognition,
     apply_change,
     change_proposal,
     recognition_candidates,
@@ -560,6 +565,51 @@ async def official_grade(
     await session.commit()
     await session.refresh(enrollment)
     return enrollment
+
+
+@router.patch("/subject-enrollments/{subject_enrollment_id}/recognition")
+async def correct_recognition(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    subject_enrollment_id: uuid.UUID, body: RecognitionUpdateIn,
+) -> SubjectEnrollmentPublic:
+    """Corregir una EQ/REV/CONV: tipo, calificación (o pendiente) y origen."""
+    enrollment = await session.get(SubjectEnrollment, subject_enrollment_id)
+    if enrollment is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    await _student_in_scope(session, scope, enrollment.student_id)
+    enrollment = await update_recognition(
+        session, current_user, enrollment, kind=body.kind, grade=body.grade,
+        origin=body.origin, reason=body.reason,
+    )
+    await session.commit()
+    await session.refresh(enrollment)
+    return enrollment
+
+
+@router.post("/subject-enrollments/{subject_enrollment_id}/remove-from-record", status_code=204)
+async def remove_subject_from_record(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    subject_enrollment_id: uuid.UUID, body: RecordRemovalIn,
+) -> None:
+    """Quitar del historial una materia registrada por error (queda en la bitácora)."""
+    enrollment = await session.get(SubjectEnrollment, subject_enrollment_id)
+    if enrollment is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    await _student_in_scope(session, scope, enrollment.student_id)
+    await remove_from_record(session, current_user, enrollment, body.reason)
+    await session.commit()
+
+
+@router.post("/{student_id}/rvoe-change/revert")
+async def rvoe_change_revert(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    student_id: uuid.UUID, body: RvoeChangeRevertIn,
+) -> dict:
+    """Revertir un cambio de RVOE: el alumno regresa a su plan y grupo anteriores."""
+    student = await _student_in_scope(session, scope, student_id)
+    result = await revert_change(session, current_user, student, body.change_id, body.reason)
+    await session.commit()
+    return result
 
 
 @router.post("/subject-enrollments/drop")

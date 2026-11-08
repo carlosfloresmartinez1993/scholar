@@ -12,6 +12,7 @@ import json
 import re
 import unicodedata
 import uuid
+from datetime import datetime
 from difflib import SequenceMatcher
 
 from fastapi import HTTPException
@@ -19,6 +20,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
+    AuditLog,
+    Charge,
+    ChargeStatus,
+    Grade,
     Group,
     GroupEnrollment,
     GroupEnrollmentKind,
@@ -34,11 +39,14 @@ from app.models import (
     SubjectEnrollmentStatus,
     Term,
 )
+from app.models.common import utcnow
 from app.services import audit
 from app.services.academics import (
     PASSING_GRADE,
     PLAN_CHANGE_ACTION,
+    PLAN_CHANGE_REVERTED_ACTION,
     RECOGNITION_ACTION,
+    active_plan_changes,
     get_or_create_plan_enrollment,
     internal_group_clause,
     recognition_kind,
@@ -353,13 +361,44 @@ async def apply_change(
         if grade is not None and not 0 <= float(grade) <= 10:
             raise HTTPException(status_code=400, detail=f"{subject.name}: calificación fuera de 0–10")
 
-    # never in two RVOE at once
+    started_at = utcnow()
+    from_campus_id = student.campus_id
+    # never in two RVOE at once: the old plan closes, and with it its groups and the
+    # subjects in course (recognitions pending a document stay on record). What is
+    # closed here is listed in the audit entry, so the change can be reverted.
     old_plan.status = PlanEnrollmentStatus.baja
     session.add(old_plan)
+    closed_groups = (
+        await session.exec(
+            select(GroupEnrollment)
+            .join(Group, Group.id == GroupEnrollment.group_id)
+            .where(
+                GroupEnrollment.plan_enrollment_id == old_plan.id,
+                GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                ~internal_group_clause(),
+            )
+        )
+    ).all()
+    dropped_subjects = (
+        await session.exec(
+            select(SubjectEnrollment).where(
+                SubjectEnrollment.group_enrollment_id.in_([g.id for g in closed_groups] or [uuid.uuid4()]),  # type: ignore[attr-defined]
+                SubjectEnrollment.status == SubjectEnrollmentStatus.cursando,
+            )
+        )
+    ).all()
+    closed_group_ids = [str(g.id) for g in closed_groups]
+    dropped_subject_ids = [str(s.id) for s in dropped_subjects]
+    for closed in closed_groups:
+        closed.status = GroupEnrollmentStatus.baja
+        session.add(closed)
+    for dropped in dropped_subjects:
+        dropped.status = SubjectEnrollmentStatus.baja
+        session.add(dropped)
     if student.campus_id != target_group.campus_id:  # e.g. presencial -> online
         student.campus_id = target_group.campus_id
         session.add(student)
-    new_plan, _ = await get_or_create_plan_enrollment(
+    new_plan, new_plan_created = await get_or_create_plan_enrollment(
         session, student, target_group.plan_version_id, target_group.term_id
     )
     if new_plan.status != PlanEnrollmentStatus.inscrito:
@@ -425,6 +464,11 @@ async def apply_change(
             "to_plan_version_id": str(target_group.plan_version_id),
             "target_group": target_group.code, "term": term.name if term else None,
             "decisions": decisions,
+            # to revert it
+            "started_at": started_at.isoformat(), "from_campus_id": str(from_campus_id),
+            "new_plan_created": new_plan_created,
+            "closed_group_enrollment_ids": closed_group_ids,
+            "dropped_subject_enrollment_ids": dropped_subject_ids,
         }, ensure_ascii=False, default=str),
     )
     await session.flush()
@@ -543,3 +587,218 @@ async def set_official_grade(
         detail=f"{recognition_kind(group.code).upper()}: {before if before is not None else 'pendiente'} -> {grade}",
     )
     return enrollment
+
+
+# --- Correcciones: el error humano existe ---------------------------------------------
+
+async def update_recognition(
+    session: AsyncSession, current_user, enrollment: SubjectEnrollment, *,
+    kind: str, grade: float | None, origin: str, reason: str,
+) -> SubjectEnrollment:
+    """Fix a recognized subject: its kind (it moves to that internal group), its
+    grade (None = pending the document) and its origin. Caller commits."""
+    if kind not in RECOGNITION_ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido: {kind}")
+    gs = await session.get(GroupSubject, enrollment.group_subject_id)
+    group = await session.get(Group, gs.group_id) if gs else None
+    current_kind = recognition_kind(group.code) if group else None
+    if current_kind is None:
+        raise HTTPException(
+            status_code=400, detail="Solo materias por equivalencia, revalidación o convalidación"
+        )
+    subject = await session.get(PlanSubject, gs.plan_subject_id)
+    before = enrollment.final_grade
+    if kind != current_kind:
+        base = group.code[: -len(RECOGNITION_ACTIONS[current_kind])]
+        anchor = Group(code=base, term_id=group.term_id, campus_id=group.campus_id,
+                       plan_version_id=group.plan_version_id)
+        target = await _recognition_group(session, anchor, RECOGNITION_ACTIONS[kind])
+        current = await session.get(GroupEnrollment, enrollment.group_enrollment_id)
+        moved = (
+            await session.exec(
+                select(GroupEnrollment).where(
+                    GroupEnrollment.student_id == enrollment.student_id,
+                    GroupEnrollment.group_id == target.id,
+                )
+            )
+        ).first()
+        if moved is None:
+            moved = GroupEnrollment(
+                student_id=enrollment.student_id, group_id=target.id,
+                plan_enrollment_id=current.plan_enrollment_id, kind=GroupEnrollmentKind.reinscripcion,
+            )
+            session.add(moved)
+            await session.flush()
+        target_gs = (
+            await session.exec(
+                select(GroupSubject).where(
+                    GroupSubject.group_id == target.id, GroupSubject.plan_subject_id == gs.plan_subject_id
+                )
+            )
+        ).first()
+        if target_gs is None:
+            target_gs = GroupSubject(group_id=target.id, plan_subject_id=gs.plan_subject_id)
+            session.add(target_gs)
+            await session.flush()
+        clash = (
+            await session.exec(
+                select(SubjectEnrollment.id).where(
+                    SubjectEnrollment.group_enrollment_id == moved.id,
+                    SubjectEnrollment.group_subject_id == target_gs.id,
+                )
+            )
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail=f"{subject.name} ya está registrada como {kind.upper()}")
+        enrollment.group_enrollment_id = moved.id
+        enrollment.group_subject_id = target_gs.id
+    enrollment.final_grade = float(grade) if grade is not None else None
+    enrollment.status = _status_for(grade)
+    session.add(enrollment)
+    # a new entry: the kárdex reads the latest origin; the earlier ones stay as history
+    audit.record(
+        session, actor=current_user.email, action=RECOGNITION_ACTION,
+        entity="subject_enrollment", entity_id=str(enrollment.id),
+        detail=json.dumps({
+            "kind": kind, "origin": origin.strip(), "grade": grade, "subject": subject.code,
+            "corrected_from": {"kind": current_kind, "grade": before}, "reason": reason.strip(),
+        }, ensure_ascii=False),
+    )
+    await session.flush()
+    return enrollment
+
+
+async def revert_change(
+    session: AsyncSession, current_user, student: Student, change_id, reason: str
+) -> dict:
+    """Undo a cambio de RVOE: the old plan, its groups and the subjects it had in
+    course come back; what the change created in the new plan goes away. Refused
+    while the new plan holds captured grades (they are not the change's to erase:
+    each one is corrected or removed first). Charges without payment are cancelled;
+    those with a payment stay on the student's account for Tesorería. Caller commits."""
+    log = await session.get(AuditLog, change_id)
+    new_plan = None
+    if log is not None and log.action == PLAN_CHANGE_ACTION:
+        new_plan = await session.get(StudentPlanEnrollment, uuid.UUID(log.entity_id))
+    if new_plan is None or new_plan.student_id != student.id:
+        raise HTTPException(status_code=404, detail="Cambio de RVOE no encontrado")
+    active = await active_plan_changes(session, [str(new_plan.id)])
+    if not active or active[-1].id != log.id:
+        raise HTTPException(status_code=409, detail="Ese cambio de RVOE ya fue revertido")
+    if new_plan.status != PlanEnrollmentStatus.inscrito:
+        raise HTTPException(status_code=409, detail="Hay un cambio de RVOE posterior; revierta primero ese")
+    detail = json.loads(log.detail or "{}")
+    old_plan = await session.get(StudentPlanEnrollment, uuid.UUID(detail["from_plan_enrollment_id"]))
+    if old_plan is None:
+        raise HTTPException(status_code=409, detail="El plan anterior ya no existe")
+    since = datetime.fromisoformat(detail["started_at"]) if detail.get("started_at") else None
+
+    created = (
+        await session.exec(
+            select(SubjectEnrollment, Group, PlanSubject)
+            .join(GroupEnrollment, GroupEnrollment.id == SubjectEnrollment.group_enrollment_id)
+            .join(Group, Group.id == GroupEnrollment.group_id)
+            .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+            .join(PlanSubject, PlanSubject.id == GroupSubject.plan_subject_id)
+            .where(GroupEnrollment.plan_enrollment_id == new_plan.id)
+        )
+    ).all()
+    if since is not None:  # came back to a plan with history: that history stays
+        created = [row for row in created if row[0].created_at >= since]
+    regular = [row for row in created if recognition_kind(row[1].code) is None]
+    captured = set(
+        (
+            await session.exec(
+                select(Grade.subject_enrollment_id).where(
+                    Grade.subject_enrollment_id.in_([se.id for se, *_ in regular] or [uuid.uuid4()])  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+    )
+    graded = [ps.name for se, _, ps in regular if se.final_grade is not None or se.id in captured]
+    if graded:
+        raise HTTPException(
+            status_code=409,
+            detail="Ya tiene calificaciones en el plan nuevo: " + ", ".join(sorted(graded))
+            + ". Corríjalas o quítelas del historial antes de revertir.",
+        )
+    for se, *_ in created:
+        await session.delete(se)
+    await session.flush()
+
+    # the group enrollments of the change, their charges with them
+    group_enrollments = (
+        await session.exec(select(GroupEnrollment).where(GroupEnrollment.plan_enrollment_id == new_plan.id))
+    ).all()
+    cancelled = kept = 0
+    for ge in group_enrollments:
+        if since is not None and ge.created_at < since:
+            continue
+        if (await session.exec(
+            select(SubjectEnrollment.id).where(SubjectEnrollment.group_enrollment_id == ge.id)
+        )).first():
+            continue
+        for charge in (await session.exec(select(Charge).where(Charge.group_enrollment_id == ge.id))).all():
+            charge.group_enrollment_id = None
+            if charge.status == ChargeStatus.pendiente:
+                charge.status = ChargeStatus.cancelado
+                cancelled += 1
+                for fee in (await session.exec(
+                    select(Charge).where(
+                        Charge.source_charge_id == charge.id, Charge.status == ChargeStatus.pendiente
+                    )
+                )).all():
+                    fee.status = ChargeStatus.cancelado
+                    session.add(fee)
+            elif charge.status != ChargeStatus.cancelado:
+                kept += 1
+            session.add(charge)
+        await session.flush()
+        await session.delete(ge)
+    await session.flush()
+    left = (
+        await session.exec(select(GroupEnrollment.id).where(GroupEnrollment.plan_enrollment_id == new_plan.id))
+    ).first()
+    if left is None and detail.get("new_plan_created", True):
+        await session.delete(new_plan)
+    else:
+        new_plan.status = PlanEnrollmentStatus.baja
+        session.add(new_plan)
+
+    old_plan.status = PlanEnrollmentStatus.inscrito
+    session.add(old_plan)
+    for ge_id in detail.get("closed_group_enrollment_ids", []):
+        ge = await session.get(GroupEnrollment, uuid.UUID(ge_id))
+        if ge is not None:
+            ge.status = GroupEnrollmentStatus.activa
+            session.add(ge)
+    for se_id in detail.get("dropped_subject_enrollment_ids", []):
+        se = await session.get(SubjectEnrollment, uuid.UUID(se_id))
+        if se is not None and se.status == SubjectEnrollmentStatus.baja:
+            se.status = SubjectEnrollmentStatus.cursando
+            session.add(se)
+    campus_id = detail.get("from_campus_id")
+    if campus_id is None:  # a change recorded before these details were kept
+        old_group = (
+            await session.exec(
+                select(Group)
+                .join(GroupEnrollment, GroupEnrollment.group_id == Group.id)
+                .where(GroupEnrollment.plan_enrollment_id == old_plan.id, ~internal_group_clause())
+                .order_by(GroupEnrollment.created_at.desc())  # type: ignore[attr-defined]
+            )
+        ).first()
+        campus_id = str(old_group.campus_id) if old_group else str(student.campus_id)
+    if str(student.campus_id) != campus_id:
+        student.campus_id = uuid.UUID(campus_id)
+        session.add(student)
+    audit.record(
+        session, actor=current_user.email, action=PLAN_CHANGE_REVERTED_ACTION,
+        entity="audit_log", entity_id=str(log.id),
+        detail=json.dumps({
+            "reason": reason.strip(), "removed_subjects": [ps.code for _, _, ps in created],
+            "cancelled_charges": cancelled, "paid_charges_kept": kept,
+        }, ensure_ascii=False),
+    )
+    await session.flush()
+    return {"restored_plan_version_id": str(old_plan.plan_version_id),
+            "cancelled_charges": cancelled, "paid_charges_kept": kept}
