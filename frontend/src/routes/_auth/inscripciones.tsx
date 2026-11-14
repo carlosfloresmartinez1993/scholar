@@ -96,9 +96,8 @@ interface WizardData {
   first_names: string;
   sex: "" | Sex;
   birth_date: string;
-  birth_country: string;
-  birth_state: string; // RENAPO code (name is derived on submit)
-  birth_place: string;
+  // RENAPO code, «NE» = nacido en el extranjero (name is derived on submit)
+  birth_state: string;
   curp: string;
   // 2. domicilio
   street: string;
@@ -139,8 +138,7 @@ interface WizardData {
 
 const INITIAL: WizardData = {
   last_name_p: "", last_name_m: "", first_names: "",
-  sex: "", birth_date: "", birth_country: "México", birth_state: "",
-  birth_place: "", curp: "",
+  sex: "", birth_date: "", birth_state: "", curp: "",
   street: "", ext_no: "", int_no: "", address_reference: "",
   address_country: "México", address_state: "", municipio: "", locality: "",
   colonia: "", postal_code: "",
@@ -320,9 +318,7 @@ function EnrollmentWizard() {
           last_name_m: clean(data.last_name_m),
           sex: data.sex || null,
           birth_date: data.birth_date || null,
-          birth_country: clean(data.birth_country),
           birth_state: stateName,
-          birth_place: clean(data.birth_place),
           street: clean(data.street),
           ext_no: clean(data.ext_no),
           int_no: clean(data.int_no),
@@ -504,11 +500,7 @@ function EnrollmentWizard() {
                     max={todayISO()}
                     onChange={(e) => set({ birth_date: e.target.value })} />
                 </Field>
-                <Field label="País de origen" id="w-pais">
-                  <Input id="w-pais" value={data.birth_country}
-                    onChange={(e) => set({ birth_country: e.target.value })} />
-                </Field>
-                <Field label="Estado" id="w-edo">
+                <Field label="Estado de nacimiento" id="w-edo">
                   <Select value={data.birth_state}
                     onValueChange={(v) => set({ birth_state: v })}>
                     <SelectTrigger id="w-edo" className="w-full">
@@ -522,10 +514,6 @@ function EnrollmentWizard() {
                       ))}
                     </SelectContent>
                   </Select>
-                </Field>
-                <Field label="Lugar de nacimiento" id="w-lugar">
-                  <Input id="w-lugar" value={data.birth_place}
-                    onChange={(e) => set({ birth_place: e.target.value })} />
                 </Field>
                 <div className="grid gap-2 sm:col-span-2">
                   <Label htmlFor="w-curp">CURP *</Label>
