@@ -133,6 +133,8 @@ interface WizardData {
   // 8. grupo
   groupId: string;
   waiveFee: boolean;
+  // trae certificado parcial o dictamen: al guardar se abre «Reconocer estudios previos»
+  priorStudies: boolean;
   overridePrereqs: boolean;
 }
 
@@ -148,7 +150,7 @@ const INITIAL: WizardData = {
   enablePortal: false,
   termId: "", campusId: "", programId: "", rvoeId: "", planVersionId: "",
   previous_school: "", previous_gpa: "", enrollment_notes: "",
-  groupId: "", waiveFee: false, overridePrereqs: false,
+  groupId: "", waiveFee: false, priorStudies: false, overridePrereqs: false,
 };
 
 const RELATIONSHIPS = [
@@ -371,6 +373,8 @@ function EnrollmentWizard() {
       navigate({
         to: "/alumnos/$studentId",
         params: { studentId: r.student.id },
+        // with prior studies, straight to the kárdex to recognize them
+        search: data.priorStudies ? { tab: "academico", reconocer: true } : {},
       });
     },
     onError: (e) =>
@@ -898,6 +902,11 @@ function EnrollmentWizard() {
                     Condonar inscripción (no cobrar)
                   </label>
                   <label className="flex items-center gap-2 text-sm font-medium">
+                    <Checkbox checked={data.priorStudies}
+                      onCheckedChange={(v) => set({ priorStudies: v === true })} />
+                    Trae estudios previos (certificado parcial o dictamen)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-medium">
                     <Checkbox checked={data.overridePrereqs}
                       onCheckedChange={(v) =>
                         set({ overridePrereqs: v === true })
@@ -936,6 +945,10 @@ function EnrollmentWizard() {
                     <SummaryRow
                       label="Inscripción"
                       value={data.waiveFee ? "Condonada" : "Se cobra"}
+                    />
+                    <SummaryRow
+                      label="Estudios previos"
+                      value={data.priorStudies ? "Se reconocen al guardar" : "No"}
                     />
                   </dl>
                 </div>

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -139,17 +139,20 @@ type DetailTab = (typeof DETAIL_TABS)[number];
 // ?tab= lets other screens deep-link straight to a section (e.g. ?tab=cuenta).
 export const Route = createFileRoute("/_auth/alumnos_/$studentId")({
   component: AlumnoDetailPage,
-  validateSearch: (search: Record<string, unknown>): { tab?: DetailTab } =>
-    DETAIL_TABS.includes(search.tab as DetailTab)
-      ? { tab: search.tab as DetailTab }
-      : {},
+  // ?reconocer=true opens «Reconocer estudios previos» (from the inscripción)
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: DetailTab; reconocer?: boolean } => ({
+    ...(DETAIL_TABS.includes(search.tab as DetailTab) ? { tab: search.tab as DetailTab } : {}),
+    ...(search.reconocer === true || search.reconocer === "true" ? { reconocer: true } : {}),
+  }),
 });
 
 const NONE = "__none__";
 
 function AlumnoDetailPage() {
   const { studentId } = Route.useParams();
-  const { tab: tabParam } = Route.useSearch();
+  const { tab: tabParam, reconocer } = Route.useSearch();
   const [tab, setTab] = useState<string>(tabParam ?? "datos");
   useEffect(() => {
     if (tabParam) setTab(tabParam);
@@ -208,7 +211,7 @@ function AlumnoDetailPage() {
           <ExpedienteTab student={student} />
         </TabsContent>
         <TabsContent value="academico" className="mt-4">
-          <AcademicoTab student={student} />
+          <AcademicoTab student={student} openRecognition={reconocer === true} />
         </TabsContent>
         <TabsContent value="horario" className="mt-4">
           <HorarioTab student={student} />
@@ -1181,7 +1184,14 @@ function usePlanVersionLabels(): Map<string, string> {
   }, [planVersions, rvoes, programs]);
 }
 
-function AcademicoTab({ student }: { student: Student }) {
+function AcademicoTab({
+  student,
+  openRecognition = false,
+}: {
+  student: Student;
+  openRecognition?: boolean;
+}) {
+  const navigate = useNavigate();
   const planVersionLabels = usePlanVersionLabels();
 
   const { data: enrollments, isLoading } = useQuery({
@@ -1202,7 +1212,7 @@ function AcademicoTab({ student }: { student: Student }) {
   // carrera's current plan. Default carrera: the one of the current plan.
   const [programId, setProgramId] = useState<string | null>(null);
   const [changingRvoe, setChangingRvoe] = useState(false);
-  const [recognizing, setRecognizing] = useState(false);
+  const [recognizing, setRecognizing] = useState(openRecognition);
   const [reverting, setReverting] = useState(false);
   const { data: kardex, isLoading: loadingKardex } = useQuery({
     queryKey: queryKeys.studentKardex(student.id, programId),
@@ -1388,7 +1398,18 @@ function AcademicoTab({ student }: { student: Student }) {
             <RecognizePriorStudiesDialog
               student={student}
               planVersionId={currentPlanId}
-              onClose={() => setRecognizing(false)}
+              onClose={() => {
+                setRecognizing(false);
+                // drop ?reconocer so a reload doesn't open it again
+                if (openRecognition) {
+                  navigate({
+                    to: "/alumnos/$studentId",
+                    params: { studentId: student.id },
+                    search: { tab: "academico" },
+                    replace: true,
+                  });
+                }
+              }}
             />
           )}
           {loadingKardex && <Skeleton className="h-40 w-full rounded-md" />}
