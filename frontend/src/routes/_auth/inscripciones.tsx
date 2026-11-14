@@ -4,7 +4,7 @@ import { Fragment, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, ClipboardList, Plus, Trash2, Wand2 } from "lucide-react";
+import { Check, ClipboardList, Plus, Trash2 } from "lucide-react";
 import { api, ApiError, bulkIntake, parseRoster } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type {
@@ -22,7 +22,7 @@ import type {
   WizardIntakeResult,
 } from "@/api/types";
 import { ROSTER_FIELDS } from "@/api/types";
-import { CURP_RE, MX_STATES, suggestCurp as suggestCurpFrom } from "@/lib/curp";
+import { CURP_RE, MX_STATES } from "@/lib/curp";
 import { formatDate, todayISO } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PhotoCapture } from "@/components/photo-capture";
@@ -383,29 +383,6 @@ function EnrollmentWizard() {
       ),
   });
 
-  function suggestCurp() {
-    if (!data.sex || !data.birth_date || !data.birth_state) {
-      setError(
-        "Para sugerir la CURP captura sexo, fecha de nacimiento y estado",
-      );
-      return;
-    }
-    const curp = suggestCurpFrom({
-      firstNames: data.first_names,
-      lastNameP: data.last_name_p,
-      lastNameM: data.last_name_m,
-      birthDate: data.birth_date,
-      sex: data.sex,
-      stateCode: data.birth_state,
-    });
-    if (!curp) {
-      setError("Completa nombre y apellidos para sugerir la CURP");
-      return;
-    }
-    setError(null);
-    set({ curp });
-  }
-
   const termName = terms?.find((t) => t.id === data.termId)?.name ?? "—";
   const campusName = campuses?.find((c) => c.id === data.campusId)?.name ?? "—";
   const programName =
@@ -552,8 +529,7 @@ function EnrollmentWizard() {
                 </Field>
                 <div className="grid gap-2 sm:col-span-2">
                   <Label htmlFor="w-curp">CURP *</Label>
-                  <div className="flex gap-2">
-                    <Input id="w-curp" required maxLength={18}
+                  <Input id="w-curp" required maxLength={18}
                       value={data.curp}
                       onChange={(e) =>
                         set({ curp: e.target.value.toUpperCase() })
@@ -564,10 +540,6 @@ function EnrollmentWizard() {
                         data.curp.length > 0 && !CURP_RE.test(data.curp)
                       }
                     />
-                    <Button type="button" variant="outline" onClick={suggestCurp}>
-                      <Wand2 className="size-4" /> Sugerir
-                    </Button>
-                  </div>
                   <p className={cn(
                     "text-xs",
                     data.curp.length === 0
@@ -576,10 +548,9 @@ function EnrollmentWizard() {
                         ? "font-semibold text-emerald-600"
                         : "font-semibold text-destructive",
                   )}>
-                    {/* ponytail: pos 17 defaults to 0/A by birth year — only RENAPO
-                        knows real homonym collisions, staff verifies */}
+                    {/* captured from the original document: never computed here */}
                     {data.curp.length === 0
-                      ? "«Sugerir» calcula la CURP completa con homoclave; verifícala contra el documento oficial."
+                      ? "Captúrala tal como aparece en el documento oficial de la CURP."
                       : CURP_RE.test(data.curp)
                         ? "Formato de CURP válido"
                         : `Formato de CURP inválido (${data.curp.length}/18 caracteres)`}
