@@ -20,6 +20,7 @@ from app.models import (
     CampusCreate,
     CampusPublic,
     CampusUpdate,
+    CalendarProgramsImport,
     EvaluationComponent,
     EvaluationComponentCreate,
     EvaluationComponentPublic,
@@ -57,6 +58,7 @@ from app.models import (
     TermUpdate,
 )
 from app.services import audit, calendar
+from app.services.calendar_sync import import_programs, programs_preview, sync_campuses
 from app.services.academics import internal_group_clause, require_operable_rvoe
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -127,7 +129,13 @@ async def update_campus(
         valid = {c["id"] for c in await calendar.get_campuses()}
         if str(data["calendar_campus_id"]) not in valid:
             raise HTTPException(status_code=422, detail="Campus del calendario no encontrado")
+    if data.get("name") is not None:
+        data["name"] = data["name"].strip()
+        if not data["name"]:
+            raise HTTPException(status_code=422, detail="El nombre no puede quedar vacío")
     for k, v in data.items():
+        if v is None and k != "calendar_campus_id":
+            continue  # only the calendar link can be cleared
         setattr(campus, k, v)
     session.add(campus)
     audit.record(session, actor=current_user.email, action="campus.updated",
@@ -218,6 +226,33 @@ async def list_calendar_terms(session: SessionDep, _: AnyStaff) -> list[dict]:
     for t in terms:
         t["imported"] = str(t.get("id")) in {str(i) for i in imported}
     return terms
+
+
+@router.post("/campuses/sync-calendar")
+async def sync_campuses_from_calendar(session: SessionDep, current_user: ServiciosEscolares) -> dict:
+    """Bring the calendar's campuses: create the missing ones, link the matching
+    ones; a campus already linked is never overwritten."""
+    result = await sync_campuses(session, current_user, await get_default_institution(session))
+    await session.commit()
+    return result
+
+
+@router.get("/calendar/programs/preview")
+async def calendar_programs_preview(session: SessionDep, _: ServiciosEscolares) -> list[dict]:
+    """The calendar's programs and what importing each would do."""
+    return await programs_preview(session, await get_default_institution(session))
+
+
+@router.post("/programs/import-calendar")
+async def import_programs_from_calendar(
+    session: SessionDep, current_user: ServiciosEscolares, body: CalendarProgramsImport
+) -> dict:
+    """Copy the chosen calendar programs into scholar (or link the existing ones)."""
+    result = await import_programs(
+        session, current_user, await get_default_institution(session), body.calendar_program_ids
+    )
+    await session.commit()
+    return result
 
 
 @router.get("/calendar/groups")

@@ -106,7 +106,15 @@ class CampusCreate(CampusBase):
 
 
 class CampusUpdate(SQLModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    address: str | None = Field(default=None, max_length=512)
+    is_active: bool | None = None
     calendar_campus_id: uuid.UUID | None = None
+
+
+class CalendarProgramsImport(SQLModel):
+    """Carreras del calendario a copiar (o vincular) en scholar."""
+    calendar_program_ids: list[uuid.UUID]
 
 
 class CampusPublic(CampusBase):

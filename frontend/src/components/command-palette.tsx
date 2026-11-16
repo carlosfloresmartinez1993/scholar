@@ -25,6 +25,7 @@ const ACTIONS = [
   { label: "Cobrar / Caja", to: "/tesoreria", hint: "Acción" },
   { label: "Inscribir alumno", to: "/inscripciones", hint: "Acción" },
   { label: "Periodos", to: "/periodos", hint: "Página" },
+  { label: "Planteles", to: "/planteles", hint: "Página" },
   { label: "Mi perfil", to: "/perfil", hint: "Página" },
 ] as const;
 

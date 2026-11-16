@@ -169,6 +169,35 @@ export interface Campus {
   name: string;
   address: string;
   is_active: boolean;
+  calendar_campus_id?: string | null; // vínculo con el campus del calendario
+}
+
+// resultado de «Sincronizar con calendario» en Planteles
+export interface CampusSyncResult {
+  created: string[];
+  linked: string[];
+  different: { scholar: string; calendar: string }[];
+  unchanged: string[];
+}
+
+// una carrera del calendario y qué haría la importación con ella
+export interface CalendarProgramPreview {
+  calendar_program_id: string;
+  name: string;
+  level: string | null;
+  rvoe: string | null;
+  campus: string | null;
+  status: "nueva" | "vincular" | "sincronizada" | "diferente" | "no_importable";
+  problems: string[];
+  program_id: string | null;
+  scholar_name: string | null;
+  has_rvoe: boolean;
+}
+
+export interface CalendarProgramsImportResult {
+  created: string[];
+  linked: string[];
+  skipped: { name: string; reason: string }[];
 }
 
 export interface Program {
@@ -966,6 +995,7 @@ export interface CalendarProgram {
   id: string;
   name: string;
   rvoe?: string | null;
+  campus_id?: string | null;
   campus: "instituto_siscom" | "inue_presencial" | "inue_online";
   level: "maestria" | "licenciatura" | "bachillerato";
 }

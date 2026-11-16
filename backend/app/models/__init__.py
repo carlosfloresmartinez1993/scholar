@@ -18,6 +18,7 @@ from app.models.catalog import (
     CampusCreate,
     CampusPublic,
     CampusUpdate,
+    CalendarProgramsImport,
     EducationLevel,
     Group,
     GroupCreate,

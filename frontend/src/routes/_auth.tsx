@@ -104,6 +104,10 @@ const NAV_GROUPS = [
         roles: ["admin_sistema", "direccion", "tesoreria"],
       },
       { to: "/periodos", label: "Periodos", icon: CalendarRange },
+      {
+        to: "/planteles", label: "Planteles", icon: Building2,
+        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+      },
     ],
   },
 ] as const;

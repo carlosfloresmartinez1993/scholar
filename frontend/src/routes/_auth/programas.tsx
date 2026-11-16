@@ -34,6 +34,7 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { REPLACES_FINAL, weighsInFinal } from "@/lib/evaluation";
+import { CalendarProgramsImportButton } from "@/components/calendar-programs-import";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -100,14 +101,17 @@ function ProgramasPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl">Programas académicos</h1>
-        <ProgramDialogButton
-          onCreated={(p) => {
-            setProgramId(p.id);
-            setRvoeId(null);
-            setPlanVersionId(null);
-            setWizardStep("rvoe");
-          }}
-        />
+        <div className="flex items-center gap-2">
+          <CalendarProgramsImportButton />
+          <ProgramDialogButton
+            onCreated={(p) => {
+              setProgramId(p.id);
+              setRvoeId(null);
+              setPlanVersionId(null);
+              setWizardStep("rvoe");
+            }}
+          />
+        </div>
       </div>
 
       <div className="rounded-md border bg-card">
@@ -450,10 +454,30 @@ function RvoeSection({
   const [form, setForm] = useState<RvoeForm>(emptyRvoeForm);
   const openedByWizardRef = useRef(false);
 
+  // a program that came from the calendar: a new RVOE starts with the number and
+  // the campus the calendar has for it (date and authority are captured here)
+  const { data: calendarPrograms } = useQuery({
+    queryKey: queryKeys.calendarPrograms,
+    queryFn: getCalendarPrograms,
+    retry: false,
+    enabled: !!program.calendar_program_id,
+  });
+  function newRvoeForm(): RvoeForm {
+    const cal = calendarPrograms?.find((cp) => cp.id === program.calendar_program_id);
+    const number = cal?.rvoe?.trim() ?? "";
+    const pending = number && !rvoes?.some((r) => r.agreement_number === number);
+    const campus = campuses?.find((c) => c.calendar_campus_id && c.calendar_campus_id === cal?.campus_id);
+    return {
+      ...emptyRvoeForm,
+      agreement_number: pending ? number : "",
+      campus_id: (pending ? campus?.id : undefined) ?? campuses?.[0]?.id ?? "",
+    };
+  }
+
   useEffect(() => {
     if (autoOpen && !open) {
       setEditing(null);
-      setForm({ ...emptyRvoeForm, campus_id: campuses?.[0]?.id ?? "" });
+      setForm(newRvoeForm());
       openedByWizardRef.current = true;
       setOpen(true);
     }
@@ -512,7 +536,7 @@ function RvoeSection({
           variant="outline"
           onClick={() => {
             setEditing(null);
-            setForm({ ...emptyRvoeForm, campus_id: campuses?.[0]?.id ?? "" });
+            setForm(newRvoeForm());
             setOpen(true);
           }}
         >
