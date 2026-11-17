@@ -27,6 +27,7 @@ from app.models import (
 )
 from app.services.academics import require_operable_rvoe
 from app.services.levels import levels_of
+from app.services.rvoe_campuses import campus_ids_of, campus_map
 from app.services import audit, calendar
 
 
@@ -231,6 +232,7 @@ async def groups_preview(session: AsyncSession, term: Term) -> dict:
             .order_by(PlanVersion.created_at.desc())  # type: ignore[attr-defined]
         )
     ).all()
+    offered = await campus_map(session, [rvoe for _, rvoe, _ in plan_rows])
     rows = []
     for cal in sorted(await calendar.get_groups(term_id=term.calendar_term_id), key=lambda g: g["code"]):
         program = programs.get(str(cal.get("program_id")))
@@ -241,7 +243,7 @@ async def groups_preview(session: AsyncSession, term: Term) -> dict:
                 {"plan_version_id": str(plan.id),
                  "label": f"{rvoe.agreement_number} · Plan {plan.version_label} · {cam.name}",
                  "periods_count": plan.periods_count,
-                 "same_campus": campus is not None and cam.id == campus.id,
+                 "same_campus": campus is not None and campus.id in offered[rvoe.id],
                  "operable": rvoe.is_operable()}
                 for plan, rvoe, cam in plan_rows if rvoe.program_id == program.id
             ]
@@ -272,11 +274,13 @@ async def import_groups(session: AsyncSession, user, term: Term, items: list[dic
         raise HTTPException(status_code=400, detail="Seleccione al menos un grupo")
     if term.calendar_term_id is None:
         raise HTTPException(status_code=409, detail="Este ciclo no viene del calendario")
-    calendar_ids = {str(g["id"]) for g in await calendar.get_groups(term_id=term.calendar_term_id)}
+    calendar_groups = {str(g["id"]): g for g in await calendar.get_groups(term_id=term.calendar_term_id)}
+    calendar_ids = set(calendar_groups)
     result: dict[str, list] = {"created": [], "skipped": []}
     for item in items:
         code = item["code"].strip()
         cal_id = item["calendar_group_id"]
+        item["calendar_campus_id"] = (calendar_groups.get(str(cal_id)) or {}).get("campus_id")
         if str(cal_id) not in calendar_ids:
             result["skipped"].append({"code": code, "reason": "No es un grupo de este ciclo en el calendario"})
             continue
@@ -295,11 +299,18 @@ async def import_groups(session: AsyncSession, user, term: Term, items: list[dic
         except HTTPException as error:
             result["skipped"].append({"code": code, "reason": error.detail})
             continue
-        ensure_in_scope(scope, rvoe.campus_id)
+        # the calendar's plantel when the RVOE is offered there; else the RVOE's main one
+        cal_campus = (
+            await session.exec(select(Campus).where(Campus.calendar_campus_id == uuid.UUID(str(item["calendar_campus_id"]))))
+        ).first() if item.get("calendar_campus_id") else None
+        campus_id = (
+            cal_campus.id if cal_campus and cal_campus.id in await campus_ids_of(session, rvoe) else rvoe.campus_id
+        )
+        ensure_in_scope(scope, campus_id)
         clash = (
             await session.exec(
                 select(Group.id).where(
-                    Group.term_id == term.id, Group.campus_id == rvoe.campus_id, Group.code == code
+                    Group.term_id == term.id, Group.campus_id == campus_id, Group.code == code
                 )
             )
         ).first()
@@ -308,7 +319,7 @@ async def import_groups(session: AsyncSession, user, term: Term, items: list[dic
             continue
         group = Group(
             code=code, period_number=item["period_number"], plan_version_id=plan.id, term_id=term.id,
-            campus_id=rvoe.campus_id, calendar_group_id=cal_id,
+            campus_id=campus_id, calendar_group_id=cal_id,
         )
         session.add(group)
         await session.flush()

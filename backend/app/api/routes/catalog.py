@@ -73,6 +73,13 @@ from app.services.calendar_sync import (
     sync_campuses,
 )
 from app.services.levels import levels_of, require_level
+from app.services.rvoe_campuses import (
+    campus_ids_of,
+    campus_map,
+    group_campus,
+    offered_in,
+    set_extra_campuses,
+)
 from app.services.academics import internal_group_clause, require_operable_rvoe
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -249,12 +256,20 @@ async def list_programs(
         q = q.where(
             or_(
                 Program.id.in_(  # type: ignore[attr-defined]
-                    select(Rvoe.program_id).where(Rvoe.campus_id.in_(scope))  # type: ignore[attr-defined]
+                    select(Rvoe.program_id).where(offered_in(scope))
                 ),
                 ~Program.id.in_(select(Rvoe.program_id)),  # type: ignore[attr-defined]
             )
         )
-    return (await session.exec(q)).all()
+    programs = (await session.exec(q)).all()
+    rvoes = (await session.exec(select(Rvoe).order_by(Rvoe.created_at))).all()
+    campuses = await campus_map(session, rvoes)
+    by_program: dict = {}
+    for rvoe in rvoes:
+        by_program.setdefault(rvoe.program_id, []).append(
+            {"id": rvoe.id, "agreement_number": rvoe.agreement_number, "campus_ids": campuses[rvoe.id]}
+        )
+    return [ProgramPublic(**p.model_dump(), rvoes=by_program.get(p.id, [])) for p in programs]
 
 
 @router.post("/programs", status_code=201)
@@ -392,10 +407,12 @@ async def list_rvoes(
 ) -> list[RvoePublic]:
     q = select(Rvoe).order_by(Rvoe.created_at)
     if scope is not None:
-        q = q.where(Rvoe.campus_id.in_(scope))  # type: ignore[attr-defined]
+        q = q.where(offered_in(scope))
     if program_id:
         q = q.where(Rvoe.program_id == program_id)
-    return (await session.exec(q)).all()
+    rvoes = (await session.exec(q)).all()
+    campuses = await campus_map(session, rvoes)
+    return [RvoePublic(**r.model_dump(), campus_ids=campuses[r.id]) for r in rvoes]
 
 
 @router.post("/rvoes", status_code=201)
@@ -412,13 +429,17 @@ async def create_rvoe(
     ).first()
     if dup:
         raise HTTPException(status_code=409, detail="Ya existe un RVOE con ese número de acuerdo")
-    rvoe = Rvoe(**body.model_dump())
+    rvoe = Rvoe(**body.model_dump(exclude={"extra_campus_ids"}))
     session.add(rvoe)
+    await session.flush()
+    for campus_id in body.extra_campus_ids:
+        ensure_in_scope(scope, campus_id)
+    await set_extra_campuses(session, rvoe, body.extra_campus_ids)
     audit.record(session, actor=current_user.email, action="rvoe.created",
                  entity="rvoe", entity_id=str(rvoe.id), detail=rvoe.agreement_number)
     await session.commit()
     await session.refresh(rvoe)
-    return rvoe
+    return RvoePublic(**rvoe.model_dump(), campus_ids=await campus_ids_of(session, rvoe))
 
 
 @router.patch("/rvoes/{rvoe_id}")
@@ -429,10 +450,13 @@ async def update_rvoe(
     if rvoe is None:
         raise HTTPException(status_code=404, detail="RVOE no encontrado")
     changes = body.model_dump(exclude_unset=True)
+    extra = changes.pop("extra_campus_ids", None)
     old_status = rvoe.status
     for k, v in changes.items():
         setattr(rvoe, k, v)
     session.add(rvoe)
+    if extra is not None:
+        await set_extra_campuses(session, rvoe, extra)
     if "status" in changes and changes["status"] != old_status:
         audit.record(session, actor=current_user.email, action="rvoe.status_changed",
                      entity="rvoe", entity_id=str(rvoe.id),
@@ -442,7 +466,7 @@ async def update_rvoe(
                      entity="rvoe", entity_id=str(rvoe.id))
     await session.commit()
     await session.refresh(rvoe)
-    return rvoe
+    return RvoePublic(**rvoe.model_dump(), campus_ids=await campus_ids_of(session, rvoe))
 
 
 # --- Plan versions (RT-04) -------------------------------------------------------
@@ -889,17 +913,18 @@ async def create_group(
 ) -> GroupPublic:
     rvoe = await require_operable_rvoe(session, body.plan_version_id)  # RT-03
     # campus is derived from the plan's RVOE — enforce it is one you belong to
-    ensure_in_scope(scope, rvoe.campus_id)
+    campus_id = await group_campus(session, rvoe, body.campus_id)
+    ensure_in_scope(scope, campus_id)
     if await session.get(Term, body.term_id) is None:
         raise HTTPException(status_code=404, detail="Ciclo no encontrado")
     if body.promotes_from_group_id is not None:
         await _validate_promotion_source(
             session, body.promotes_from_group_id,
-            plan_version_id=body.plan_version_id, campus_id=rvoe.campus_id,
+            plan_version_id=body.plan_version_id, campus_id=campus_id,
             period_number=body.period_number,
         )
-    # campus is derived from the plan's RVOE, not supplied by the client
-    group = Group(**body.model_dump(), campus_id=rvoe.campus_id)
+    # a plantel where the plan's RVOE is offered (its main one by default)
+    group = Group(**body.model_dump(exclude={"campus_id"}), campus_id=campus_id)
     session.add(group)
     await session.flush()
     seeded = await seed_group_subjects(session, group)

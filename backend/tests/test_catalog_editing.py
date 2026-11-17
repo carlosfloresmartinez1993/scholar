@@ -180,3 +180,38 @@ async def test_campus_filter_does_not_block_creating_elsewhere(client, seed):
         "program_id": program["id"], "campus_id": online["id"], "agreement_number": "2023313/22",
         "authority": "estatal", "modality": "escolarizada", "issue_date": "2026-11-16"})
     assert created.status_code == 201, created.text
+
+
+async def test_one_rvoe_in_several_campuses(client, seed):
+    """Opción A: el mismo RVOE (mismo plan) se imparte en varios planteles; cada
+    grupo es de uno de ellos y el alumno queda en el plantel de su grupo."""
+    await login(client)
+    main = str(seed["campus"].id)
+    catalog = await build_catalog(client, main)
+    online = (await client.post(f"{API}/campuses", json={"name": "INUE Online"})).json()["id"]
+    elsewhere = (await client.post(f"{API}/campuses", json={"name": "Ensenada"})).json()["id"]
+    rvoe_id = catalog["rvoe"]["id"]
+
+    shared = await client.patch(f"{API}/rvoes/{rvoe_id}", json={"extra_campus_ids": [online]})
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["campus_ids"] == [main, online]
+
+    # the program shows in both campuses, with its RVOE and planteles
+    there = {p["code"]: p for p in (await client.get(f"{API}/programs", headers={"X-Campus": online})).json()}
+    assert there["LD"]["rvoes"][0]["campus_ids"] == [main, online]
+    assert "LD" not in {p["code"] for p in (await client.get(
+        f"{API}/programs", headers={"X-Campus": elsewhere})).json()}
+    assert [r["id"] for r in (await client.get(f"{API}/rvoes", headers={"X-Campus": online})).json()] == [rvoe_id]
+
+    base = {"period_number": 1, "plan_version_id": catalog["plan"]["id"], "term_id": catalog["term"]["id"]}
+    group = await client.post(f"{API}/groups", json={**base, "code": "LD-1ON", "campus_id": online})
+    assert group.status_code == 201, group.text
+    assert group.json()["campus_id"] == online
+    assert (await client.post(f"{API}/groups", json={
+        **base, "code": "LD-1EN", "campus_id": elsewhere})).status_code == 422
+
+    student = await enroll_student(client, online, group.json()["id"])
+    assert student["campus_id"] == online
+
+    # Online has groups of this RVOE now: it can't be taken off
+    assert (await client.patch(f"{API}/rvoes/{rvoe_id}", json={"extra_campus_ids": []})).status_code == 409

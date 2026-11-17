@@ -197,6 +197,7 @@ class ProgramPublic(ProgramBase):
     institution_id: uuid.UUID
     is_active: bool
     calendar_program_id: uuid.UUID | None = None
+    rvoes: list["ProgramRvoeSummary"] = []  # its RVOE and their planteles (list only)
 
 
 class RvoeBase(SQLModel):
@@ -224,12 +225,21 @@ class Rvoe(RvoeBase, table=True):
         return self.status == RvoeStatus.vigente
 
 
+class RvoeCampus(SQLModel, table=True):
+    """Other planteles where the same RVOE (same plan) is offered."""
+    __tablename__ = "rvoe_campuses"
+    rvoe_id: uuid.UUID = Field(foreign_key="rvoes.id", primary_key=True)
+    campus_id: uuid.UUID = Field(foreign_key="campuses.id", primary_key=True, index=True)
+
+
 class RvoeCreate(RvoeBase):
     program_id: uuid.UUID
-    campus_id: uuid.UUID
+    campus_id: uuid.UUID  # main plantel
+    extra_campus_ids: list[uuid.UUID] = []  # other planteles with the same RVOE
 
 
 class RvoeUpdate(SQLModel):
+    extra_campus_ids: list[uuid.UUID] | None = None  # replaces the other planteles
     agreement_number: str | None = None
     authority: RvoeAuthority | None = None
     issue_date: date | None = None
@@ -242,6 +252,13 @@ class RvoePublic(RvoeBase):
     id: uuid.UUID
     program_id: uuid.UUID
     campus_id: uuid.UUID
+    campus_ids: list[uuid.UUID] = []  # every plantel where it applies, main first
+
+
+class ProgramRvoeSummary(SQLModel):
+    id: uuid.UUID
+    agreement_number: str
+    campus_ids: list[uuid.UUID]
 
 
 # --- Plan versions and subjects (RT-04, RF-C07) ------------------------------
@@ -405,7 +422,8 @@ class GroupCreate(GroupBase):
     plan_version_id: uuid.UUID
     term_id: uuid.UUID
     promotes_from_group_id: uuid.UUID | None = None
-    # campus is derived from the plan version's RVOE (RVOE = program + campus)
+    # one of the planteles of the plan's RVOE; by default its main one
+    campus_id: uuid.UUID | None = None
 
 
 class GroupUpdate(SQLModel):

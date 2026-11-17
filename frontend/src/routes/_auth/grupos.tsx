@@ -40,6 +40,7 @@ import type {
   UserPublic,
 } from "@/api/types";
 import { cn } from "@/lib/utils";
+import { useCampus } from "@/lib/campus-context";
 import { EmptyState } from "@/components/empty-state";
 import { GroupAdminButtons, ImportCalendarGroupsButton } from "@/components/group-admin-dialogs";
 import {
@@ -432,7 +433,40 @@ function CreateGroupDialog({
     period_number: 1,
     plan_version_id: "",
     promotes_from_group_id: NONE,
+    campus_id: "",
   });
+
+  // the planteles where the chosen plan's RVOE applies; the group opens in one
+  const { campusId: headerCampusId } = useCampus();
+  const { data: planVersions } = useQuery({
+    queryKey: queryKeys.planVersions(),
+    queryFn: () => api<PlanVersion[]>("/catalog/plan-versions"),
+    enabled: open,
+  });
+  const { data: rvoes } = useQuery({
+    queryKey: queryKeys.rvoes(),
+    queryFn: () => api<Rvoe[]>("/catalog/rvoes"),
+    enabled: open,
+  });
+  const { data: campuses } = useQuery({
+    queryKey: queryKeys.campuses,
+    queryFn: () => api<Campus[]>("/catalog/campuses"),
+    enabled: open,
+  });
+  const planRvoe = rvoes?.find(
+    (r) => r.id === planVersions?.find((pv) => pv.id === form.plan_version_id)?.rvoe_id,
+  );
+  const planCampusIds = planRvoe
+    ? planRvoe.campus_ids?.length
+      ? planRvoe.campus_ids
+      : [planRvoe.campus_id]
+    : [];
+  const campusChoice =
+    (planCampusIds.includes(form.campus_id) && form.campus_id) ||
+    (headerCampusId && planCampusIds.includes(headerCampusId) ? headerCampusId : "") ||
+    planCampusIds[0] ||
+    "";
+  const campusLabel = (id: string) => campuses?.find((c) => c.id === id)?.name ?? "—";
 
   const save = useMutation({
     mutationFn: () =>
@@ -447,6 +481,7 @@ function CreateGroupDialog({
               ? null
               : form.promotes_from_group_id,
           term_id: termId,
+          campus_id: campusChoice || null,
         }),
       }),
     onSuccess: () => {
@@ -458,6 +493,7 @@ function CreateGroupDialog({
         period_number: 1,
         plan_version_id: "",
         promotes_from_group_id: NONE,
+        campus_id: "",
       });
     },
     onError: (e) =>
@@ -562,9 +598,36 @@ function CreateGroupDialog({
               a este.
             </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            El campus se toma del RVOE del plan seleccionado.
-          </p>
+          {planCampusIds.length > 1 ? (
+            <div className="grid gap-2">
+              <Label>Plantel</Label>
+              <Select
+                value={campusChoice}
+                onValueChange={(v) => setForm({ ...form, campus_id: v })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {planCampusIds.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {campusLabel(id)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                El RVOE de este plan se imparte en varios planteles. Los alumnos del
+                grupo quedan en el plantel que elijas.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {campusChoice
+                ? `Plantel: ${campusLabel(campusChoice)} (el del RVOE del plan).`
+                : "El plantel se toma del RVOE del plan seleccionado."}
+            </p>
+          )}
           <DialogFooter>
             <Button
               type="submit"

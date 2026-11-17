@@ -272,7 +272,9 @@ function EnrollmentWizard() {
   });
 
   const campusRvoes = rvoes?.filter(
-    (r) => r.program_id === data.programId && r.campus_id === data.campusId,
+    (r) =>
+          r.program_id === data.programId &&
+          (r.campus_ids?.length ? r.campus_ids : [r.campus_id]).includes(data.campusId),
   );
   // A step reads as "done" only once visited AND valid — permissive validators
   // (most fields optional) would otherwise check-mark steps never opened.

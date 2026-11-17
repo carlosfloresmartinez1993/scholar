@@ -234,12 +234,15 @@ export interface Program {
   level: EducationLevel;
   is_active: boolean;
   calendar_program_id?: string | null;
+  // its RVOE and the planteles where each applies (programs list)
+  rvoes?: { id: string; agreement_number: string; campus_ids: string[] }[];
 }
 
 export interface Rvoe {
   id: string;
   program_id: string;
-  campus_id: string;
+  campus_id: string; // main plantel
+  campus_ids?: string[]; // every plantel where it applies, main first
   agreement_number: string;
   authority: RvoeAuthority;
   modality: Modality;

@@ -53,6 +53,8 @@ from app.models.catalog import (
     Rvoe,
     RvoeAuthority,
     RvoeCreate,
+    RvoeCampus,
+    ProgramRvoeSummary,
     RvoePublic,
     RvoeStatus,
     RvoeUpdate,

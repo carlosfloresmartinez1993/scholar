@@ -40,6 +40,7 @@ import {
   EducationLevelsButton,
 } from "@/components/catalog-dialogs";
 import { useEducationLevels, useLevelLabel } from "@/lib/levels";
+import { ALL_CAMPUSES, useCampus } from "@/lib/campus-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -102,6 +103,43 @@ function ProgramasPage() {
   });
 
   const program = programs?.find((p) => p.id === programId) ?? null;
+  const { campusId } = useCampus();
+  const { data: allCampuses } = useQuery({
+    queryKey: queryKeys.campuses,
+    queryFn: () => api<Campus[]>("/catalog/campuses"),
+  });
+  const campusLabel = (id: string) => allCampuses?.find((c) => c.id === id)?.name ?? "—";
+
+  // with a plantel chosen: its RVOE there, or «Sin RVOE en este plantel»;
+  // with all planteles: each RVOE and where it applies
+  function rvoeCell(p: Program) {
+    const rvoes = p.rvoes ?? [];
+    if (rvoes.length === 0) return <Badge variant="destructive">Sin RVOE</Badge>;
+    if (campusId !== ALL_CAMPUSES) {
+      const here = rvoes.filter((r) => r.campus_ids.includes(campusId));
+      if (here.length === 0)
+        return <Badge variant="secondary">Sin RVOE en este plantel</Badge>;
+      return (
+        <span className="font-semibold" data-numeric>
+          {here.map((r) => r.agreement_number).join(", ")}
+        </span>
+      );
+    }
+    return (
+      <div className="space-y-0.5">
+        {rvoes.map((r) => (
+          <div key={r.id} className="text-sm">
+            <span className="font-semibold" data-numeric>
+              {r.agreement_number}
+            </span>{" "}
+            <span className="text-muted-foreground">
+              · {r.campus_ids.map(campusLabel).join(", ")}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -128,6 +166,7 @@ function ProgramasPage() {
               <TableHead>Clave</TableHead>
               <TableHead>Nombre</TableHead>
               <TableHead>Nivel</TableHead>
+              <TableHead>RVOE</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead className="w-12" />
             </TableRow>
@@ -136,7 +175,7 @@ function ProgramasPage() {
             {isLoading &&
               [1, 2, 3].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={5}>
+                  <TableCell colSpan={6}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
@@ -161,6 +200,7 @@ function ProgramasPage() {
                 <TableCell className="text-muted-foreground">
                   {levelLabel(p.level)}
                 </TableCell>
+                <TableCell>{rvoeCell(p)}</TableCell>
                 <TableCell>
                   <Badge variant={p.is_active ? "outline" : "destructive"}>
                     {p.is_active ? "Activo" : "Inactivo"}
@@ -174,7 +214,7 @@ function ProgramasPage() {
             {programs && programs.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="py-10 text-center text-muted-foreground"
                 >
                   <div className="flex flex-col items-center gap-3">
@@ -423,6 +463,7 @@ interface RvoeForm {
   status: RvoeStatus;
   notes: string;
   campus_id: string;
+  extra_campus_ids: string[];
 }
 
 const emptyRvoeForm: RvoeForm = {
@@ -434,6 +475,7 @@ const emptyRvoeForm: RvoeForm = {
   status: "vigente",
   notes: "",
   campus_id: "",
+  extra_campus_ids: [],
 };
 
 function RvoeSection({
@@ -461,6 +503,7 @@ function RvoeSection({
     queryFn: () => api<Campus[]>("/catalog/campuses"),
   });
 
+  const { campusId: headerCampusId } = useCampus();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Rvoe | null>(null);
   const [form, setForm] = useState<RvoeForm>(emptyRvoeForm);
@@ -482,7 +525,12 @@ function RvoeSection({
     return {
       ...emptyRvoeForm,
       agreement_number: pending ? number : "",
-      campus_id: (pending ? campus?.id : undefined) ?? campuses?.[0]?.id ?? "",
+      // the calendar's plantel; else the one chosen in the header; else the first
+      campus_id:
+        (pending ? campus?.id : undefined) ??
+        (headerCampusId !== ALL_CAMPUSES ? headerCampusId : undefined) ??
+        campuses?.[0]?.id ??
+        "",
     };
   }
 
@@ -508,6 +556,7 @@ function RvoeSection({
             valid_until: form.valid_until || null,
             status: form.status,
             notes: form.notes,
+            extra_campus_ids: form.extra_campus_ids,
           }),
         });
       }
@@ -523,11 +572,13 @@ function RvoeSection({
           notes: form.notes,
           program_id: program.id,
           campus_id: form.campus_id,
+          extra_campus_ids: form.extra_campus_ids,
         }),
       });
     },
     onSuccess: (rvoe) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.rvoes(program.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.programs });
       toast.success(editing ? "RVOE actualizado" : "RVOE registrado");
       setOpen(false);
       if (!editing && openedByWizardRef.current) onCreated?.(rvoe);
@@ -593,7 +644,11 @@ function RvoeSection({
                 <TableCell className="text-muted-foreground">
                   {MODALITY_LABELS[r.modality]}
                 </TableCell>
-                <TableCell>{campusName(r.campus_id)}</TableCell>
+                <TableCell>
+                  {(r.campus_ids?.length ? r.campus_ids : [r.campus_id])
+                    .map(campusName)
+                    .join(", ")}
+                </TableCell>
                 <TableCell>{formatDate(r.issue_date)}</TableCell>
                 <TableCell>
                   {r.valid_until ? formatDate(r.valid_until) : "Indefinida"}
@@ -620,6 +675,9 @@ function RvoeSection({
                         status: r.status,
                         notes: r.notes,
                         campus_id: r.campus_id,
+                        extra_campus_ids: (r.campus_ids ?? []).filter(
+                          (c) => c !== r.campus_id,
+                        ),
                       });
                       setOpen(true);
                     }}
@@ -716,12 +774,23 @@ function RvoeSection({
                 </Select>
               </div>
             </div>
-            {!editing && (
+            {editing ? (
+              <div className="grid gap-1">
+                <Label>Plantel principal</Label>
+                <p className="text-sm text-muted-foreground">{campusName(form.campus_id)}</p>
+              </div>
+            ) : (
               <div className="grid gap-2">
-                <Label>Campus</Label>
+                <Label>Plantel principal</Label>
                 <Select
                   value={form.campus_id}
-                  onValueChange={(v) => setForm({ ...form, campus_id: v })}
+                  onValueChange={(v) =>
+                    setForm({
+                      ...form,
+                      campus_id: v,
+                      extra_campus_ids: form.extra_campus_ids.filter((c) => c !== v),
+                    })
+                  }
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Seleccione un campus" />
@@ -734,6 +803,34 @@ function RvoeSection({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+            {(campuses?.length ?? 0) > 1 && (
+              <div className="grid gap-2">
+                <Label>También se imparte en</Label>
+                <p className="text-xs text-muted-foreground">
+                  Mismo RVOE y mismo plan; cada grupo se abre en uno de estos planteles.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {campuses
+                    ?.filter((c) => c.id !== form.campus_id)
+                    .map((c) => (
+                      <label key={c.id} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={form.extra_campus_ids.includes(c.id)}
+                          onCheckedChange={(v) =>
+                            setForm({
+                              ...form,
+                              extra_campus_ids: v
+                                ? [...form.extra_campus_ids, c.id]
+                                : form.extra_campus_ids.filter((x) => x !== c.id),
+                            })
+                          }
+                        />
+                        {c.name}
+                      </label>
+                    ))}
+                </div>
               </div>
             )}
             <div className="grid grid-cols-2 gap-4">
