@@ -5,7 +5,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import func, select
+from sqlmodel import func, or_, select
 
 from app.api.deps import (
     AcademicStaff,
@@ -242,12 +242,16 @@ async def list_programs(
     session: SessionDep, _: AnyStaff, scope: CampusScope
 ) -> list[ProgramPublic]:
     q = select(Program).order_by(Program.name)
-    # Programs carry campus only via their RVOEs — a member sees programs that
-    # have at least one RVOE in a campus they belong to.
+    # Programs carry campus only via their RVOEs: with a campus chosen, a program
+    # shows when it has an RVOE there — or none yet (just created or imported: it
+    # has to be visible to capture its first RVOE).
     if scope is not None:
         q = q.where(
-            Program.id.in_(  # type: ignore[attr-defined]
-                select(Rvoe.program_id).where(Rvoe.campus_id.in_(scope))  # type: ignore[attr-defined]
+            or_(
+                Program.id.in_(  # type: ignore[attr-defined]
+                    select(Rvoe.program_id).where(Rvoe.campus_id.in_(scope))  # type: ignore[attr-defined]
+                ),
+                ~Program.id.in_(select(Rvoe.program_id)),  # type: ignore[attr-defined]
             )
         )
     return (await session.exec(q)).all()

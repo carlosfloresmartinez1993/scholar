@@ -151,3 +151,19 @@ async def test_import_groups_of_a_term_from_calendar(client, seed, monkeypatch, 
 
     again = {r["code"]: r for r in (await client.get(f"{API}/terms/{term_id}/calendar-groups/preview")).json()["groups"]}
     assert again["DE21S"]["status"] == "importado"
+
+
+async def test_new_program_visible_with_a_campus_chosen(client, seed):
+    """With a campus chosen in the header, a program without RVOE still shows."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    other = (await client.post(f"{API}/campuses", json={"name": "Otro plantel"})).json()
+    new = (await client.post(f"{API}/programs", json={
+        "code": "BACH", "name": "Bachillerato", "level": "bachillerato"})).json()
+    here = {p["code"] for p in (await client.get(
+        f"{API}/programs", headers={"X-Campus": str(seed["campus"].id)})).json()}
+    assert {"LD", "BACH"} <= here
+    there = {p["code"] for p in (await client.get(
+        f"{API}/programs", headers={"X-Campus": other["id"]})).json()}
+    assert "BACH" in there and "LD" not in there  # LD's RVOE is in the other campus
+    assert new["code"] == "BACH" and catalog
