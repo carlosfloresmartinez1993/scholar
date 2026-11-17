@@ -167,3 +167,16 @@ async def test_new_program_visible_with_a_campus_chosen(client, seed):
         f"{API}/programs", headers={"X-Campus": other["id"]})).json()}
     assert "BACH" in there and "LD" not in there  # LD's RVOE is in the other campus
     assert new["code"] == "BACH" and catalog
+
+
+async def test_campus_filter_does_not_block_creating_elsewhere(client, seed):
+    """The header campus only filters the view: an admin looking at one campus can
+    create a RVOE in another."""
+    await login(client)
+    online = (await client.post(f"{API}/campuses", json={"name": "INUE Online"})).json()
+    program = (await client.post(f"{API}/programs", json={
+        "code": "BACH", "name": "Bachillerato", "level": "bachillerato"})).json()
+    created = await client.post(f"{API}/rvoes", headers={"X-Campus": str(seed["campus"].id)}, json={
+        "program_id": program["id"], "campus_id": online["id"], "agreement_number": "2023313/22",
+        "authority": "estatal", "modality": "escolarizada", "issue_date": "2026-11-16"})
+    assert created.status_code == 201, created.text

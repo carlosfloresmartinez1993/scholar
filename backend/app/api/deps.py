@@ -1,4 +1,5 @@
 import uuid
+from contextvars import ContextVar
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -175,6 +176,12 @@ async def build_user_public(session: AsyncSession, user: User) -> UserPublic:
     return public
 
 
+# The campuses this request's user may act on, whatever the header shows: the
+# header is a view filter, not a permission. None = every campus.
+_UNSET = object()
+_access: ContextVar[object] = ContextVar("campus_access", default=_UNSET)
+
+
 async def active_campus(
     request: Request, session: SessionDep, current_user: CurrentUser
 ) -> list[uuid.UUID] | None:
@@ -185,6 +192,7 @@ async def active_campus(
     specific X-Campus id is 403 unless the user is all-campus or a member."""
     header = request.headers.get("X-Campus")
     all_campus = is_all_campus(current_user)
+    _access.set(None if all_campus else await _member_campus_ids(session, current_user))
     if header and header != "__all__":
         try:
             requested = uuid.UUID(header)
@@ -210,8 +218,13 @@ CampusScope = Annotated[list[uuid.UUID] | None, Depends(active_campus)]
 
 
 def ensure_in_scope(scope: list[uuid.UUID] | None, campus_id: uuid.UUID) -> None:
-    """Guard a create/update: raise 403 when the target campus is outside scope.
-    scope None = unrestricted (all-campus user or all-view)."""
+    """Guard a create/update: raise 403 when the target campus is one the user
+    can't act on. The campus chosen in the header only filters what is shown: an
+    administrator viewing «Campus A» can still create a RVOE in campus B, and a
+    member can act on any campus they belong to."""
+    access = _access.get()
+    if access is not _UNSET:
+        scope = access  # type: ignore[assignment]
     if scope is not None and campus_id not in scope:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes acceso a ese plantel"
