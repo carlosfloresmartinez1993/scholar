@@ -237,24 +237,28 @@ async def groups_preview(session: AsyncSession, term: Term) -> dict:
     for cal in sorted(await calendar.get_groups(term_id=term.calendar_term_id), key=lambda g: g["code"]):
         program = programs.get(str(cal.get("program_id")))
         campus = campuses.get(str(cal.get("campus_id")))
+        # a group belongs to its plantel: only plans whose RVOE is offered there
         plans = []
-        if program is not None:
+        if program is not None and campus is not None:
             plans = [
                 {"plan_version_id": str(plan.id),
-                 "label": f"{rvoe.agreement_number} · Plan {plan.version_label} · {cam.name}",
+                 "label": f"{rvoe.agreement_number} · Plan {plan.version_label}",
                  "periods_count": plan.periods_count,
-                 "same_campus": campus is not None and campus.id in offered[rvoe.id],
+                 "same_campus": True,
                  "operable": rvoe.is_operable()}
-                for plan, rvoe, cam in plan_rows if rvoe.program_id == program.id
+                for plan, rvoe, _ in plan_rows
+                if rvoe.program_id == program.id and campus.id in offered[rvoe.id]
             ]
-            plans.sort(key=lambda p: (not p["same_campus"], not p["operable"]))
+            plans.sort(key=lambda p: not p["operable"])
         existing = imported.get(str(cal["id"]))
         if existing is not None:
             status, reason = "importado", f"Ya está en Scholar como {existing.code}"
         elif program is None:
             status, reason = "sin_carrera", "Su carrera no se ha importado del calendario"
+        elif campus is None:
+            status, reason = "sin_plan", "Su plantel no está en Scholar: sincroniza los planteles"
         elif not plans:
-            status, reason = "sin_plan", "Su carrera no tiene RVOE con plan de estudios en Scholar"
+            status, reason = "sin_plan", f"Su carrera no tiene RVOE con plan en {campus.name}"
         else:
             status, reason = "nuevo", None
         rows.append({
@@ -299,13 +303,17 @@ async def import_groups(session: AsyncSession, user, term: Term, items: list[dic
         except HTTPException as error:
             result["skipped"].append({"code": code, "reason": error.detail})
             continue
-        # the calendar's plantel when the RVOE is offered there; else the RVOE's main one
+        # the group stays in its calendar plantel, and the plan's RVOE must apply there
         cal_campus = (
             await session.exec(select(Campus).where(Campus.calendar_campus_id == uuid.UUID(str(item["calendar_campus_id"]))))
         ).first() if item.get("calendar_campus_id") else None
-        campus_id = (
-            cal_campus.id if cal_campus and cal_campus.id in await campus_ids_of(session, rvoe) else rvoe.campus_id
-        )
+        if cal_campus is None:
+            result["skipped"].append({"code": code, "reason": "Su plantel no está en Scholar"})
+            continue
+        if cal_campus.id not in await campus_ids_of(session, rvoe):
+            result["skipped"].append({"code": code, "reason": f"Ese RVOE no se imparte en {cal_campus.name}"})
+            continue
+        campus_id = cal_campus.id
         ensure_in_scope(scope, campus_id)
         clash = (
             await session.exec(

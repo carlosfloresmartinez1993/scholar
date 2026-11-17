@@ -215,3 +215,60 @@ async def test_one_rvoe_in_several_campuses(client, seed):
 
     # Online has groups of this RVOE now: it can't be taken off
     assert (await client.patch(f"{API}/rvoes/{rvoe_id}", json={"extra_campus_ids": []})).status_code == 409
+
+
+async def test_same_group_code_in_two_campuses(client, seed, monkeypatch, session_factory):
+    """Bachillerato con un RVOE en SISCOM y otro en Online: cada plantel tiene su
+    «B1», y el grupo del calendario queda en su plantel, no en el del otro RVOE."""
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    siscom = (await client.post(f"{API}/campuses", json={"name": "Instituto SISCOM"})).json()["id"]
+    online = (await client.post(f"{API}/campuses", json={"name": "INUE Online"})).json()["id"]
+    program = (await client.post(f"{API}/programs", json={
+        "code": "BACH", "name": "Bachillerato", "level": "bachillerato"})).json()
+    plans = {}
+    for campus, number in [(siscom, "BACH-SISCOM"), (online, "BACH-ONLINE")]:
+        rvoe = (await client.post(f"{API}/rvoes", json={
+            "program_id": program["id"], "campus_id": campus, "agreement_number": number,
+            "authority": "estatal", "modality": "escolarizada", "issue_date": "2026-01-15"})).json()
+        plans[campus] = (await client.post(f"{API}/plan-versions", json={
+            "rvoe_id": rvoe["id"], "version_label": "2026", "period_type": "cuatrimestral",
+            "periods_count": 6, "min_attendance_pct": 80})).json()["id"]
+    term_id = catalog["term"]["id"]
+    for campus in (siscom, online):
+        made = await client.post(f"{API}/groups", json={
+            "code": "B1", "period_number": 1, "plan_version_id": plans[campus],
+            "term_id": term_id, "campus_id": campus})
+        assert made.status_code == 201, made.text
+        assert made.json()["campus_id"] == campus
+    # a plan of SISCOM can't open a group in Online
+    assert (await client.post(f"{API}/groups", json={
+        "code": "B2", "period_number": 1, "plan_version_id": plans[siscom],
+        "term_id": term_id, "campus_id": online})).status_code == 422
+
+    # calendar: B4 is Online's; only Online's plan is offered, SISCOM's is refused
+    cal_term, cal_program, cal_online = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    cal_group = {"id": str(uuid.uuid4()), "code": "B41", "program_id": cal_program,
+                 "term_id": cal_term, "campus_id": cal_online}
+
+    async def get_groups(term_id=None, program_id=None):
+        return [dict(cal_group)]
+    monkeypatch.setattr("app.services.calendar.get_groups", get_groups)
+    from app.models import Campus, Program, Term
+    async with session_factory() as session:
+        (await session.get(Term, uuid.UUID(term_id))).calendar_term_id = uuid.UUID(cal_term)
+        (await session.get(Campus, uuid.UUID(online))).calendar_campus_id = uuid.UUID(cal_online)
+        (await session.get(Program, uuid.UUID(program["id"]))).calendar_program_id = uuid.UUID(cal_program)
+        await session.commit()
+
+    row = (await client.get(f"{API}/terms/{term_id}/calendar-groups/preview")).json()["groups"][0]
+    assert [p["plan_version_id"] for p in row["plans"]] == [plans[online]]
+    item = {"calendar_group_id": cal_group["id"], "period_number": 4, "code": "B41"}
+    refused = (await client.post(f"{API}/terms/{term_id}/calendar-groups/import", json={
+        "items": [{**item, "plan_version_id": plans[siscom]}]})).json()
+    assert refused["created"] == [] and "INUE Online" in refused["skipped"][0]["reason"]
+    done = (await client.post(f"{API}/terms/{term_id}/calendar-groups/import", json={
+        "items": [{**item, "plan_version_id": plans[online]}]})).json()
+    assert done["created"] == ["B41"]
+    b41 = next(g for g in (await client.get(f"{API}/groups?term_id={term_id}")).json() if g["code"] == "B41")
+    assert b41["campus_id"] == online

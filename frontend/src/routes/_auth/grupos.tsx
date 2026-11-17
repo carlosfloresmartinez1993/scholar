@@ -40,7 +40,7 @@ import type {
   UserPublic,
 } from "@/api/types";
 import { cn } from "@/lib/utils";
-import { useCampus } from "@/lib/campus-context";
+import { ALL_CAMPUSES, useCampus } from "@/lib/campus-context";
 import { EmptyState } from "@/components/empty-state";
 import { GroupAdminButtons, ImportCalendarGroupsButton } from "@/components/group-admin-dialogs";
 import {
@@ -436,7 +436,8 @@ function CreateGroupDialog({
     campus_id: "",
   });
 
-  // the planteles where the chosen plan's RVOE applies; the group opens in one
+  // a group belongs to one plantel: it is chosen first (the header's by default)
+  // and only plans whose RVOE is offered there can be picked
   const { campusId: headerCampusId } = useCampus();
   const { data: planVersions } = useQuery({
     queryKey: queryKeys.planVersions(),
@@ -453,20 +454,20 @@ function CreateGroupDialog({
     queryFn: () => api<Campus[]>("/catalog/campuses"),
     enabled: open,
   });
-  const planRvoe = rvoes?.find(
-    (r) => r.id === planVersions?.find((pv) => pv.id === form.plan_version_id)?.rvoe_id,
-  );
-  const planCampusIds = planRvoe
-    ? planRvoe.campus_ids?.length
-      ? planRvoe.campus_ids
-      : [planRvoe.campus_id]
-    : [];
   const campusChoice =
-    (planCampusIds.includes(form.campus_id) && form.campus_id) ||
-    (headerCampusId && planCampusIds.includes(headerCampusId) ? headerCampusId : "") ||
-    planCampusIds[0] ||
+    form.campus_id ||
+    (headerCampusId !== ALL_CAMPUSES ? headerCampusId : "") ||
+    campuses?.[0]?.id ||
     "";
-  const campusLabel = (id: string) => campuses?.find((c) => c.id === id)?.name ?? "—";
+  const rvoeCampuses = (r: Rvoe) => (r.campus_ids?.length ? r.campus_ids : [r.campus_id]);
+  const plansHere = new Set(
+    (planVersions ?? [])
+      .filter((pv) => {
+        const rvoe = rvoes?.find((r) => r.id === pv.rvoe_id);
+        return pv.is_active && rvoe && rvoeCampuses(rvoe).includes(campusChoice);
+      })
+      .map((pv) => pv.id),
+  );
 
   const save = useMutation({
     mutationFn: () =>
@@ -493,7 +494,7 @@ function CreateGroupDialog({
         period_number: 1,
         plan_version_id: "",
         promotes_from_group_id: NONE,
-        campus_id: "",
+        campus_id: form.campus_id, // keep the plantel for the next group
       });
     },
     onError: (e) =>
@@ -510,13 +511,15 @@ function CreateGroupDialog({
   // valid predecessors only: same plan, the immediately previous period, and a
   // different (earlier) term — mirrors the backend lineage check.
   const sourceOptions = (planGroups ?? []).filter(
-    (g) => g.term_id !== termId && g.period_number === form.period_number - 1,
+    (g) =>
+      g.term_id !== termId &&
+      g.campus_id === campusChoice &&
+      g.period_number === form.period_number - 1,
   );
 
-  const planOptions = [...planVersionLabels.entries()].map(([value, label]) => ({
-    value,
-    label,
-  }));
+  const planOptions = [...planVersionLabels.entries()]
+    .filter(([value]) => plansHere.has(value))
+    .map(([value, label]) => ({ value, label }));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -531,6 +534,35 @@ function CreateGroupDialog({
             save.mutate();
           }}
         >
+          <div className="grid gap-2">
+            <Label>Plantel</Label>
+            <Select
+              value={campusChoice}
+              onValueChange={(v) =>
+                setForm({
+                  ...form,
+                  campus_id: v,
+                  plan_version_id: "", // plans depend on the plantel
+                  promotes_from_group_id: NONE,
+                })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Seleccione un plantel" />
+              </SelectTrigger>
+              <SelectContent>
+                {campuses?.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Cada plantel tiene sus propios grupos: el mismo código puede existir en
+              otro plantel.
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label htmlFor="g-code">Código</Label>
@@ -571,6 +603,13 @@ function CreateGroupDialog({
               options={planOptions}
               placeholder="Seleccione un plan"
             />
+            {campusChoice && planOptions.length === 0 && (
+              <p className="text-xs text-destructive">
+                Este plantel no tiene planes con RVOE. Registra el RVOE de la carrera
+                en este plantel (o márcalo en «También se imparte en») desde Programas
+                académicos.
+              </p>
+            )}
           </div>
           <div className="grid gap-2">
             <Label>Proviene del grupo anterior (opcional)</Label>
@@ -598,41 +637,11 @@ function CreateGroupDialog({
               a este.
             </p>
           </div>
-          {planCampusIds.length > 1 ? (
-            <div className="grid gap-2">
-              <Label>Plantel</Label>
-              <Select
-                value={campusChoice}
-                onValueChange={(v) => setForm({ ...form, campus_id: v })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {planCampusIds.map((id) => (
-                    <SelectItem key={id} value={id}>
-                      {campusLabel(id)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                El RVOE de este plan se imparte en varios planteles. Los alumnos del
-                grupo quedan en el plantel que elijas.
-              </p>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {campusChoice
-                ? `Plantel: ${campusLabel(campusChoice)} (el del RVOE del plan).`
-                : "El plantel se toma del RVOE del plan seleccionado."}
-            </p>
-          )}
           <DialogFooter>
             <Button
               type="submit"
               className="font-bold"
-              disabled={save.isPending || !form.plan_version_id}
+              disabled={save.isPending || !form.plan_version_id || !campusChoice}
             >
               {save.isPending ? "Guardando…" : "Guardar"}
             </Button>
