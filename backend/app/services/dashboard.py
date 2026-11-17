@@ -13,6 +13,7 @@ from app.models import (
     Charge,
     ChargeStatus,
     EducationLevel,
+    Institution,
     GradeActa,
     Group,
     GroupEnrollment,
@@ -33,7 +34,6 @@ from app.models.common import utcnow
 from app.services.academics import internal_group_clause
 from app.services.treasury import charges_paid_map
 
-LEVEL_ORDER = list(EducationLevel)
 
 # Día / Semana / Quincena / Mes — the only selectable dashboard windows.
 VALID_PERIOD_DAYS = {1, 7, 14, 30}
@@ -243,12 +243,24 @@ async def dashboard_stats(
     if open_term:
         prev_term = next((t for t in terms if t.start_date < open_term.start_date), None)
 
+    # every level of the catalog (in its order), plus any a program still uses
+    institution = (await session.exec(select(Institution))).first()
+    codes = [
+        level.code for level in (
+            await session.exec(
+                select(EducationLevel)
+                .where(EducationLevel.institution_id == (institution.id if institution else None))
+                .order_by(EducationLevel.sort_order)
+            )
+        ).all()
+    ]
+
     def _levels_payload(cur: dict, prev: dict) -> dict:
-        return {level: {"current": cur.get(level, 0), "previous": prev.get(level, 0)}
-                for level in [l.value for l in LEVEL_ORDER]}
+        keys = codes + [k for k in {*cur, *prev} if k not in codes]
+        return {level: {"current": cur.get(level, 0), "previous": prev.get(level, 0)} for level in keys}
 
     if open_term is None:
-        empty = {level.value: {"current": 0, "previous": 0} for level in LEVEL_ORDER}
+        empty = {level: {"current": 0, "previous": 0} for level in codes}
         return {
             "term": None, "prev_term": None,
             "students": empty, "groups": empty, "scholars": empty,

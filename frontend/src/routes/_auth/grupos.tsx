@@ -41,6 +41,7 @@ import type {
 } from "@/api/types";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
+import { GroupAdminButtons, ImportCalendarGroupsButton } from "@/components/group-admin-dialogs";
 import {
   ChangeGroupDialog,
   DropSubjectsDialog,
@@ -163,6 +164,7 @@ function GruposPage() {
               ))}
             </SelectContent>
           </Select>
+          <ImportCalendarGroupsButton termId={termId ?? null} />
           <Button variant="outline" onClick={() => setPromoteOpen(true)}>
             <ArrowUpCircle className="size-4" /> Promoción de ciclo
           </Button>
@@ -244,7 +246,9 @@ function GruposPage() {
         </div>
       )}
 
-      {group && <GroupDetail group={group} groups={groups ?? []} />}
+      {group && (
+        <GroupDetail group={group} groups={groups ?? []} onDeleted={() => setGroupId(null)} />
+      )}
 
       {termId && (
         <CreateGroupDialog
@@ -666,7 +670,15 @@ function GroupCalendarLink({ group }: { group: Group }) {
 
 // --- Group detail ------------------------------------------------------------
 
-function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
+function GroupDetail({
+  group,
+  groups,
+  onDeleted,
+}: {
+  group: Group;
+  groups: Group[];
+  onDeleted: () => void;
+}) {
   const queryClient = useQueryClient();
   // the source group is in a previous term, so it isn't in `groups` (current term)
   // — fetch it by id to show its real code.
@@ -802,6 +814,7 @@ function GroupDetail({ group, groups }: { group: Group; groups: Group[] }) {
           Proviene de: <Badge variant="secondary">{promotesFrom}</Badge>
         </div>
       )}
+      <GroupAdminButtons group={group} onDeleted={onDeleted} />
       <GroupCalendarLink group={group} />
 
       <section className="space-y-3">

@@ -3,7 +3,6 @@ import type {
   AttendanceStatus,
   ChargeConceptKind,
   ChargeStatus,
-  EducationLevel,
   EvaluationKind,
   IssuedDocumentKind,
   JustificationStatus,
@@ -21,14 +20,6 @@ import type {
 } from "@/api/types";
 
 // --- Spanish labels for backend enums -------------------------------------
-
-export const LEVEL_LABELS: Record<EducationLevel, string> = {
-  tsu: "TSU",
-  licenciatura: "Licenciatura",
-  especialidad: "Especialidad",
-  maestria: "Maestría",
-  doctorado: "Doctorado",
-};
 
 export const MODALITY_LABELS: Record<Modality, string> = {
   escolarizada: "Escolarizada",

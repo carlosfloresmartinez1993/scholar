@@ -23,6 +23,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -34,6 +41,8 @@ import {
 export const Route = createFileRoute("/_auth/planteles")({
   component: PlantelesPage,
 });
+
+const NO_LINK = "__none__";
 
 const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -153,11 +162,24 @@ function CampusDialog({ campus, onClose }: { campus: Campus | null; onClose: () 
   const [name, setName] = useState(campus?.name ?? "");
   const [address, setAddress] = useState(campus?.address ?? "");
   const [active, setActive] = useState(campus?.is_active ?? true);
+  const [link, setLink] = useState(campus?.calendar_campus_id ?? NO_LINK);
+  // the calendar's campuses, to link this one by hand (hidden without the integration)
+  const { data: calendarCampuses } = useQuery({
+    queryKey: ["calendar-campuses"],
+    queryFn: () => api<{ id: string; name: string }[]>("/catalog/calendar/campuses"),
+    retry: false,
+    enabled: !!campus,
+  });
   const save = useMutation({
     mutationFn: () =>
       api<Campus>(campus ? `/catalog/campuses/${campus.id}` : "/catalog/campuses", {
         method: campus ? "PATCH" : "POST",
-        body: JSON.stringify({ name: name.trim(), address: address.trim(), is_active: active }),
+        body: JSON.stringify({
+          name: name.trim(),
+          address: address.trim(),
+          is_active: active,
+          ...(campus && calendarCampuses ? { calendar_campus_id: link === NO_LINK ? null : link } : {}),
+        }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.campuses });
@@ -203,6 +225,24 @@ function CampusDialog({ campus, onClose }: { campus: Campus | null; onClose: () 
               onChange={(e) => setAddress(e.target.value)}
             />
           </div>
+          {campus && calendarCampuses && (
+            <div className="grid gap-2">
+              <Label htmlFor="campus-link">Vínculo con el calendario</Label>
+              <Select value={link} onValueChange={setLink}>
+                <SelectTrigger id="campus-link" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_LINK}>Sin vincular (solo en Scholar)</SelectItem>
+                  {calendarCampuses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm font-medium">
             <Checkbox checked={active} onCheckedChange={(v) => setActive(v === true)} />
             Plantel activo

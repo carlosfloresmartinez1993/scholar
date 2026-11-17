@@ -11,12 +11,38 @@ export type UserRole =
   | "docente"
   | "alumno";
 
-export type EducationLevel =
-  | "tsu"
-  | "licenciatura"
-  | "especialidad"
-  | "maestria"
-  | "doctorado";
+// code of a level of the editable catalog (Programas → Niveles educativos)
+export type EducationLevel = string;
+
+export interface EducationLevelItem {
+  id: string;
+  code: string;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+// «Importar del calendario» en Grupos
+export interface CalendarGroupsPreview {
+  term_id: string;
+  term_name: string;
+  groups: {
+    calendar_group_id: string;
+    code: string;
+    program: string | null;
+    campus: string | null;
+    suggested_period: number | null;
+    plans: {
+      plan_version_id: string;
+      label: string;
+      periods_count: number;
+      same_campus: boolean;
+      operable: boolean;
+    }[];
+    status: "nuevo" | "importado" | "sin_carrera" | "sin_plan";
+    reason: string | null;
+  }[];
+}
 
 export type Modality = "escolarizada" | "no_escolarizada" | "mixta";
 

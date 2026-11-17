@@ -13,7 +13,20 @@ from fastapi import HTTPException
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models import Campus, EducationLevel, Institution, Program, Rvoe
+from app.api.deps import ensure_in_scope
+from app.models import (
+    Campus,
+    Group,
+    GroupSubject,
+    Institution,
+    PlanSubject,
+    PlanVersion,
+    Program,
+    Rvoe,
+    Term,
+)
+from app.services.academics import require_operable_rvoe
+from app.services.levels import levels_of
 from app.services import audit, calendar
 
 
@@ -87,7 +100,7 @@ async def programs_preview(session: AsyncSession, institution: Institution) -> l
         for c in (await session.exec(select(Campus).where(Campus.institution_id == institution.id))).all()
         if c.calendar_campus_id
     }
-    levels = {level.value for level in EducationLevel}
+    levels = {level.code for level in await levels_of(session, institution.id, active_only=True)}
     rows = []
     for cal in sorted(await calendar.get_programs(), key=lambda p: p["name"]):
         number = (cal.get("rvoe") or "").strip()
@@ -142,7 +155,7 @@ async def import_programs(
         if row["status"] == "nueva":
             program = Program(
                 institution_id=institution.id, code=_code_for(row["name"], taken), name=row["name"],
-                level=EducationLevel(row["level"]), calendar_program_id=uuid.UUID(cal_id),
+                level=row["level"], calendar_program_id=uuid.UUID(cal_id),
             )
             session.add(program)
             result["created"].append(row["name"])
@@ -159,5 +172,149 @@ async def import_programs(
             entity_id=str(institution.id),
             detail=f"creadas: {', '.join(result['created']) or '—'}; vinculadas: {', '.join(result['linked']) or '—'}",
         )
+    await session.flush()
+    return result
+
+
+# --- Grupos ----------------------------------------------------------------------
+
+async def seed_group_subjects(session: AsyncSession, group: Group) -> int:
+    """A group starts with the plan subjects of its cuatrimestre (teacher unassigned)."""
+    subjects = (
+        await session.exec(
+            select(PlanSubject).where(
+                PlanSubject.plan_version_id == group.plan_version_id,
+                PlanSubject.period_number == group.period_number,
+            )
+        )
+    ).all()
+    for subject in subjects:
+        session.add(GroupSubject(group_id=group.id, plan_subject_id=subject.id))
+    await session.flush()
+    return len(subjects)
+
+
+def period_from_code(code: str) -> int | None:
+    """The cuatrimestre a calendar group code suggests: the first digit after its
+    letters (PSI31 -> 3, AD91S -> 9, TCM1 -> 1). The user confirms it."""
+    match = re.match(r"^[A-Za-z]*-?(\d)", code or "")
+    return int(match.group(1)) if match and match.group(1) != "0" else None
+
+
+async def groups_preview(session: AsyncSession, term: Term) -> dict:
+    """Each group the calendar has for this term with the plan and cuatrimestre it
+    would get here, or why it can't come yet."""
+    if term.calendar_term_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Este ciclo no viene del calendario: impórtalo desde Periodos para traer sus grupos",
+        )
+    programs = {
+        str(p.calendar_program_id): p
+        for p in (await session.exec(select(Program).where(Program.calendar_program_id.is_not(None)))).all()  # type: ignore[union-attr]
+    }
+    campuses = {
+        str(c.calendar_campus_id): c
+        for c in (await session.exec(select(Campus).where(Campus.calendar_campus_id.is_not(None)))).all()  # type: ignore[union-attr]
+    }
+    imported = {
+        str(g.calendar_group_id): g
+        for g in (await session.exec(select(Group).where(Group.term_id == term.id))).all()
+        if g.calendar_group_id
+    }
+    plan_rows = (
+        await session.exec(
+            select(PlanVersion, Rvoe, Campus)
+            .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+            .join(Campus, Campus.id == Rvoe.campus_id)
+            .where(PlanVersion.is_active == True)  # noqa: E712
+            .order_by(PlanVersion.created_at.desc())  # type: ignore[attr-defined]
+        )
+    ).all()
+    rows = []
+    for cal in sorted(await calendar.get_groups(term_id=term.calendar_term_id), key=lambda g: g["code"]):
+        program = programs.get(str(cal.get("program_id")))
+        campus = campuses.get(str(cal.get("campus_id")))
+        plans = []
+        if program is not None:
+            plans = [
+                {"plan_version_id": str(plan.id),
+                 "label": f"{rvoe.agreement_number} · Plan {plan.version_label} · {cam.name}",
+                 "periods_count": plan.periods_count,
+                 "same_campus": campus is not None and cam.id == campus.id,
+                 "operable": rvoe.is_operable()}
+                for plan, rvoe, cam in plan_rows if rvoe.program_id == program.id
+            ]
+            plans.sort(key=lambda p: (not p["same_campus"], not p["operable"]))
+        existing = imported.get(str(cal["id"]))
+        if existing is not None:
+            status, reason = "importado", f"Ya está en Scholar como {existing.code}"
+        elif program is None:
+            status, reason = "sin_carrera", "Su carrera no se ha importado del calendario"
+        elif not plans:
+            status, reason = "sin_plan", "Su carrera no tiene RVOE con plan de estudios en Scholar"
+        else:
+            status, reason = "nuevo", None
+        rows.append({
+            "calendar_group_id": cal["id"], "code": cal["code"],
+            "program": program.name if program else None,
+            "campus": campus.name if campus else None,
+            "suggested_period": period_from_code(cal["code"]),
+            "plans": plans, "status": status, "reason": reason,
+        })
+    return {"term_id": str(term.id), "term_name": term.name, "groups": rows}
+
+
+async def import_groups(session: AsyncSession, user, term: Term, items: list[dict], scope) -> dict:
+    """Create each chosen group with the plan and cuatrimestre confirmed by the user;
+    a group already imported or whose code is taken is skipped. Caller commits."""
+    if not items:
+        raise HTTPException(status_code=400, detail="Seleccione al menos un grupo")
+    if term.calendar_term_id is None:
+        raise HTTPException(status_code=409, detail="Este ciclo no viene del calendario")
+    calendar_ids = {str(g["id"]) for g in await calendar.get_groups(term_id=term.calendar_term_id)}
+    result: dict[str, list] = {"created": [], "skipped": []}
+    for item in items:
+        code = item["code"].strip()
+        cal_id = item["calendar_group_id"]
+        if str(cal_id) not in calendar_ids:
+            result["skipped"].append({"code": code, "reason": "No es un grupo de este ciclo en el calendario"})
+            continue
+        if (await session.exec(select(Group.id).where(Group.calendar_group_id == cal_id))).first():
+            result["skipped"].append({"code": code, "reason": "Ya se importó"})
+            continue
+        plan = await session.get(PlanVersion, item["plan_version_id"])
+        if plan is None:
+            result["skipped"].append({"code": code, "reason": "Plan de estudios no encontrado"})
+            continue
+        if item["period_number"] > plan.periods_count:
+            result["skipped"].append({"code": code, "reason": f"El plan tiene {plan.periods_count} periodos"})
+            continue
+        try:
+            rvoe = await require_operable_rvoe(session, plan.id)
+        except HTTPException as error:
+            result["skipped"].append({"code": code, "reason": error.detail})
+            continue
+        ensure_in_scope(scope, rvoe.campus_id)
+        clash = (
+            await session.exec(
+                select(Group.id).where(
+                    Group.term_id == term.id, Group.campus_id == rvoe.campus_id, Group.code == code
+                )
+            )
+        ).first()
+        if clash:
+            result["skipped"].append({"code": code, "reason": "Ya hay un grupo con esa clave en el ciclo y plantel"})
+            continue
+        group = Group(
+            code=code, period_number=item["period_number"], plan_version_id=plan.id, term_id=term.id,
+            campus_id=rvoe.campus_id, calendar_group_id=cal_id,
+        )
+        session.add(group)
+        await session.flush()
+        seeded = await seed_group_subjects(session, group)
+        audit.record(session, actor=user.email, action="group.imported_from_calendar",
+                     entity="group", entity_id=str(group.id), detail=f"{group.code} · {seeded} materias")
+        result["created"].append(code)
     await session.flush()
     return result

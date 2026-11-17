@@ -5,7 +5,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import func, select
 
 from app.api.deps import (
     AcademicStaff,
@@ -21,6 +21,12 @@ from app.models import (
     CampusPublic,
     CampusUpdate,
     CalendarProgramsImport,
+    CalendarGroupsImport,
+    EducationLevel,
+    EducationLevelCreate,
+    EducationLevelPublic,
+    EducationLevelUpdate,
+    PlanVersionUpdate,
     EvaluationComponent,
     EvaluationComponentCreate,
     EvaluationComponentPublic,
@@ -58,7 +64,15 @@ from app.models import (
     TermUpdate,
 )
 from app.services import audit, calendar
-from app.services.calendar_sync import import_programs, programs_preview, sync_campuses
+from app.services.calendar_sync import (
+    groups_preview,
+    import_groups,
+    import_programs,
+    programs_preview,
+    seed_group_subjects,
+    sync_campuses,
+)
+from app.services.levels import levels_of, require_level
 from app.services.academics import internal_group_clause, require_operable_rvoe
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -145,6 +159,82 @@ async def update_campus(
     return campus
 
 
+# --- Niveles educativos -----------------------------------------------------------
+
+@router.get("/education-levels")
+async def list_education_levels(
+    session: SessionDep, _: AnyStaff, include_inactive: bool = False
+) -> list[EducationLevelPublic]:
+    institution = await get_default_institution(session)
+    return await levels_of(session, institution.id, active_only=not include_inactive)
+
+
+@router.post("/education-levels", status_code=201)
+async def create_education_level(
+    session: SessionDep, current_user: ServiciosEscolares, body: EducationLevelCreate
+) -> EducationLevelPublic:
+    institution = await get_default_institution(session)
+    code = body.code.strip().lower().replace(" ", "_")
+    exists = (
+        await session.exec(
+            select(EducationLevel).where(
+                EducationLevel.institution_id == institution.id, EducationLevel.code == code
+            )
+        )
+    ).first()
+    if exists:
+        raise HTTPException(status_code=409, detail="Ya existe un nivel con esa clave")
+    level = EducationLevel(institution_id=institution.id, code=code, name=body.name.strip(),
+                           sort_order=body.sort_order)
+    session.add(level)
+    audit.record(session, actor=current_user.email, action="education_level.created",
+                 entity="education_level", entity_id=str(level.id), detail=level.name)
+    await session.commit()
+    await session.refresh(level)
+    return level
+
+
+@router.patch("/education-levels/{level_id}")
+async def update_education_level(
+    session: SessionDep, current_user: ServiciosEscolares, level_id: uuid.UUID,
+    body: EducationLevelUpdate,
+) -> EducationLevelPublic:
+    level = await session.get(EducationLevel, level_id)
+    if level is None:
+        raise HTTPException(status_code=404, detail="Nivel no encontrado")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        if v is not None:
+            setattr(level, k, v.strip() if isinstance(v, str) else v)
+    session.add(level)
+    audit.record(session, actor=current_user.email, action="education_level.updated",
+                 entity="education_level", entity_id=str(level.id), detail=level.name)
+    await session.commit()
+    await session.refresh(level)
+    return level
+
+
+@router.delete("/education-levels/{level_id}", status_code=204)
+async def delete_education_level(
+    session: SessionDep, current_user: ServiciosEscolares, level_id: uuid.UUID
+) -> None:
+    level = await session.get(EducationLevel, level_id)
+    if level is None:
+        raise HTTPException(status_code=404, detail="Nivel no encontrado")
+    used = (
+        await session.exec(
+            select(Program.id).where(
+                Program.institution_id == level.institution_id, Program.level == level.code
+            )
+        )
+    ).first()
+    if used:
+        raise HTTPException(status_code=409, detail="Hay carreras con ese nivel: desactívalo en lugar de borrarlo")
+    await session.delete(level)
+    audit.record(session, actor=current_user.email, action="education_level.deleted",
+                 entity="education_level", entity_id=str(level_id), detail=level.name)
+    await session.commit()
+
+
 # --- Programs ------------------------------------------------------------------
 
 @router.get("/programs")
@@ -168,7 +258,13 @@ async def create_program(
     session: SessionDep, current_user: ServiciosEscolares, body: ProgramCreate
 ) -> ProgramPublic:
     institution = await get_default_institution(session)
-    program = Program(**body.model_dump(), institution_id=institution.id)
+    await require_level(session, institution.id, body.level)
+    code = body.code.strip()
+    if (await session.exec(
+        select(Program.id).where(Program.institution_id == institution.id, Program.code == code)
+    )).first():
+        raise HTTPException(status_code=409, detail="Ya existe una carrera con esa clave")
+    program = Program(**body.model_dump(exclude={"code"}), code=code, institution_id=institution.id)
     session.add(program)
     audit.record(session, actor=current_user.email, action="program.created",
                  entity="program", entity_id=str(program.id), detail=program.name)
@@ -187,7 +283,26 @@ async def update_program(
     program = await session.get(Program, program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="Programa no encontrado")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("level") is not None and changes["level"] != program.level:
+        await require_level(session, program.institution_id, changes["level"])
+    if changes.get("code") is not None:
+        changes["code"] = changes["code"].strip()
+        clash = (
+            await session.exec(
+                select(Program.id).where(
+                    Program.institution_id == program.institution_id,
+                    Program.code == changes["code"], Program.id != program.id,
+                )
+            )
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="Ya existe una carrera con esa clave")
+    if changes.get("name") is not None:
+        changes["name"] = changes["name"].strip()
+    for k, v in changes.items():
+        if v is None and k != "calendar_program_id":
+            continue  # only the calendar link can be cleared
         setattr(program, k, v)
     session.add(program)
     audit.record(session, actor=current_user.email, action="program.updated",
@@ -364,6 +479,48 @@ async def _subject_public(session: SessionDep, subject: PlanSubject) -> PlanSubj
         )
     ).all()
     return PlanSubjectPublic(**subject.model_dump(), prerequisite_ids=list(prereqs))
+
+
+@router.patch("/plan-versions/{plan_version_id}")
+async def update_plan_version(
+    session: SessionDep, current_user: ServiciosEscolares, plan_version_id: uuid.UUID,
+    body: PlanVersionUpdate,
+) -> PlanVersionPublic:
+    plan = await session.get(PlanVersion, plan_version_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan de estudios no encontrado")
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "periods_count" in changes:
+        top = (
+            await session.exec(
+                select(func.max(PlanSubject.period_number)).where(PlanSubject.plan_version_id == plan.id)
+            )
+        ).one()
+        if top and changes["periods_count"] < top:
+            raise HTTPException(
+                status_code=409, detail=f"El plan tiene materias hasta el periodo {top}"
+            )
+    if "version_label" in changes:
+        changes["version_label"] = changes["version_label"].strip()
+        clash = (
+            await session.exec(
+                select(PlanVersion.id).where(
+                    PlanVersion.rvoe_id == plan.rvoe_id,
+                    PlanVersion.version_label == changes["version_label"],
+                    PlanVersion.id != plan.id,
+                )
+            )
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="Ese RVOE ya tiene un plan con esa etiqueta")
+    for k, v in changes.items():
+        setattr(plan, k, v)
+    session.add(plan)
+    audit.record(session, actor=current_user.email, action="plan_version.updated",
+                 entity="plan_version", entity_id=str(plan.id))
+    await session.commit()
+    await session.refresh(plan)
+    return plan
 
 
 @router.get("/plan-versions/{plan_version_id}/subjects")
@@ -741,21 +898,10 @@ async def create_group(
     group = Group(**body.model_dump(), campus_id=rvoe.campus_id)
     session.add(group)
     await session.flush()
-    # seed the group with the plan subjects of its period (teacher unassigned);
-    # saves adding each materia by hand — remove any that don't apply.
-    period_subjects = (
-        await session.exec(
-            select(PlanSubject).where(
-                PlanSubject.plan_version_id == group.plan_version_id,
-                PlanSubject.period_number == group.period_number,
-            )
-        )
-    ).all()
-    for ps in period_subjects:
-        session.add(GroupSubject(group_id=group.id, plan_subject_id=ps.id))
+    seeded = await seed_group_subjects(session, group)
     audit.record(session, actor=current_user.email, action="group.created",
                  entity="group", entity_id=str(group.id),
-                 detail=f"{group.code} · {len(period_subjects)} materias")
+                 detail=f"{group.code} · {seeded} materias")
     await session.commit()
     await session.refresh(group)
     return group
@@ -769,20 +915,115 @@ async def update_group(
     if group is None:
         raise HTTPException(status_code=404, detail="Grupo no encontrado")
     changes = body.model_dump(exclude_unset=True)
+    for key in ("code", "period_number", "is_active"):
+        if key in changes and changes[key] is None:
+            del changes[key]
+    if "code" in changes:
+        changes["code"] = changes["code"].strip()
+        clash = (
+            await session.exec(
+                select(Group.id).where(
+                    Group.term_id == group.term_id, Group.campus_id == group.campus_id,
+                    Group.code == changes["code"], Group.id != group.id,
+                )
+            )
+        ).first()
+        if clash:
+            raise HTTPException(status_code=409, detail="Ya hay un grupo con esa clave en el ciclo y plantel")
+    reseed = False
+    if "period_number" in changes and changes["period_number"] != group.period_number:
+        if await _group_in_use(session, group):
+            raise HTTPException(
+                status_code=409,
+                detail="El grupo ya tiene alumnos o clases: su cuatrimestre no se puede cambiar",
+            )
+        plan = await session.get(PlanVersion, group.plan_version_id)
+        if plan and changes["period_number"] > plan.periods_count:
+            raise HTTPException(status_code=422, detail=f"El plan tiene {plan.periods_count} periodos")
+        reseed = True
     if changes.get("promotes_from_group_id") is not None:
         await _validate_promotion_source(
             session, changes["promotes_from_group_id"],
             plan_version_id=group.plan_version_id, campus_id=group.campus_id,
-            period_number=group.period_number,
+            period_number=changes.get("period_number", group.period_number),
         )
     for k, v in changes.items():
         setattr(group, k, v)
     session.add(group)
+    if reseed:  # the materias of the new cuatrimestre
+        for gs in (await session.exec(select(GroupSubject).where(GroupSubject.group_id == group.id))).all():
+            await session.delete(gs)
+        await session.flush()
+        await seed_group_subjects(session, group)
     audit.record(session, actor=current_user.email, action="group.updated",
                  entity="group", entity_id=str(group_id))
     await session.commit()
     await session.refresh(group)
     return group
+
+
+async def _group_in_use(session: SessionDep, group: Group) -> bool:
+    """Students enrolled (in any status), class sessions or actas."""
+    from app.models import ClassSession, GradeActa, GroupEnrollment
+
+    if (await session.exec(select(GroupEnrollment.id).where(GroupEnrollment.group_id == group.id))).first():
+        return True
+    subjects = select(GroupSubject.id).where(GroupSubject.group_id == group.id)
+    if (await session.exec(select(ClassSession.id).where(ClassSession.group_subject_id.in_(subjects)))).first():  # type: ignore[attr-defined]
+        return True
+    return (await session.exec(select(GradeActa.id).where(GradeActa.group_subject_id.in_(subjects)))).first() is not None  # type: ignore[attr-defined]
+
+
+@router.delete("/groups/{group_id}", status_code=204)
+async def delete_group(
+    session: SessionDep, current_user: AcademicStaff, scope: CampusScope, group_id: uuid.UUID
+) -> None:
+    """Borrar un grupo creado por error. Con alumnos, clases o actas no se puede:
+    se desactiva."""
+    group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    ensure_in_scope(scope, group.campus_id)
+    if await _group_in_use(session, group):
+        raise HTTPException(
+            status_code=409, detail="El grupo tiene alumnos, clases o actas: desactívalo en lugar de borrarlo"
+        )
+    for later in (await session.exec(select(Group).where(Group.promotes_from_group_id == group.id))).all():
+        later.promotes_from_group_id = None
+        session.add(later)
+    for gs in (await session.exec(select(GroupSubject).where(GroupSubject.group_id == group.id))).all():
+        await session.delete(gs)
+    await session.flush()
+    await session.delete(group)
+    audit.record(session, actor=current_user.email, action="group.deleted",
+                 entity="group", entity_id=str(group_id), detail=group.code)
+    await session.commit()
+
+
+@router.get("/terms/{term_id}/calendar-groups/preview")
+async def calendar_groups_preview(
+    session: SessionDep, _: AcademicStaff, term_id: uuid.UUID
+) -> dict:
+    """The calendar's groups of this term and what importing each would do."""
+    term = await session.get(Term, term_id)
+    if term is None:
+        raise HTTPException(status_code=404, detail="Ciclo no encontrado")
+    return await groups_preview(session, term)
+
+
+@router.post("/terms/{term_id}/calendar-groups/import")
+async def import_calendar_groups(
+    session: SessionDep, current_user: AcademicStaff, scope: CampusScope, term_id: uuid.UUID,
+    body: CalendarGroupsImport,
+) -> dict:
+    """Create the chosen calendar groups in this term (plan and cuatrimestre as
+    confirmed in the preview); each stays editable and deletable here."""
+    term = await session.get(Term, term_id)
+    if term is None:
+        raise HTTPException(status_code=404, detail="Ciclo no encontrado")
+    result = await import_groups(session, current_user, term, [i.model_dump() for i in body.items], scope)
+    await session.commit()
+    return result
 
 
 @router.get("/groups/{group_id}/students")

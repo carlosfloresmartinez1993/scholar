@@ -11,7 +11,8 @@ import type {
   Program,
   Term,
 } from "@/api/types";
-import { formatDate, LEVEL_LABELS } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import { useLevelLabel } from "@/lib/levels";
 import { ALL_CAMPUSES, useCampus } from "@/lib/campus-context";
 import { StudentAvatar } from "@/components/student-avatar";
 import { EmptyState } from "@/components/empty-state";
@@ -43,6 +44,7 @@ export const Route = createFileRoute("/_auth/egresados")({
 const ALL = "all";
 
 function EgresadosPage() {
+  const levelLabel = useLevelLabel();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
@@ -245,7 +247,7 @@ function EgresadosPage() {
                         {r.program_name}
                         {r.level && (
                           <span className="block text-xs">
-                            {LEVEL_LABELS[r.level]}
+                            {levelLabel(r.level)}
                             {r.plan_version_label && ` · Plan ${r.plan_version_label}`}
                             {r.rvoe && ` · RVOE ${r.rvoe}`}
                           </span>

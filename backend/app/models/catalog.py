@@ -19,12 +19,50 @@ class Modality(str, Enum):
     mixta = "mixta"
 
 
-class EducationLevel(str, Enum):
-    tsu = "tsu"
-    licenciatura = "licenciatura"
-    especialidad = "especialidad"
-    maestria = "maestria"
-    doctorado = "doctorado"
+# Niveles educativos: an editable catalog (each school offers its own). These
+# are the ones a new institution starts with; a program stores the level's code.
+DEFAULT_EDUCATION_LEVELS = [
+    ("preescolar", "Preescolar", 10),
+    ("primaria", "Primaria", 20),
+    ("secundaria", "Secundaria", 30),
+    ("bachillerato", "Bachillerato", 40),
+    ("tsu", "TSU", 50),
+    ("licenciatura", "Licenciatura", 60),
+    ("especialidad", "Especialidad", 70),
+    ("maestria", "Maestría", 80),
+    ("doctorado", "Doctorado", 90),
+]
+
+
+class EducationLevelBase(SQLModel):
+    name: str = Field(min_length=1, max_length=64)
+    sort_order: int = Field(default=0, ge=0, le=10000)
+    is_active: bool = True
+
+
+class EducationLevel(EducationLevelBase, table=True):
+    __tablename__ = "education_levels"
+    __table_args__ = (UniqueConstraint("institution_id", "code", name="uq_education_level_code"),)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    institution_id: uuid.UUID = Field(foreign_key="institutions.id", index=True)
+    code: str = Field(max_length=32)  # what programs store; fixed once created
+
+
+class EducationLevelCreate(SQLModel):
+    code: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=64)
+    sort_order: int = Field(default=0, ge=0, le=10000)
+
+
+class EducationLevelUpdate(SQLModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    sort_order: int | None = Field(default=None, ge=0, le=10000)
+    is_active: bool | None = None
+
+
+class EducationLevelPublic(EducationLevelBase):
+    id: uuid.UUID
+    code: str
 
 
 class RvoeAuthority(str, Enum):
@@ -128,7 +166,7 @@ class CampusPublic(CampusBase):
 class ProgramBase(SQLModel):
     code: str = Field(max_length=32)
     name: str = Field(max_length=255)
-    level: EducationLevel
+    level: str = Field(max_length=32)  # code of an EducationLevel
 
 
 class Program(ProgramBase, table=True):
@@ -147,6 +185,10 @@ class ProgramCreate(ProgramBase):
 
 
 class ProgramUpdate(SQLModel):
+    code: str | None = Field(default=None, min_length=1, max_length=32)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    level: str | None = Field(default=None, min_length=1, max_length=32)
+    is_active: bool | None = None
     calendar_program_id: uuid.UUID | None = None
 
 
@@ -222,6 +264,14 @@ class PlanVersion(PlanVersionBase, table=True):
 
 class PlanVersionCreate(PlanVersionBase):
     rvoe_id: uuid.UUID
+
+
+class PlanVersionUpdate(SQLModel):
+    version_label: str | None = Field(default=None, min_length=1, max_length=32)
+    period_type: PeriodType | None = None
+    periods_count: int | None = Field(default=None, ge=1, le=20)
+    min_attendance_pct: float | None = Field(default=None, ge=0, le=100)
+    is_active: bool | None = None
 
 
 class PlanVersionPublic(PlanVersionBase):
@@ -359,8 +409,23 @@ class GroupCreate(GroupBase):
 
 
 class GroupUpdate(SQLModel):
+    code: str | None = Field(default=None, min_length=1, max_length=32)
+    period_number: int | None = Field(default=None, ge=1, le=20)
+    is_active: bool | None = None
     calendar_group_id: uuid.UUID | None = None
     promotes_from_group_id: uuid.UUID | None = None
+
+
+class CalendarGroupImportItem(SQLModel):
+    calendar_group_id: uuid.UUID
+    plan_version_id: uuid.UUID
+    period_number: int = Field(ge=1, le=20)
+    code: str = Field(min_length=1, max_length=32)
+
+
+class CalendarGroupsImport(SQLModel):
+    """Grupos del calendario a crear en un ciclo de scholar."""
+    items: list[CalendarGroupImportItem]
 
 
 class GroupPublic(GroupBase):

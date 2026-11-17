@@ -48,7 +48,6 @@ from app.models import (
     ChargeStatus,
     DegreeKind,
     DegreeRecord,
-    EducationLevel,
     Group,
     GroupEnrollment,
     GroupEnrollmentKind,
@@ -184,13 +183,13 @@ class DemoBuilder:
             institution_id=self.institution.id,
             code=f"{CODE_PREFIX}LIC",
             name="DEMO Licenciatura en Administración",
-            level=EducationLevel.licenciatura,
+            level="licenciatura",
         )
         master = Program(
             institution_id=self.institution.id,
             code=f"{CODE_PREFIX}MAE",
             name="DEMO Maestría en Educación",
-            level=EducationLevel.maestria,
+            level="maestria",
         )
         self.session.add(program)
         self.session.add(master)

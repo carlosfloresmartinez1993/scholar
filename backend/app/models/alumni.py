@@ -11,7 +11,6 @@ from datetime import date
 
 from sqlmodel import SQLModel
 
-from app.models.catalog import EducationLevel
 from app.models.grades import DegreeKind
 from app.models.student import PlanEnrollmentStatus, StudentStatus
 
@@ -41,7 +40,7 @@ class AlumniRow(SQLModel):
     plan_enrollment_status: PlanEnrollmentStatus | None = None
     program_id: uuid.UUID | None = None
     program_name: str | None = None
-    level: EducationLevel | None = None
+    level: str | None = None
     plan_version_label: str | None = None
     rvoe: str | None = None
     # Derived: the last term the student held a group enrollment in. Null when
@@ -64,7 +63,7 @@ class AlumniTermBucket(SQLModel):
 class AlumniProgramBucket(SQLModel):
     program_id: uuid.UUID | None = None
     program_name: str  # "Sin plan" for egresados with no plan enrollment
-    level: EducationLevel | None = None
+    level: str | None = None
     egresados: int
     titulados: int
 

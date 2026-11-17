@@ -9,13 +9,12 @@ from enum import Enum
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.models.common import utcnow
-from app.models.catalog import EducationLevel
 from app.models.student import AdmissionType
 
 
 class RequirementBase(SQLModel):
     name: str = Field(max_length=255)  # e.g. "Acta de nacimiento"
-    level: EducationLevel | None = None  # None = all levels
+    level: str | None = Field(default=None, max_length=32)  # level code; None = all levels
     admission_type: AdmissionType | None = None  # None = all admission types
     required: bool = True
 

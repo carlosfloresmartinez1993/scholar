@@ -60,7 +60,7 @@ async def test_import_programs_from_calendar(client, seed, monkeypatch):
     await login(client)
     derecho = program("DERECHO", "RVOE-BC-011-M3/13")
     conta = program("CONTADURÍA", None)
-    bach = program("Bachillerato ONLINE", "RVOE-MS-003", CAMPUS_B, "bachillerato")
+    bach = program("Diplomado ONLINE", "RVOE-MS-003", CAMPUS_B, "diplomado")
     fake(monkeypatch, [CAMPUS_A, CAMPUS_B], [derecho, conta, bach])
 
     # a program captured by hand with the same name is linked, not duplicated
@@ -78,8 +78,8 @@ async def test_import_programs_from_calendar(client, seed, monkeypatch):
     assert preview["DERECHO"]["rvoe"] == "RVOE-BC-011-M3/13" and preview["DERECHO"]["has_rvoe"] is False
     assert preview["CONTADURÍA"]["status"] == "vincular"
     assert preview["CONTADURÍA"]["rvoe"] is None
-    assert preview["Bachillerato ONLINE"]["status"] == "no_importable"
-    assert "bachillerato" in preview["Bachillerato ONLINE"]["problems"][0]
+    assert preview["Diplomado ONLINE"]["status"] == "no_importable"
+    assert "diplomado" in preview["Diplomado ONLINE"]["problems"][0]
 
     result = await client.post(f"{API}/programs/import-calendar", json={
         "calendar_program_ids": [derecho["id"], conta["id"], bach["id"]]})
@@ -87,14 +87,14 @@ async def test_import_programs_from_calendar(client, seed, monkeypatch):
     body = result.json()
     assert body["created"] == ["DERECHO"]
     assert body["linked"] == ["CONTADURÍA"]
-    assert [s["name"] for s in body["skipped"]] == ["Bachillerato ONLINE"]
+    assert [s["name"] for s in body["skipped"]] == ["Diplomado ONLINE"]
 
     programs = {p["name"]: p for p in (await client.get(f"{API}/programs")).json()}
     assert programs["DERECHO"]["calendar_program_id"] == derecho["id"]
     assert programs["DERECHO"]["code"] == "DERECHO"
     assert programs["Contaduría"]["id"] == own["id"]  # the local name is kept
     assert programs["Contaduría"]["calendar_program_id"] == conta["id"]
-    assert "Bachillerato ONLINE" not in programs
+    assert "Diplomado ONLINE" not in programs
     # the RVOE is not invented: its date and authority are captured in scholar
     assert (await client.get(f"{API}/rvoes")).json() == []
 

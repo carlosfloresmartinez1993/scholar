@@ -5,6 +5,8 @@ export const queryKeys = {
 
   institution: ["institution"] as const,
   campuses: ["campuses"] as const,
+  educationLevels: (includeInactive = false) =>
+    ["education-levels", includeInactive ? "all" : "active"] as const,
   programs: ["programs"] as const,
   rvoes: (programId?: string) => ["rvoes", programId ?? "all"] as const,
   planVersions: (rvoeId?: string) =>

@@ -38,14 +38,6 @@ export const Route = createFileRoute("/_auth/")({
   component: InicioPage,
 });
 
-const LEVEL_ORDER: EducationLevel[] = [
-  "tsu",
-  "licenciatura",
-  "especialidad",
-  "maestria",
-  "doctorado",
-];
-
 const PERIODS = [
   { days: 1, label: "Día" },
   { days: 7, label: "Semana" },
@@ -79,10 +71,11 @@ function InicioPage() {
     queryFn: () => api<AuditEntry[]>(`/dashboard/activity?days=${days}&limit=10`),
   });
 
+  // every level of the catalog (the backend sends them all)
   const sumCurrent = (m?: Record<EducationLevel, MetricDelta>) =>
-    m ? LEVEL_ORDER.reduce((s, l) => s + (m[l]?.current ?? 0), 0) : 0;
+    m ? Object.values(m).reduce((s, d) => s + (d?.current ?? 0), 0) : 0;
   const sumPrevious = (m?: Record<EducationLevel, MetricDelta>) =>
-    m ? LEVEL_ORDER.reduce((s, l) => s + (m[l]?.previous ?? 0), 0) : 0;
+    m ? Object.values(m).reduce((s, d) => s + (d?.previous ?? 0), 0) : 0;
 
   return (
     <div className="space-y-6">

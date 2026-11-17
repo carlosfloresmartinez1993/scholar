@@ -27,7 +27,6 @@ import type {
 import {
   EVALUATION_KIND_LABELS,
   formatDate,
-  LEVEL_LABELS,
   MODALITY_LABELS,
   PERIOD_TYPE_LABELS,
   RVOE_STATUS_LABELS,
@@ -35,6 +34,12 @@ import {
 import { cn } from "@/lib/utils";
 import { REPLACES_FINAL, weighsInFinal } from "@/lib/evaluation";
 import { CalendarProgramsImportButton } from "@/components/calendar-programs-import";
+import {
+  EditPlanButton,
+  EditProgramButton,
+  EducationLevelsButton,
+} from "@/components/catalog-dialogs";
+import { useEducationLevels, useLevelLabel } from "@/lib/levels";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -90,6 +95,7 @@ function ProgramasPage() {
   const [planVersionId, setPlanVersionId] = useState<string | null>(null);
   const [wizardStep, setWizardStep] = useState<null | "rvoe" | "plan">(null);
 
+  const levelLabel = useLevelLabel();
   const { data: programs, isLoading } = useQuery({
     queryKey: queryKeys.programs,
     queryFn: () => api<Program[]>("/catalog/programs"),
@@ -101,7 +107,8 @@ function ProgramasPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl">Programas académicos</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <EducationLevelsButton />
           <CalendarProgramsImportButton />
           <ProgramDialogButton
             onCreated={(p) => {
@@ -122,13 +129,14 @@ function ProgramasPage() {
               <TableHead>Nombre</TableHead>
               <TableHead>Nivel</TableHead>
               <TableHead>Estado</TableHead>
+              <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading &&
               [1, 2, 3].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={5}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
@@ -151,19 +159,22 @@ function ProgramasPage() {
                 </TableCell>
                 <TableCell className="font-semibold">{p.name}</TableCell>
                 <TableCell className="text-muted-foreground">
-                  {LEVEL_LABELS[p.level]}
+                  {levelLabel(p.level)}
                 </TableCell>
                 <TableCell>
                   <Badge variant={p.is_active ? "outline" : "destructive"}>
                     {p.is_active ? "Activo" : "Inactivo"}
                   </Badge>
                 </TableCell>
+                <TableCell className="text-right">
+                  <EditProgramButton program={p} />
+                </TableCell>
               </TableRow>
             ))}
             {programs && programs.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={4}
+                  colSpan={5}
                   className="py-10 text-center text-muted-foreground"
                 >
                   <div className="flex flex-col items-center gap-3">
@@ -304,6 +315,7 @@ function ProgramDialogButton({
     name: "",
     level: "licenciatura" as EducationLevel,
   });
+  const { data: levels } = useEducationLevels();
 
   const save = useMutation({
     mutationFn: () =>
@@ -376,9 +388,9 @@ function ProgramDialogButton({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(Object.keys(LEVEL_LABELS) as EducationLevel[]).map((l) => (
-                    <SelectItem key={l} value={l}>
-                      {LEVEL_LABELS[l]}
+                  {levels?.map((l) => (
+                    <SelectItem key={l.code} value={l.code}>
+                      {l.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -887,12 +899,13 @@ function PlanVersionSection({
               <TableHead>Periodos</TableHead>
               <TableHead>Asistencia mínima</TableHead>
               <TableHead>Estado</TableHead>
+              <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={5}>
+                <TableCell colSpan={6}>
                   <Skeleton className="h-6 w-full" />
                 </TableCell>
               </TableRow>
@@ -917,12 +930,15 @@ function PlanVersionSection({
                     {p.is_active ? "Activa" : "Inactiva"}
                   </Badge>
                 </TableCell>
+                <TableCell className="text-right">
+                  <EditPlanButton plan={p} />
+                </TableCell>
               </TableRow>
             ))}
             {plans && plans.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="py-8 text-center text-muted-foreground"
                 >
                   Este RVOE aún no tiene versiones de plan
