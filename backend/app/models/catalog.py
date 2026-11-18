@@ -137,6 +137,10 @@ class Campus(CampusBase, table=True):
     # id of the matching campus in the calendar system (no FK: other database)
     calendar_campus_id: uuid.UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
+    # logo printed on the kárdex of this campus' students (file in UPLOADS_DIR)
+    logo_path: str | None = Field(default=None, max_length=1024)
+    logo_content_type: str | None = Field(default=None, max_length=64)
+    logo_updated_at: datetime | None = None
 
 
 class CampusCreate(CampusBase):
@@ -159,6 +163,7 @@ class CampusPublic(CampusBase):
     id: uuid.UUID
     institution_id: uuid.UUID
     calendar_campus_id: uuid.UUID | None = None
+    logo_updated_at: datetime | None = None  # set when it has a logo
 
 
 # --- Program / RVOE (RT-01, RT-02, RT-03) ------------------------------------

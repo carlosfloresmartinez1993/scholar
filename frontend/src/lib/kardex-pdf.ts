@@ -20,15 +20,24 @@ export async function downloadKardexPdf(d: KardexPrintData) {
   const margin = 14;
   const institution = d.institutionName || "INUE";
 
+  // the student's plantel logo on top (16 mm tall, at most 70 mm wide)
+  let top = 0;
+  if (d.logo) {
+    const height = Math.min(16, (70 * d.logo.height) / d.logo.width);
+    const width = (height * d.logo.width) / d.logo.height;
+    doc.addImage(d.logo.dataUrl, d.logo.format, margin, 8, width, height);
+    top = height + 2;
+  }
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
-  doc.text(institution, margin, 18);
+  doc.text(institution, margin, 18 + top);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text("Kárdex — historial académico", margin, 23);
-  doc.text(`Alumno: ${d.studentName}`, margin, 30);
-  doc.text(`Matrícula: ${d.enrollmentNumber}`, 120, 30);
-  doc.text(doc.splitTextToSize(`Plan vigente: ${d.planLabel}`, 188), margin, 35);
+  doc.text("Kárdex — historial académico", margin, 23 + top);
+  doc.text(`Alumno: ${d.studentName}`, margin, 30 + top);
+  doc.text(`Matrícula: ${d.enrollmentNumber}`, 120, 30 + top);
+  doc.text(doc.splitTextToSize(`Plan vigente: ${d.planLabel}`, 188), margin, 35 + top);
 
   const withE2 = showE2(d.kardex);
   const withOrigin = showOrigin(d.kardex);
@@ -48,7 +57,7 @@ export async function downloadKardexPdf(d: KardexPrintData) {
   ]);
 
   autoTable(doc, {
-    startY: 41,
+    startY: 41 + top,
     margin: { left: margin, right: margin },
     head: [headers],
     body: body.length ? body : [[{ content: "Sin historial académico", colSpan: n }]],

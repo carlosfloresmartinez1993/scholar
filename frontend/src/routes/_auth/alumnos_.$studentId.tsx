@@ -51,6 +51,7 @@ import type {
 } from "@/api/types";
 import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
+import { fetchCampusLogo } from "@/lib/campus-logo";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import { RvoeChangeDialog } from "@/components/rvoe-change-dialog";
 import { CorrectRowDialog, RevertRvoeDialog } from "@/components/record-correction-dialogs";
@@ -1224,7 +1225,8 @@ function AcademicoTab({
     placeholderData: (previous) => previous,
   });
   const currentPlanId = kardex?.current_plan_version_id ?? null;
-  const kardexPrintData = () =>
+  // the logo is the one of the student's plantel (the plantel of their group)
+  const kardexPrintData = async () =>
     kardex && currentPlanId
       ? {
           institutionName: institution?.name ?? "INUE",
@@ -1232,6 +1234,7 @@ function AcademicoTab({
           enrollmentNumber: student.enrollment_number,
           planLabel: planVersionLabels.get(currentPlanId) ?? currentPlanId,
           kardex,
+          logo: await fetchCampusLogo(student.campus_id),
         }
       : null;
 
@@ -1351,8 +1354,8 @@ function AcademicoTab({
               <Button
                 variant="outline"
                 disabled={!kardex}
-                onClick={() => {
-                  const data = kardexPrintData();
+                onClick={async () => {
+                  const data = await kardexPrintData();
                   if (data) printKardex(data);
                 }}
               >
@@ -1362,7 +1365,7 @@ function AcademicoTab({
                 variant="outline"
                 disabled={!kardex}
                 onClick={async () => {
-                  const data = kardexPrintData();
+                  const data = await kardexPrintData();
                   if (!data) return;
                   try {
                     await downloadKardexPdf(data);

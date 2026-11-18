@@ -11,6 +11,7 @@ import {
   showOrigin,
 } from "@/lib/kardex";
 import type { StudentKardex } from "@/api/types";
+import type { CampusLogo } from "@/lib/campus-logo";
 
 export interface KardexPrintData {
   institutionName: string;
@@ -18,6 +19,7 @@ export interface KardexPrintData {
   enrollmentNumber: string;
   planLabel: string;
   kardex: StudentKardex;
+  logo?: CampusLogo | null; // the student's plantel logo; INUE's when it has none
 }
 
 const esc = (s: string) =>
@@ -78,7 +80,7 @@ function body(d: KardexPrintData): string {
     )
     .join("");
   return `
-    <img class="logo" src="/logo-inue.svg" alt="${esc(d.institutionName || "INUE")}">
+    <img class="logo" src="${d.logo ? d.logo.dataUrl : "/logo-inue.svg"}" alt="${esc(d.institutionName || "INUE")}">
     <h1>${esc(d.institutionName || "INUE")}</h1>
     <div class="sub">Kárdex — historial académico</div>
     <div class="meta">

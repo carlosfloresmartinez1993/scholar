@@ -3,7 +3,10 @@ subjects (+seriación, evaluation schemes), terms and groups."""
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, HTTPException
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, or_, select
 
@@ -63,7 +66,9 @@ from app.models import (
     TermPublic,
     TermUpdate,
 )
+from app.models.common import utcnow
 from app.services import audit, calendar
+from app.services.files import save_upload
 from app.services.calendar_sync import (
     groups_preview,
     import_groups,
@@ -132,6 +137,68 @@ async def create_campus(
                  entity="campus", entity_id=str(campus.id), detail=campus.name)
     await session.commit()
     await session.refresh(campus)
+    return campus
+
+
+LOGO_TYPES = {"image/png", "image/jpeg"}  # what the kárdex PDF can embed
+LOGO_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _remove_file(path: str | None) -> None:
+    if path:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass  # a leftover file is harmless
+
+
+@router.post("/campuses/{campus_id}/logo")
+async def upload_campus_logo(
+    session: SessionDep, current_user: ServiciosEscolares, campus_id: uuid.UUID, file: UploadFile
+) -> CampusPublic:
+    """The logo that goes on top of the kárdex of this campus' students."""
+    campus = await session.get(Campus, campus_id)
+    if campus is None:
+        raise HTTPException(status_code=404, detail="Campus no encontrado")
+    path = await save_upload(
+        file, "campus-logos", allowed_types=LOGO_TYPES, max_bytes=LOGO_MAX_BYTES,
+        type_error_detail="El logo debe ser PNG o JPG",
+    )
+    old = campus.logo_path
+    campus.logo_path, campus.logo_content_type = path, file.content_type
+    campus.logo_updated_at = utcnow()
+    session.add(campus)
+    audit.record(session, actor=current_user.email, action="campus.logo_uploaded",
+                 entity="campus", entity_id=str(campus_id), detail=campus.name)
+    await session.commit()
+    await session.refresh(campus)
+    _remove_file(old)
+    return campus
+
+
+@router.get("/campuses/{campus_id}/logo")
+async def get_campus_logo(session: SessionDep, _: AnyStaff, campus_id: uuid.UUID) -> FileResponse:
+    campus = await session.get(Campus, campus_id)
+    if campus is None or not campus.logo_path or not Path(campus.logo_path).is_file():
+        raise HTTPException(status_code=404, detail="Este plantel no tiene logo")
+    return FileResponse(campus.logo_path, media_type=campus.logo_content_type or "image/png")
+
+
+@router.delete("/campuses/{campus_id}/logo")
+async def delete_campus_logo(
+    session: SessionDep, current_user: ServiciosEscolares, campus_id: uuid.UUID
+) -> CampusPublic:
+    campus = await session.get(Campus, campus_id)
+    if campus is None:
+        raise HTTPException(status_code=404, detail="Campus no encontrado")
+    old = campus.logo_path
+    campus.logo_path = campus.logo_content_type = campus.logo_updated_at = None
+    session.add(campus)
+    audit.record(session, actor=current_user.email, action="campus.logo_removed",
+                 entity="campus", entity_id=str(campus_id), detail=campus.name)
+    await session.commit()
+    await session.refresh(campus)
+    _remove_file(old)
     return campus
 
 

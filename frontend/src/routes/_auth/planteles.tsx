@@ -4,8 +4,9 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, Pencil, Plus } from "lucide-react";
-import { api, ApiError } from "@/api/client";
+import { CalendarDays, ImageUp, Pencil, Plus, Trash2 } from "lucide-react";
+import { api, apiUpload, ApiError } from "@/api/client";
+import { campusLogoUrl } from "@/lib/campus-logo";
 import { queryKeys } from "@/api/query-keys";
 import type { Campus, CampusSyncResult } from "@/api/types";
 import { Button } from "@/components/ui/button";
@@ -105,6 +106,7 @@ function PlantelesPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-24">Logo</TableHead>
               <TableHead>Nombre</TableHead>
               <TableHead>Dirección</TableHead>
               <TableHead>Calendario</TableHead>
@@ -115,13 +117,24 @@ function PlantelesPage() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={5}>
+                <TableCell colSpan={6}>
                   <Skeleton className="h-6 w-full" />
                 </TableCell>
               </TableRow>
             )}
             {campuses?.map((c) => (
               <TableRow key={c.id}>
+                <TableCell>
+                  {c.logo_updated_at ? (
+                    <img
+                      src={campusLogoUrl(c.id, c.logo_updated_at)}
+                      alt={`Logo de ${c.name}`}
+                      className="h-8 max-w-20 object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Sin logo</span>
+                  )}
+                </TableCell>
                 <TableCell className="font-semibold">{c.name}</TableCell>
                 <TableCell className="text-muted-foreground">{c.address || "—"}</TableCell>
                 <TableCell>
@@ -243,6 +256,7 @@ function CampusDialog({ campus, onClose }: { campus: Campus | null; onClose: () 
               </Select>
             </div>
           )}
+          {campus && <CampusLogoField campus={campus} />}
           <label className="flex items-center gap-2 text-sm font-medium">
             <Checkbox checked={active} onCheckedChange={(v) => setActive(v === true)} />
             Plantel activo
@@ -255,5 +269,87 @@ function CampusDialog({ campus, onClose }: { campus: Campus | null; onClose: () 
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// The logo printed on top of the kárdex of this plantel's students. PNG or JPG
+// (what the PDF can embed), up to 2 MB. Saved right away, apart from «Guardar».
+function CampusLogoField({ campus }: { campus: Campus }) {
+  const queryClient = useQueryClient();
+  const [version, setVersion] = useState(campus.logo_updated_at ?? null);
+  const done = (c: Campus, message: string) => {
+    setVersion(c.logo_updated_at ?? null);
+    queryClient.invalidateQueries({ queryKey: queryKeys.campuses });
+    toast.success(message);
+  };
+  const upload = useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return apiUpload<Campus>(`/catalog/campuses/${campus.id}/logo`, form);
+    },
+    onSuccess: (c) => done(c, "Logo guardado"),
+    onError: (e) => toast.error(errorText(e, "No se pudo subir el logo")),
+  });
+  const remove = useMutation({
+    mutationFn: () => api<Campus>(`/catalog/campuses/${campus.id}/logo`, { method: "DELETE" }),
+    onSuccess: (c) => done(c, "Logo quitado"),
+    onError: (e) => toast.error(errorText(e, "No se pudo quitar el logo")),
+  });
+  return (
+    <div className="grid gap-2">
+      <Label>Logo para el kárdex</Label>
+      <div className="flex items-center gap-3 rounded-md border p-3">
+        <div className="flex h-14 w-28 items-center justify-center rounded bg-muted/50">
+          {version ? (
+            <img
+              src={campusLogoUrl(campus.id, version)}
+              alt={`Logo de ${campus.name}`}
+              className="max-h-12 max-w-26 object-contain"
+            />
+          ) : (
+            <span className="text-xs text-muted-foreground">Sin logo</span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" asChild disabled={upload.isPending}>
+            <label className="cursor-pointer">
+              <ImageUp className="size-4" />
+              {upload.isPending ? "Subiendo…" : version ? "Cambiar" : "Subir logo"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  if (file.size > 2 * 1024 * 1024) {
+                    toast.error("El logo debe pesar menos de 2 MB");
+                    return;
+                  }
+                  upload.mutate(file);
+                }}
+              />
+            </label>
+          </Button>
+          {version && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              <Trash2 className="size-4" /> Quitar
+            </Button>
+          )}
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        PNG o JPG, máximo 2 MB. Sale arriba en el kárdex de los alumnos de este plantel; sin logo
+        se usa el de INUE.
+      </p>
+    </div>
   );
 }

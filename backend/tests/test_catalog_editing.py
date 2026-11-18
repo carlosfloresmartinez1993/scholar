@@ -272,3 +272,31 @@ async def test_same_group_code_in_two_campuses(client, seed, monkeypatch, sessio
     assert done["created"] == ["B41"]
     b41 = next(g for g in (await client.get(f"{API}/groups?term_id={term_id}")).json() if g["code"] == "B41")
     assert b41["campus_id"] == online
+
+
+PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+       b"\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+
+
+async def test_each_campus_has_its_own_kardex_logo(client, seed):
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    url = f"{API}/campuses/{campus_id}/logo"
+    assert (await client.get(url)).status_code == 404
+
+    up = await client.post(url, files={"file": ("logo.png", PNG, "image/png")})
+    assert up.status_code == 200, up.text
+    assert up.json()["logo_updated_at"]
+    got = await client.get(url)
+    assert got.status_code == 200 and got.content == PNG
+    assert got.headers["content-type"] == "image/png"
+    listed = {c["id"]: c for c in (await client.get(f"{API}/campuses")).json()}
+    assert listed[campus_id]["logo_updated_at"]
+
+    # only PNG/JPG: the PDF can't embed other formats
+    bad = await client.post(url, files={"file": ("logo.svg", b"<svg/>", "image/svg+xml")})
+    assert bad.status_code == 415
+
+    removed = await client.delete(url)
+    assert removed.status_code == 200 and removed.json()["logo_updated_at"] is None
+    assert (await client.get(url)).status_code == 404

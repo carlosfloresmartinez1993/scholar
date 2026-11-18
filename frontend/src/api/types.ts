@@ -196,6 +196,7 @@ export interface Campus {
   address: string;
   is_active: boolean;
   calendar_campus_id?: string | null; // vínculo con el campus del calendario
+  logo_updated_at?: string | null; // tiene logo para el kárdex
 }
 
 // resultado de «Sincronizar con calendario» en Planteles
