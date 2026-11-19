@@ -21,6 +21,7 @@ from app.models import (
     PlanEnrollmentStatus,
     PlanSubject,
     Student,
+    StudentStatus,
     StudentPlanEnrollment,
     Term,
 )
@@ -130,6 +131,11 @@ async def promote_cycle(
             }
             # idempotent: already in the target group?
             if (student.id, target.id) in already:
+                continue
+            # de baja (temporal or definitiva): stays where they were, history intact
+            if student.status in (StudentStatus.baja_temporal, StudentStatus.baja_definitiva):
+                kind = "temporal" if student.status == StudentStatus.baja_temporal else "definitiva"
+                skipped.append({**info, "reason": f"de baja {kind}"})
                 continue
             # continuing? plan enrollment must be inscrito (not baja/egresado/titulado)
             if plan_status != PlanEnrollmentStatus.inscrito:

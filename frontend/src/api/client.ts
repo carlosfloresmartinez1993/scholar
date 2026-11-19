@@ -98,7 +98,16 @@ export async function api<T>(
     throw new ApiError(401, "No autorizado");
   }
 
-  if (!res.ok) throw await parseError(res);
+  if (!res.ok) {
+    const error = await parseError(res);
+    if (res.status === 403 && error.message.startsWith("Tu acceso está suspendido")) {
+      await fetch(`${BASE_URL}/auth/logout`, { method: "POST", credentials: "include" }).catch(
+        () => undefined,
+      );
+      if (window.location.pathname !== "/login") window.location.href = "/login";
+    }
+    throw error;
+  }
 
   if (res.status === 204) return undefined as T;
   return res.json();

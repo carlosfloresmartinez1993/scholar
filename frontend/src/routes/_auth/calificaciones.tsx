@@ -26,6 +26,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { StudentStatusBadge } from "@/components/student-status-badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -264,6 +265,10 @@ function GradeGridSection({ groupSubjectId }: { groupSubjectId: string }) {
                   <Badge variant="outline" className="ml-2">
                     Recursamiento
                   </Badge>
+                )}
+                {/* de baja: the teacher sees it; the grade can still be captured */}
+                {row.student_status && row.student_status !== "activo" && (
+                  <StudentStatusBadge status={row.student_status} className="ml-2" />
                 )}
               </TableCell>
               {grid.components.map((c) => {

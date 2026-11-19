@@ -116,6 +116,8 @@ async def grade_grid(
                 "student_id": str(s.id),
                 "student_name": s.full_name,
                 "enrollment_number": s.enrollment_number,
+                # the person's: a baja shows in attendance and capture
+                "student_status": s.status,
                 "status": e.status,
                 "final_grade": e.final_grade,
                 "attempt_number": e.attempt_number,  # > 1: recursamiento

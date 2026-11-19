@@ -19,7 +19,7 @@ from fastapi import (
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, SessionDep, build_user_public
+from app.api.deps import CurrentUser, SessionDep, build_user_public, ensure_not_on_leave
 from app.core.config import settings
 from app.core.security import (
     create_access_token,
@@ -141,6 +141,7 @@ async def login(
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    await ensure_not_on_leave(session, user)
     if new_hash:
         user.hashed_password = new_hash
         session.add(user)
@@ -294,6 +295,7 @@ async def verify_login_code(
     user.login_code_expires = None
     session.add(user)
     await session.commit()
+    await ensure_not_on_leave(session, user)
     _failed_logins.pop(key, None)
     _failed_logins.pop(acct_key, None)
     _set_auth_cookies(response, str(user.id))

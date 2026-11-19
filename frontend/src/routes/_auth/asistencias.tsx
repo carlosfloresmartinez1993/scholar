@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { StudentStatusBadge } from "@/components/student-status-badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -130,10 +131,13 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
           group_subject_id: groupSubjectId,
           session_date: date,
           sequence: 1,
-          records: (grid?.rows ?? []).map((r) => ({
-            student_id: r.student_id,
-            status: marks[r.student_id] ?? "presente",
-          })),
+          // a student de baja gets no roll call
+          records: (grid?.rows ?? [])
+            .filter((r) => !onLeave(r.student_status))
+            .map((r) => ({
+              student_id: r.student_id,
+              status: marks[r.student_id] ?? "presente",
+            })),
         }),
       }),
     onSuccess: () => {
@@ -199,6 +203,20 @@ function RollCallSection({ groupSubjectId }: { groupSubjectId: string }) {
           <TableBody>
             {grid.rows.map((row) => {
               const current = marks[row.student_id] ?? "presente";
+              if (onLeave(row.student_status)) {
+                return (
+                  <TableRow key={row.student_id} className="text-muted-foreground">
+                    <TableCell data-numeric>{row.enrollment_number}</TableCell>
+                    <TableCell className="font-semibold">
+                      {row.student_name}
+                      <StudentStatusBadge status={row.student_status!} className="ml-2" />
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      De baja: no se le registra asistencia
+                    </TableCell>
+                  </TableRow>
+                );
+              }
               return (
                 <TableRow key={row.student_id}>
                   <TableCell data-numeric>{row.enrollment_number}</TableCell>
@@ -292,7 +310,12 @@ function ReportSection({ groupSubjectId }: { groupSubjectId: string }) {
             {report?.map((r) => (
               <TableRow key={r.student_id}>
                 <TableCell data-numeric>{r.enrollment_number}</TableCell>
-                <TableCell className="font-semibold">{r.student_name}</TableCell>
+                <TableCell className="font-semibold">
+                  {r.student_name}
+                  {onLeave(r.student_status) && (
+                    <StudentStatusBadge status={r.student_status!} className="ml-2" />
+                  )}
+                </TableCell>
                 <TableCell data-numeric>{r.sessions}</TableCell>
                 <TableCell data-numeric>{r.attended}</TableCell>
                 <TableCell data-numeric className="font-semibold">
@@ -507,4 +530,9 @@ function JustificationsSection() {
       </Dialog>
     </section>
   );
+}
+
+/** baja temporal or definitiva: no roll call */
+function onLeave(status?: string | null): boolean {
+  return status === "baja_temporal" || status === "baja_definitiva";
 }

@@ -33,7 +33,26 @@ async def get_current_user(session: SessionDep, token: TokenDep) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough privileges")
+    await ensure_not_on_leave(session, user)  # an open session ends when they are dado de baja
     return user
+
+
+ON_LEAVE_DETAIL = (
+    "Tu acceso está suspendido porque estás dado de baja. Acude a Servicios Escolares."
+)
+
+
+async def ensure_not_on_leave(session, user: User) -> None:
+    """A student de baja (temporal or definitiva) can't use the system; staff can."""
+    if user.student_id is None:
+        return
+    from app.models import Student, StudentStatus
+
+    student = await session.get(Student, user.student_id)
+    if student is not None and student.status in (
+        StudentStatus.baja_temporal, StudentStatus.baja_definitiva,
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ON_LEAVE_DETAIL)
 
 
 async def get_current_active_superuser(

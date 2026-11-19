@@ -20,6 +20,7 @@ from app.models import (
     JustificationStatus,
     SessionWithAttendanceIn,
     Student,
+    StudentStatus,
     SubjectEnrollment,
     SubjectEnrollmentStatus,
     User,
@@ -91,9 +92,25 @@ async def record_session(
             )
         ).all()
     }
+    on_leave = {
+        s.id: s.full_name
+        for s in (
+            await session.exec(
+                select(Student).where(
+                    Student.id.in_([m.student_id for m in body.records] or [uuid.uuid4()]),  # type: ignore[attr-defined]
+                    Student.status.in_([StudentStatus.baja_temporal, StudentStatus.baja_definitiva]),  # type: ignore[attr-defined]
+                )
+            )
+        ).all()
+    }
     for mark in body.records:
         if mark.student_id not in enrolled:
             raise HTTPException(status_code=400, detail="Alumno no inscrito en la materia")
+        if mark.student_id in on_leave:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{on_leave[mark.student_id]} está de baja: no se le registra asistencia",
+            )
         record = current.get(mark.student_id)
         if record:
             record.status = mark.status
@@ -165,6 +182,7 @@ async def attendance_report(
         student = students.get(student_id)
         summary["student_name"] = student.full_name if student else ""
         summary["enrollment_number"] = student.enrollment_number if student else ""
+        summary["student_status"] = student.status if student else None
         out.append(summary)
     return out
 

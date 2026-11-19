@@ -571,6 +571,7 @@ export interface GradeGridRow {
   student_id: string;
   student_name: string;
   enrollment_number: string;
+  student_status?: StudentStatus; // the person's: baja shows in attendance and capture
   status: SubjectEnrollmentStatus;
   final_grade?: number | null;
   attempt_number: number; // > 1: recursamiento
@@ -791,6 +792,7 @@ export interface AttendanceReportRow {
   attendance_pct: number;
   min_attendance_pct: number;
   right_to_exam: boolean;
+  student_status?: StudentStatus | null;
 }
 
 export interface Justification {
