@@ -54,6 +54,7 @@ import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import { fetchCampusLogo } from "@/lib/campus-logo";
 import { TakeInOtherGroupDialog } from "@/components/other-group-dialogs";
+import { EnrollmentHistoryTab } from "@/components/enrollment-history";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import { downloadKardexCsv, downloadKardexExcel, downloadKardexWord } from "@/lib/kardex-export";
 import {
@@ -140,6 +141,7 @@ const DETAIL_TABS = [
   "datos",
   "expediente",
   "academico",
+  "inscripciones",
   "horario",
   "cuenta",
   "justificantes",
@@ -209,6 +211,7 @@ function AlumnoDetailPage() {
         <TabsList>
           <TabsTrigger value="datos">Resumen</TabsTrigger>
           <TabsTrigger value="academico">Kárdex</TabsTrigger>
+          <TabsTrigger value="inscripciones">Inscripciones</TabsTrigger>
           <TabsTrigger value="cuenta">Pagos</TabsTrigger>
           <TabsTrigger value="expediente">Documentos</TabsTrigger>
           <TabsTrigger value="horario">Horario</TabsTrigger>
@@ -222,6 +225,9 @@ function AlumnoDetailPage() {
         </TabsContent>
         <TabsContent value="academico" className="mt-4">
           <AcademicoTab student={student} openRecognition={reconocer === true} />
+        </TabsContent>
+        <TabsContent value="inscripciones" className="mt-4">
+          <EnrollmentHistoryTab studentId={student.id} />
         </TabsContent>
         <TabsContent value="horario" className="mt-4">
           <HorarioTab student={student} />

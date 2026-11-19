@@ -441,6 +441,80 @@ async def list_group_enrollments(
     ).all()
 
 
+@router.get("/{student_id}/enrollment-history")
+async def enrollment_history(
+    session: SessionDep, _: AnyStaff, scope: CampusScope, student_id: uuid.UUID
+) -> list[dict]:
+    """Inscripciones por ciclo: one row per group the student was enrolled in
+    (plantel, ciclo, grupo, cuatrimestre, tipo, estatus and how the subjects went),
+    newest cycle first. Recognitions (EQ/REV/CONV) show as their own rows."""
+    from app.models import Campus, GroupSubject
+    from app.services.academics import recognition_kind
+
+    student = await session.get(Student, student_id)
+    if student is None or (scope is not None and student.campus_id not in scope):
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    rows = (
+        await session.exec(
+            select(GroupEnrollment, Group, Term, Campus, PlanVersion, Rvoe, Program)
+            .join(Group, Group.id == GroupEnrollment.group_id)
+            .join(Term, Term.id == Group.term_id)
+            .join(Campus, Campus.id == Group.campus_id)
+            .join(PlanVersion, PlanVersion.id == Group.plan_version_id)
+            .join(Rvoe, Rvoe.id == PlanVersion.rvoe_id)
+            .join(Program, Program.id == Rvoe.program_id)
+            .where(GroupEnrollment.student_id == student_id)
+            .order_by(Term.start_date.desc(), Group.period_number.desc(), Group.code)  # type: ignore[attr-defined]
+        )
+    ).all()
+    counts: dict = {}
+    for enrollment_id, status in (
+        await session.exec(
+            select(SubjectEnrollment.group_enrollment_id, SubjectEnrollment.status).where(
+                SubjectEnrollment.student_id == student_id
+            )
+        )
+    ).all():
+        bucket = counts.setdefault(enrollment_id, {})
+        bucket[status.value] = bucket.get(status.value, 0) + 1
+    out = []
+    for ge, group, term, campus, plan, rvoe, program in rows:
+        recognition = recognition_kind(group.code)
+        if recognition:
+            kind = recognition  # eq / rev / conv
+        elif ge.subjects_only:
+            kind = "otro_grupo"
+        else:
+            kind = ge.kind.value  # inscripcion / reinscripcion
+        c = counts.get(ge.id, {})
+        out.append({
+            "group_enrollment_id": str(ge.id),
+            "campus": campus.name,
+            "term_id": str(term.id),
+            "term_name": term.name,
+            "term_start": term.start_date.isoformat(),
+            "term_open": term.is_open,
+            "group_id": str(group.id),
+            "group_code": group.code,
+            "period_number": group.period_number,
+            "program": program.name,
+            "plan_label": f"RVOE {rvoe.agreement_number} · Plan {plan.version_label}",
+            "plan_version_id": str(plan.id),
+            "enrollment_number": student.enrollment_number,
+            "enrolled_at": ge.created_at.isoformat(),
+            "kind": kind,
+            "status": ge.status.value,  # activa / baja
+            "subjects": {
+                "total": sum(v for k, v in c.items() if k != "baja"),
+                "aprobadas": c.get("aprobada", 0),
+                "reprobadas": c.get("reprobada", 0),
+                "cursando": c.get("cursando", 0),
+                "baja": c.get("baja", 0),
+            },
+        })
+    return out
+
+
 @router.post("/group-enrollments", status_code=201)
 async def enroll_in_group(
     session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
