@@ -9,6 +9,7 @@ import {
   FileCheck,
   BadgeDollarSign,
   CalendarDays,
+  ChevronDown,
   Download,
   Camera as CameraIcon,
   Check,
@@ -53,6 +54,13 @@ import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import { fetchCampusLogo } from "@/lib/campus-logo";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
+import { downloadKardexCsv, downloadKardexExcel, downloadKardexWord } from "@/lib/kardex-export";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { RvoeChangeDialog } from "@/components/rvoe-change-dialog";
 import { CorrectRowDialog, RevertRvoeDialog } from "@/components/record-correction-dialogs";
 import {
@@ -1225,6 +1233,7 @@ function AcademicoTab({
     placeholderData: (previous) => previous,
   });
   const currentPlanId = kardex?.current_plan_version_id ?? null;
+  const [downloading, setDownloading] = useState(false);
   // the logo is the one of the student's plantel (the plantel of their group)
   const kardexPrintData = async () =>
     kardex && currentPlanId
@@ -1361,21 +1370,42 @@ function AcademicoTab({
               >
                 <Printer className="size-4" /> Imprimir
               </Button>
-              <Button
-                variant="outline"
-                disabled={!kardex}
-                onClick={async () => {
-                  const data = await kardexPrintData();
-                  if (!data) return;
-                  try {
-                    await downloadKardexPdf(data);
-                  } catch {
-                    toast.error("No se pudo generar el PDF");
-                  }
-                }}
-              >
-                <Download className="size-4" /> Descargar PDF
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" disabled={!kardex || downloading}>
+                    <Download className="size-4" />
+                    {downloading ? "Generando…" : "Descargar"}
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {(
+                    [
+                      ["PDF (.pdf)", "PDF", downloadKardexPdf],
+                      ["Excel (.xlsx)", "Excel", downloadKardexExcel],
+                      ["Word (.docx)", "Word", downloadKardexWord],
+                      ["CSV (.csv)", "CSV", downloadKardexCsv],
+                    ] as const
+                  ).map(([label, name, make]) => (
+                    <DropdownMenuItem
+                      key={name}
+                      onSelect={async () => {
+                        setDownloading(true);
+                        try {
+                          const data = await kardexPrintData();
+                          if (data) await make(data);
+                        } catch {
+                          toast.error(`No se pudo generar el ${name}`);
+                        } finally {
+                          setDownloading(false);
+                        }
+                      }}
+                    >
+                      {label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           {changingRvoe && currentPlanId && (
