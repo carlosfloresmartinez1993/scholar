@@ -159,6 +159,7 @@ async def _enrollments_between(
         .where(
             GroupEnrollment.created_at >= start,
             GroupEnrollment.created_at < end,
+            GroupEnrollment.subjects_only == False,  # noqa: E712
             GroupEnrollment.group_id.not_in(  # type: ignore[attr-defined]
                 select(Group.id).where(internal_group_clause())
             ),
@@ -205,7 +206,10 @@ async def enrollments_series(
     first_day = start.date()
     created = (
         await session.exec(
-            select(GroupEnrollment.created_at).where(GroupEnrollment.created_at >= start)
+            select(GroupEnrollment.created_at).where(
+                GroupEnrollment.created_at >= start,
+                GroupEnrollment.subjects_only == False,  # noqa: E712
+            )
         )
     ).all()
     buckets = {first_day + timedelta(days=i): 0 for i in range(days)}

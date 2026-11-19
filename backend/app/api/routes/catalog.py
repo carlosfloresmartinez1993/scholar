@@ -1145,6 +1145,7 @@ async def list_group_students(
             "enrollment_number": s.enrollment_number,
             "kind": e.kind,
             "status": e.status,
+            "subjects_only": e.subjects_only,
         }
         for s, e in rows
     ]

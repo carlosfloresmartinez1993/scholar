@@ -134,6 +134,11 @@ async def change_group(
     ).first()
     if old is None:
         raise HTTPException(status_code=404, detail="El alumno no está inscrito en ese grupo")
+    if old.subjects_only:
+        raise HTTPException(
+            status_code=409,
+            detail="En ese grupo solo cursa materias: dale de baja la materia en lugar de cambiarlo",
+        )
 
     moving = (
         await session.exec(

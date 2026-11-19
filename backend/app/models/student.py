@@ -323,6 +323,9 @@ class GroupEnrollment(SQLModel, table=True):
     kind: GroupEnrollmentKind = GroupEnrollmentKind.inscripcion
     status: GroupEnrollmentStatus = GroupEnrollmentStatus.activa
     created_at: datetime = Field(default_factory=utcnow)
+    # «materia en otro grupo»: the student only takes some subjects here; their
+    # group is another one. Not their current group, not promoted, not billed.
+    subjects_only: bool = False
 
 
 class GroupEnrollmentCreate(SQLModel):
@@ -335,6 +338,14 @@ class GroupEnrollmentCreate(SQLModel):
     override_prerequisites: bool = False
     # some new students don't pay inscripción — skip the enrollment-fee charge
     waive_enrollment_fee: bool = False
+
+
+class OtherGroupEnrollment(SQLModel):
+    """Take some subjects in a group that is not the student's own (no charges)."""
+    student_id: uuid.UUID
+    group_id: uuid.UUID
+    plan_subject_ids: list[uuid.UUID]
+    override_prerequisites: bool = False
 
 
 class GroupEnrollmentSubjectsAdd(SQLModel):
@@ -416,6 +427,7 @@ class GroupEnrollmentPublic(SQLModel):
     kind: GroupEnrollmentKind
     status: GroupEnrollmentStatus
     created_at: datetime
+    subjects_only: bool = False
 
 
 class SubjectEnrollmentStatus(str, Enum):

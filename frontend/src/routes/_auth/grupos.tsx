@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { ALL_CAMPUSES, useCampus } from "@/lib/campus-context";
 import { EmptyState } from "@/components/empty-state";
 import { GroupAdminButtons, ImportCalendarGroupsButton } from "@/components/group-admin-dialogs";
+import { OtherGroupStudentDialog } from "@/components/other-group-dialogs";
 import {
   ChangeGroupDialog,
   DropSubjectsDialog,
@@ -794,6 +795,16 @@ function GroupDetail({
     null,
   );
   const [enrollOpen, setEnrollOpen] = useState(false);
+  const [otherGroupOpen, setOtherGroupOpen] = useState(false);
+  // who only takes some subjects here (their own group is another one)
+  const { data: roster } = useQuery({
+    queryKey: ["group-students", group.id],
+    queryFn: () =>
+      api<{ student_id: string; subjects_only: boolean }[]>(`/catalog/groups/${group.id}/students`),
+  });
+  const fromOtherGroup = new Set(
+    (roster ?? []).filter((r) => r.subjects_only).map((r) => r.student_id),
+  );
 
   const subjectName = (planSubjectId: string) => {
     const s = planSubjects?.find((ps) => ps.id === planSubjectId);
@@ -968,6 +979,13 @@ function GroupDetail({
             >
               <UserPlus className="size-4" /> Inscribir alumno
             </Button>
+            <Button
+              variant="outline"
+              disabled={(groupSubjects ?? []).length === 0}
+              onClick={() => setOtherGroupOpen(true)}
+            >
+              <UserPlus className="size-4" /> Alumno de otro grupo
+            </Button>
           </div>
         </div>
         <div className="rounded-md border bg-card">
@@ -986,7 +1004,14 @@ function GroupDetail({
                   <TableCell className="font-semibold" data-numeric>
                     {s.enrollment_number}
                   </TableCell>
-                  <TableCell className="font-semibold">{s.name}</TableCell>
+                  <TableCell className="font-semibold">
+                    {s.name}
+                    {fromOtherGroup.has(s.student_id) && (
+                      <Badge variant="secondary" className="ml-2">
+                        De otro grupo · solo materias
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell data-numeric>
                     {s.planSubjectIds.size} / {(groupSubjects ?? []).length}
                   </TableCell>
@@ -1006,13 +1031,15 @@ function GroupDetail({
                       >
                         <UserMinus className="size-4" /> Baja de materias
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setMoving(s)}
-                      >
-                        <ArrowRightLeft className="size-4" /> Cambiar de grupo
-                      </Button>
+                      {!fromOtherGroup.has(s.student_id) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setMoving(s)}
+                        >
+                          <ArrowRightLeft className="size-4" /> Cambiar de grupo
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1118,6 +1145,19 @@ function GroupDetail({
           onDone={() => refreshAfterChange(moving.student_id)}
         />
       )}
+
+      <OtherGroupStudentDialog
+        key={`other-${group.id}`}
+        open={otherGroupOpen}
+        onOpenChange={setOtherGroupOpen}
+        group={group}
+        groupSubjects={groupSubjects ?? []}
+        subjectName={subjectName}
+        onDone={() => {
+          invalidateGrids();
+          queryClient.invalidateQueries({ queryKey: ["group-students", group.id] });
+        }}
+      />
 
       <EnrollDialog
         key={group.id}

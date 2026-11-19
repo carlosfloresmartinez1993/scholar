@@ -230,6 +230,7 @@ async def generate_group_charges(
             select(GroupEnrollment).where(
                 GroupEnrollment.group_id == group_id,
                 GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                GroupEnrollment.subjects_only == False,  # noqa: E712 — not billed (for now)
             )
         )
     ).all()
@@ -268,6 +269,7 @@ async def group_billing_status(
             .where(
                 GroupEnrollment.group_id == group_id,
                 GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                GroupEnrollment.subjects_only == False,  # noqa: E712
             )
             .order_by(Student.full_name)
         )

@@ -53,6 +53,7 @@ import type {
 import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import { fetchCampusLogo } from "@/lib/campus-logo";
+import { TakeInOtherGroupDialog } from "@/components/other-group-dialogs";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import { downloadKardexCsv, downloadKardexExcel, downloadKardexWord } from "@/lib/kardex-export";
 import {
@@ -1541,6 +1542,22 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
   const columns = 10 + (showE2 ? 1 : 0) + (withOrigin ? 1 : 0) + RECOGNITION_COLUMNS.length;
   const [grading, setGrading] = useState<StudentKardexRow | null>(null);
   const [correcting, setCorrecting] = useState<StudentKardexRow | null>(null);
+  const [takingElsewhere, setTakingElsewhere] = useState<StudentKardexRow | null>(null);
+  // the cuatrimestre the student is in (the highest one in course): subjects up to it
+  // can be taken in another group, never later ones (the RVOE: no taking them ahead)
+  const currentPeriod = Math.max(
+    0,
+    ...kardex.rows
+      // a recognition awaiting its grade (EQ/REV/CONV) may be of a later cuatrimestre
+      .filter((r) => r.status === "cursando" && !r.recognition)
+      .map((r) => r.period_number),
+  );
+  // passed or in course in some attempt: nothing to take elsewhere
+  const settled = new Set(
+    kardex.rows
+      .filter((r) => r.status === "aprobada" || r.status === "cursando")
+      .map((r) => r.plan_subject_id),
+  );
   return (
     <>
     <div className="rounded-md border bg-card">
@@ -1639,6 +1656,18 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
                           Corregir
                         </Button>
                       )}
+                      {(r.status === "pendiente" || r.status === "reprobada") &&
+                        r.period_number <= currentPeriod &&
+                        !settled.has(r.plan_subject_id) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => setTakingElsewhere(r)}
+                        >
+                          Cursar en otro grupo
+                        </Button>
+                      )}
                     </span>
                   </TableCell>
                 </TableRow>
@@ -1709,6 +1738,13 @@ function KardexTable({ kardex, studentId }: { kardex: StudentKardex; studentId: 
     )}
     {grading && (
       <OfficialGradeDialog studentId={studentId} row={grading} onClose={() => setGrading(null)} />
+    )}
+    {takingElsewhere && (
+      <TakeInOtherGroupDialog
+        studentId={studentId}
+        row={takingElsewhere}
+        onClose={() => setTakingElsewhere(null)}
+      />
     )}
     </>
   );

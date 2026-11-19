@@ -71,6 +71,7 @@ async def promote_cycle(
     in_sources = select(GroupEnrollment.student_id).where(
         GroupEnrollment.group_id.in_(source_ids),  # type: ignore[attr-defined]
         GroupEnrollment.status == GroupEnrollmentStatus.activa,
+        GroupEnrollment.subjects_only == False,  # noqa: E712
     )
     by_source: dict = defaultdict(list)
     for en, student, plan_status in (
@@ -81,6 +82,8 @@ async def promote_cycle(
             .where(
                 GroupEnrollment.group_id.in_(source_ids),  # type: ignore[attr-defined]
                 GroupEnrollment.status == GroupEnrollmentStatus.activa,
+                # a subject taken there from another group does not move the student
+                GroupEnrollment.subjects_only == False,  # noqa: E712
             )
         )
     ).all():

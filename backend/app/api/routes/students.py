@@ -33,6 +33,7 @@ from app.models import (
     GroupPublic,
     GroupEnrollmentCreate,
     GroupEnrollmentSubjectsAdd,
+    OtherGroupEnrollment,
     OfficialGradeIn,
     SubjectDropIn,
     RecognitionUpdateIn,
@@ -68,7 +69,13 @@ from app.models import (
 from app.services import audit, calendar, treasury
 from app.services.academics import current_group, internal_group_clause, require_operable_rvoe
 from app.services.email import send_email
-from app.services.enrollment import add_subjects_core, create_student_core, enroll_student_core
+from app.services.enrollment import (
+    add_subjects_core,
+    create_student_core,
+    enroll_in_other_group,
+    enroll_student_core,
+    other_group_options,
+)
 from app.services.enrollment_changes import change_group, drop_subjects
 from app.services.files import save_upload
 from app.services.plan_change import (
@@ -456,6 +463,36 @@ async def enroll_in_group(
     await session.commit()
     await session.refresh(enrollment)
     return enrollment
+
+
+@router.get("/{student_id}/other-groups")
+async def other_groups_for_subject(
+    session: SessionDep, _: AnyStaff, scope: CampusScope, student_id: uuid.UUID,
+    plan_subject_id: uuid.UUID,
+) -> list[dict]:
+    """Groups where the student could take this (pending) subject."""
+    student = await session.get(Student, student_id)
+    if student is None or (scope is not None and student.campus_id not in scope):
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return await other_group_options(session, student, plan_subject_id)
+
+
+@router.post("/group-enrollments/other-group", status_code=201)
+async def enroll_subjects_in_other_group(
+    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    body: OtherGroupEnrollment,
+) -> list[SubjectEnrollmentPublic]:
+    """«Cursar materia en otro grupo»: no charges; the student keeps their group."""
+    student, group = await _student_and_group(session, scope, body.student_id, body.group_id)
+    added = await enroll_in_other_group(
+        session, current_user, student, group,
+        plan_subject_ids=body.plan_subject_ids,
+        override_prerequisites=body.override_prerequisites,
+    )
+    await session.commit()
+    for subject_enrollment in added:
+        await session.refresh(subject_enrollment)
+    return added
 
 
 @router.post("/group-enrollments/subjects", status_code=201)

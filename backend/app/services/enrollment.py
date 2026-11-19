@@ -28,6 +28,7 @@ from app.models import (
 from app.services import audit
 from app.services.academics import (
     check_prerequisites,
+    current_group,
     get_or_create_plan_enrollment,
     internal_group_clause,
     passed_subject_ids,
@@ -389,7 +390,7 @@ async def add_subjects_core(
     # closed only because every subject was dropped (a group change leaves no
     # subject in course there): adding one back reopens it
     reopen = enrollment.status != GroupEnrollmentStatus.activa
-    if reopen:
+    if reopen and not enrollment.subjects_only:
         moved = (
             await session.exec(
                 select(GroupEnrollment.id)
@@ -497,3 +498,145 @@ async def add_subjects_core(
     )
     await session.flush()
     return added
+
+
+async def other_group_options(session: AsyncSession, student: Student, plan_subject_id) -> list[dict]:
+    """Groups where the student could take this subject: same plan and plantel as
+    their own group, not later than it (the RVOE: no taking subjects ahead), active,
+    teaching the subject, and not the student's own group."""
+    subject = await session.get(PlanSubject, plan_subject_id)
+    if subject is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    own = await current_group(session, student.id, subject.plan_version_id)
+    if own is None:
+        raise HTTPException(status_code=409, detail="El alumno no está en un grupo de ese plan")
+    if subject.id in await passed_subject_ids(session, student.id):
+        raise HTTPException(status_code=409, detail=f"{subject.name} ya está aprobada o reconocida")
+    in_course = (
+        await session.exec(
+            select(SubjectEnrollment.id)
+            .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+            .where(
+                SubjectEnrollment.student_id == student.id,
+                GroupSubject.plan_subject_id == subject.id,
+                SubjectEnrollment.status == SubjectEnrollmentStatus.cursando,
+            )
+        )
+    ).first()
+    if in_course:
+        raise HTTPException(status_code=409, detail=f"{subject.name} ya se está cursando")
+    from app.models import Term
+
+    rows = (
+        await session.exec(
+            select(Group, Term)
+            .join(GroupSubject, GroupSubject.group_id == Group.id)
+            .join(Term, Term.id == Group.term_id)
+            .where(
+                GroupSubject.plan_subject_id == subject.id,
+                Group.plan_version_id == subject.plan_version_id,
+                Group.campus_id == own.campus_id,
+                Group.is_active == True,  # noqa: E712
+                Term.is_open == True,  # noqa: E712 — taken now, in a cycle in course
+                Group.period_number <= own.period_number,
+                Group.id != own.id,
+                ~internal_group_clause(),
+            )
+            .order_by(Term.start_date.desc(), Group.code)  # type: ignore[attr-defined]
+        )
+    ).all()
+    return [
+        {"group_id": str(g.id), "code": g.code, "period_number": g.period_number,
+         "term_id": str(t.id), "term_name": t.name, "term_open": t.is_open}
+        for g, t in rows
+    ]
+
+
+async def enroll_in_other_group(
+    session: AsyncSession,
+    current_user,
+    student: Student,
+    group: Group,
+    *,
+    plan_subject_ids: list,
+    override_prerequisites: bool = False,
+) -> list[SubjectEnrollment]:
+    """«Cursar materia en otro grupo»: the student stays in their own group and only
+    takes these subjects in this one (e.g. a 7th-cuatrimestre student taking a
+    pending 1st-cuatrimestre subject with a 1st group). No inscripción charge, no
+    colegiaturas; it is not their group, so it is not promoted. Caller commits."""
+    if not plan_subject_ids:
+        raise HTTPException(status_code=400, detail="Seleccione al menos una materia")
+    if student.campus_id != group.campus_id:
+        raise HTTPException(
+            status_code=409, detail="El alumno y el grupo pertenecen a planteles distintos"
+        )
+    if not group.is_active:
+        raise HTTPException(status_code=409, detail="El grupo no está activo")
+    from app.models import Term
+
+    term = await session.get(Term, group.term_id)
+    if term is None or not term.is_open:
+        raise HTTPException(status_code=409, detail="El ciclo de ese grupo está cerrado")
+    await require_operable_rvoe(session, group.plan_version_id)  # RT-03
+    own = await current_group(session, student.id, group.plan_version_id)
+    if own is None:
+        raise HTTPException(
+            status_code=409,
+            detail="El alumno no está en un grupo de este plan: inscríbelo primero en su grupo",
+        )
+    if own.id == group.id:
+        raise HTTPException(
+            status_code=409, detail="Es su propio grupo: usa «Agregar materias»"
+        )
+    if group.period_number > own.period_number:
+        raise HTTPException(
+            status_code=409,
+            detail="No se pueden adelantar materias: ese grupo es de un cuatrimestre posterior al suyo",
+        )
+    taught = set(
+        (
+            await session.exec(
+                select(GroupSubject.plan_subject_id).where(GroupSubject.group_id == group.id)
+            )
+        ).all()
+    )
+    if any(uuid_ not in taught for uuid_ in plan_subject_ids):
+        raise HTTPException(status_code=400, detail="Alguna materia no se imparte en ese grupo")
+
+    enrollment = (
+        await session.exec(
+            select(GroupEnrollment).where(
+                GroupEnrollment.student_id == student.id,
+                GroupEnrollment.group_id == group.id,
+            )
+        )
+    ).first()
+    if enrollment is not None and not enrollment.subjects_only:
+        raise HTTPException(status_code=409, detail="El alumno ya está inscrito en ese grupo")
+    if enrollment is None:
+        own_enrollment = (
+            await session.exec(
+                select(GroupEnrollment).where(
+                    GroupEnrollment.student_id == student.id,
+                    GroupEnrollment.group_id == own.id,
+                )
+            )
+        ).first()
+        enrollment = GroupEnrollment(
+            student_id=student.id, group_id=group.id,
+            plan_enrollment_id=own_enrollment.plan_enrollment_id,  # type: ignore[union-attr]
+            kind=GroupEnrollmentKind.reinscripcion, subjects_only=True,
+        )
+        session.add(enrollment)
+        await session.flush()
+        audit.record(
+            session, actor=current_user.email, action="group_enrollment.other_group",
+            entity="group_enrollment", entity_id=str(enrollment.id),
+            detail=f"cursa materias en {group.code} (su grupo es {own.code}); sin cargos",
+        )
+    # the same checks as any subject: already passed, in course elsewhere, seriación
+    return await add_subjects_core(
+        session, current_user, student, group,
+        plan_subject_ids=plan_subject_ids, override_prerequisites=override_prerequisites,
+    )

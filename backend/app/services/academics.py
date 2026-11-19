@@ -144,6 +144,7 @@ def _current_group_query():
         .join(StudentPlanEnrollment, StudentPlanEnrollment.id == GroupEnrollment.plan_enrollment_id)
         .where(
             GroupEnrollment.status == GroupEnrollmentStatus.activa,
+            GroupEnrollment.subjects_only == False,  # noqa: E712 — a subject taken in another group
             StudentPlanEnrollment.status == PlanEnrollmentStatus.inscrito,
             ~internal_group_clause(),
         )
