@@ -95,6 +95,9 @@ class InstitutionBase(SQLModel):
     late_fee_pct: float = Field(default=0.0, ge=0)
     late_fee_grace_days: int = Field(default=0, ge=0)
     block_documents_on_debt: bool = True
+    # Reglamento: subjects of the cuatrimestre that ends a student may have failed and
+    # still be promoted to the next one (0 = must pass them all)
+    max_failed_to_promote: int = Field(default=0, ge=0, le=20)
     # Beca percentages pre-authorized by Dirección (RF-T05): a beca created with
     # one of these activates immediately — no per-scholarship sign-off at caja.
     # Edited only via PUT /treasury/scholarship-pcts (Authorizer), not the
@@ -122,6 +125,7 @@ class InstitutionUpdate(SQLModel):
     late_fee_pct: float | None = None
     late_fee_grace_days: int | None = None
     block_documents_on_debt: bool | None = None
+    max_failed_to_promote: int | None = Field(default=None, ge=0, le=20)
 
 
 class CampusBase(SQLModel):

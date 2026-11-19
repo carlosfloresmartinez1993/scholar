@@ -23,6 +23,7 @@ import {
   Award,
   LogOut,
   Building2,
+  Settings,
   Search,
   User,
   PanelLeftClose,
@@ -106,6 +107,10 @@ const NAV_GROUPS = [
       { to: "/periodos", label: "Periodos", icon: CalendarRange },
       {
         to: "/planteles", label: "Planteles", icon: Building2,
+        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+      },
+      {
+        to: "/configuracion", label: "Configuración", icon: Settings,
         roles: ["admin_sistema", "direccion", "servicios_escolares"],
       },
     ],

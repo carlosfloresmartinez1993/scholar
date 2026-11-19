@@ -348,6 +348,7 @@ function PromoteCycleDialog({
                           <TableHead>Matrícula</TableHead>
                           <TableHead>Grupo destino</TableHead>
                           <TableHead>Ciclo</TableHead>
+                          <TableHead>Nota</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -359,6 +360,10 @@ function PromoteCycleDialog({
                             <TableCell data-numeric>{p.matricula}</TableCell>
                             <TableCell data-numeric>{p.target_group}</TableCell>
                             <TableCell>{p.term ?? "—"}</TableCell>
+                            {/* e.g. «avanza con 2 reprobada(s)» (reglamento) */}
+                            <TableCell className="text-muted-foreground">
+                              {p.reason ?? "—"}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

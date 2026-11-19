@@ -26,6 +26,7 @@ const ACTIONS = [
   { label: "Inscribir alumno", to: "/inscripciones", hint: "Acción" },
   { label: "Periodos", to: "/periodos", hint: "Página" },
   { label: "Planteles", to: "/planteles", hint: "Página" },
+  { label: "Configuración", to: "/configuracion", hint: "Página" },
   { label: "Mi perfil", to: "/perfil", hint: "Página" },
 ] as const;
 

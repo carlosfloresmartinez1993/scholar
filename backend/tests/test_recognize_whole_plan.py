@@ -158,7 +158,7 @@ async def test_promotion_respects_recognitions_and_retakes(client, seed):
 
     preview = (await client.post(f"{API}/students/promote-cycle?dry_run=false")).json()
     assert [p["student"] for p in preview["promoted"]] == ["Manuel Rubio"]
-    assert {s["student"]: s["reason"] for s in preview["skipped"]}["Otro"] == "no acreditó el periodo"
+    assert {s["student"]: s["reason"] for s in preview["skipped"]}["Otro"].startswith("no acreditó el periodo")
 
     k = await kardex(client, student["id"])
     assert [(r["code"], r["recognition"]) for r in k["rows"]] == [("DER101", "eq"), ("DER201", "eq")]

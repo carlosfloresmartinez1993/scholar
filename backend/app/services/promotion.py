@@ -15,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from app.models import (
     Group,
+    Institution,
     GroupEnrollment,
     GroupEnrollmentStatus,
     GroupSubject,
@@ -23,11 +24,13 @@ from app.models import (
     Student,
     StudentStatus,
     StudentPlanEnrollment,
+    SubjectEnrollment,
+    SubjectEnrollmentStatus,
     Term,
 )
 from app.models.common import utcnow
 from app.services import audit
-from app.services.academics import current_groups_of, settled_subjects_of
+from app.services.academics import check_prerequisites, current_groups_of, settled_subjects_of
 from app.services.enrollment import enroll_student_core
 
 
@@ -119,6 +122,33 @@ async def promote_cycle(
         required[group_id] = own or {subject for subject, _ in subjects}
     settled = await settled_subjects_of(session, in_sources)
     main_groups = await current_groups_of(session, in_sources)
+    # failed (reprobada) in some attempt: what the reglamento allows a few of
+    failed: dict = defaultdict(set)
+    for student_id, subject_id in (
+        await session.exec(
+            select(SubjectEnrollment.student_id, GroupSubject.plan_subject_id)
+            .join(GroupSubject, GroupSubject.id == SubjectEnrollment.group_subject_id)
+            .where(
+                SubjectEnrollment.student_id.in_(in_sources),  # type: ignore[attr-defined]
+                SubjectEnrollment.status == SubjectEnrollmentStatus.reprobada,
+            )
+        )
+    ).all():
+        failed[student_id].add(subject_id)
+    # how many failed subjects each institution lets a student carry to the next one
+    allowed_failed = {
+        i.id: i.max_failed_to_promote for i in (await session.exec(select(Institution))).all()
+    }
+    # what each target group teaches, to leave out what seriación blocks
+    target_subjects: dict = defaultdict(list)
+    for group_id, subject_id in (
+        await session.exec(
+            select(GroupSubject.group_id, GroupSubject.plan_subject_id).where(
+                GroupSubject.group_id.in_(target_ids)  # type: ignore[attr-defined]
+            )
+        )
+    ).all():
+        target_subjects[group_id].append(subject_id)
 
     for target, term in targets:
         source_group = source_groups[target.promotes_from_group_id]
@@ -146,17 +176,52 @@ async def promote_cycle(
             if main_group is not None and main_group.period_number > source_group.period_number:
                 skipped.append({**info, "reason": f"recursa en este grupo; su grupo es {main_group.code}"})
                 continue
-            # passed the whole source period?
+            # passed the source period? the reglamento allows a few failed ones
             wanted = required.get(source_group.id)
-            if not wanted or not wanted <= settled.get(student.id, set()):
+            if not wanted:
                 skipped.append({**info, "reason": "no acreditó el periodo"})
+                continue
+            missing = wanted - settled.get(student.id, set())
+            failed_here = missing & failed.get(student.id, set())
+            ungraded = missing - failed_here
+            limit = allowed_failed.get(term.institution_id, 0)
+            if ungraded:
+                skipped.append({**info, "reason": f"no acreditó el periodo: {len(ungraded)} materia(s) sin calificación (en curso o de baja)"})
+                continue
+            if len(failed_here) > limit:
+                skipped.append({
+                    **info,
+                    "reason": f"no acreditó el periodo: reprobó {len(failed_here)} (se permiten {limit})",
+                })
+                continue
+            # the next cuatrimestre's subjects, minus what is passed and what seriación blocks
+            subjects = [
+                s for s in target_subjects.get(target.id, [])
+                if s not in settled.get(student.id, set())
+            ]
+            blocked = []
+            if failed_here:
+                for subject_id in list(subjects):
+                    if await check_prerequisites(session, student.id, subject_id):
+                        subjects.remove(subject_id)
+                        blocked.append(subject_id)
+            if failed_here:
+                note = f"avanza con {len(failed_here)} reprobada(s)"
+                if blocked:
+                    note += f"; {len(blocked)} materia(s) sin inscribir por seriación"
+                info = {**info, "reason": note}
+            if blocked and not subjects:  # every next subject needs a failed one
+                skipped.append({**info, "reason": "todas sus materias del siguiente cuatrimestre las bloquea la seriación"})
                 continue
             if dry_run:
                 promoted.append(info)
                 continue
             try:  # isolate each student so one failure doesn't sink the batch
                 async with session.begin_nested():
-                    await enroll_student_core(session, current_user, student, target)
+                    await enroll_student_core(
+                        session, current_user, student, target,
+                        plan_subject_ids=subjects if blocked else None,
+                    )
                 promoted.append(info)
             except (HTTPException, IntegrityError, ValueError) as e:
                 detail = e.detail if isinstance(e, HTTPException) else str(e)

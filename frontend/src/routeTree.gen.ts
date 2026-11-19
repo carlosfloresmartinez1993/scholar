@@ -23,6 +23,7 @@ import { Route as AuthPerfilRouteImport } from './routes/_auth/perfil'
 import { Route as AuthInscripcionesRouteImport } from './routes/_auth/inscripciones'
 import { Route as AuthGruposRouteImport } from './routes/_auth/grupos'
 import { Route as AuthEgresadosRouteImport } from './routes/_auth/egresados'
+import { Route as AuthConfiguracionRouteImport } from './routes/_auth/configuracion'
 import { Route as AuthCalificacionesRouteImport } from './routes/_auth/calificaciones'
 import { Route as AuthAuditoriaRouteImport } from './routes/_auth/auditoria'
 import { Route as AuthAsistenciasRouteImport } from './routes/_auth/asistencias'
@@ -100,6 +101,11 @@ const AuthEgresadosRoute = AuthEgresadosRouteImport.update({
   path: '/egresados',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthConfiguracionRoute = AuthConfiguracionRouteImport.update({
+  id: '/configuracion',
+  path: '/configuracion',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthCalificacionesRoute = AuthCalificacionesRouteImport.update({
   id: '/calificaciones',
   path: '/calificaciones',
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/asistencias': typeof AuthAsistenciasRoute
   '/auditoria': typeof AuthAuditoriaRoute
   '/calificaciones': typeof AuthCalificacionesRoute
+  '/configuracion': typeof AuthConfiguracionRoute
   '/egresados': typeof AuthEgresadosRoute
   '/grupos': typeof AuthGruposRoute
   '/inscripciones': typeof AuthInscripcionesRoute
@@ -165,6 +172,7 @@ export interface FileRoutesByTo {
   '/asistencias': typeof AuthAsistenciasRoute
   '/auditoria': typeof AuthAuditoriaRoute
   '/calificaciones': typeof AuthCalificacionesRoute
+  '/configuracion': typeof AuthConfiguracionRoute
   '/egresados': typeof AuthEgresadosRoute
   '/grupos': typeof AuthGruposRoute
   '/inscripciones': typeof AuthInscripcionesRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/_auth/asistencias': typeof AuthAsistenciasRoute
   '/_auth/auditoria': typeof AuthAuditoriaRoute
   '/_auth/calificaciones': typeof AuthCalificacionesRoute
+  '/_auth/configuracion': typeof AuthConfiguracionRoute
   '/_auth/egresados': typeof AuthEgresadosRoute
   '/_auth/grupos': typeof AuthGruposRoute
   '/_auth/inscripciones': typeof AuthInscripcionesRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/asistencias'
     | '/auditoria'
     | '/calificaciones'
+    | '/configuracion'
     | '/egresados'
     | '/grupos'
     | '/inscripciones'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/asistencias'
     | '/auditoria'
     | '/calificaciones'
+    | '/configuracion'
     | '/egresados'
     | '/grupos'
     | '/inscripciones'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '/_auth/asistencias'
     | '/_auth/auditoria'
     | '/_auth/calificaciones'
+    | '/_auth/configuracion'
     | '/_auth/egresados'
     | '/_auth/grupos'
     | '/_auth/inscripciones'
@@ -380,6 +392,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthEgresadosRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/configuracion': {
+      id: '/_auth/configuracion'
+      path: '/configuracion'
+      fullPath: '/configuracion'
+      preLoaderRoute: typeof AuthConfiguracionRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/calificaciones': {
       id: '/_auth/calificaciones'
       path: '/calificaciones'
@@ -437,6 +456,7 @@ interface AuthRouteChildren {
   AuthAsistenciasRoute: typeof AuthAsistenciasRoute
   AuthAuditoriaRoute: typeof AuthAuditoriaRoute
   AuthCalificacionesRoute: typeof AuthCalificacionesRoute
+  AuthConfiguracionRoute: typeof AuthConfiguracionRoute
   AuthEgresadosRoute: typeof AuthEgresadosRoute
   AuthGruposRoute: typeof AuthGruposRoute
   AuthInscripcionesRoute: typeof AuthInscripcionesRoute
@@ -458,6 +478,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthAsistenciasRoute: AuthAsistenciasRoute,
   AuthAuditoriaRoute: AuthAuditoriaRoute,
   AuthCalificacionesRoute: AuthCalificacionesRoute,
+  AuthConfiguracionRoute: AuthConfiguracionRoute,
   AuthEgresadosRoute: AuthEgresadosRoute,
   AuthGruposRoute: AuthGruposRoute,
   AuthInscripcionesRoute: AuthInscripcionesRoute,
