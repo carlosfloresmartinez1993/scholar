@@ -13,6 +13,7 @@ from sqlmodel import Field, SQLModel, func, select
 
 from app.api.deps import (
     CanProfesores,
+    CanProfesoresEdit,
     SessionDep,
 )
 from app.core.security import get_password_hash
@@ -143,7 +144,7 @@ async def list_teachers(session: SessionDep, _: CanProfesores) -> list[dict]:
 
 @router.post("", status_code=201)
 async def create_teacher(
-    session: SessionDep, current_user: CanProfesores, body: TeacherCreate,
+    session: SessionDep, current_user: CanProfesoresEdit, body: TeacherCreate,
     background: BackgroundTasks,
 ) -> dict:
     """Account (role docente, generated password sent by email) + expediente."""
@@ -217,7 +218,7 @@ async def get_teacher(session: SessionDep, _: CanProfesores, user_id: uuid.UUID)
 
 @router.patch("/{user_id}")
 async def update_teacher(
-    session: SessionDep, current_user: CanProfesores, user_id: uuid.UUID, body: TeacherUpdate,
+    session: SessionDep, current_user: CanProfesoresEdit, user_id: uuid.UUID, body: TeacherUpdate,
 ) -> dict:
     user = await _teacher(session, user_id)
     changes = body.model_dump(exclude_unset=True)

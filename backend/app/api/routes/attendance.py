@@ -7,8 +7,10 @@ from sqlmodel import select
 
 from app.api.deps import (
     CanAsistencias,
-    CanAsistenciasStaff,
+    CanAsistenciasEdit,
+    CanAsistenciasStaffEdit,
     CanJustificaciones,
+    CanJustificacionesEdit,
     SessionDep,
     ensure_own_subject,
 )
@@ -49,7 +51,7 @@ async def _can_mark(user: User, group_subject: GroupSubject) -> None:
 
 @router.post("/sessions", status_code=201)
 async def record_session(
-    session: SessionDep, current_user: CanAsistencias, body: SessionWithAttendanceIn
+    session: SessionDep, current_user: CanAsistenciasEdit, body: SessionWithAttendanceIn
 ) -> ClassSessionPublic:
     """RF-A01: create (or update) a session and its roll call in one request."""
     group_subject = await session.get(GroupSubject, body.group_subject_id)
@@ -202,7 +204,7 @@ async def attendance_report(
 @router.post("/group-subjects/{group_subject_id}/notify-at-risk")
 async def notify_at_risk(
     session: SessionDep,
-    current_user: CanAsistenciasStaff,
+    current_user: CanAsistenciasStaffEdit,
     group_subject_id: uuid.UUID,
     background: BackgroundTasks,
     threshold_margin: float = 5.0,
@@ -237,7 +239,7 @@ async def notify_at_risk(
 
 @router.post("/justifications", status_code=201)
 async def create_justification(
-    session: SessionDep, current_user: CanJustificaciones, body: JustificationCreate
+    session: SessionDep, current_user: CanJustificacionesEdit, body: JustificationCreate
 ) -> JustificationPublic:
     if await session.get(Student, body.student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
@@ -254,7 +256,7 @@ async def create_justification(
 
 @router.post("/justifications/{justification_id}/evidence")
 async def upload_evidence(
-    session: SessionDep, current_user: CanJustificaciones, justification_id: uuid.UUID, file: UploadFile
+    session: SessionDep, current_user: CanJustificacionesEdit, justification_id: uuid.UUID, file: UploadFile
 ) -> JustificationPublic:
     justification = await session.get(AbsenceJustification, justification_id)
     if justification is None:
@@ -288,7 +290,7 @@ async def list_justifications(
 @router.post("/justifications/{justification_id}/review")
 async def review_justification(
     session: SessionDep,
-    current_user: CanJustificaciones,
+    current_user: CanJustificacionesEdit,
     justification_id: uuid.UUID,
     body: JustificationReviewIn,
 ) -> JustificationPublic:

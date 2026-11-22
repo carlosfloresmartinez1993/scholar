@@ -113,8 +113,13 @@ def require_view(*views: str, any_view: bool = False, staff_only: bool = False):
         if staff_only and own:
             allowed = False
         if not allowed:
+            only_reads = any(v.endswith(".editar") for v in views) and bool(
+                permissions & {v.removesuffix(".editar") for v in views}
+            )
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Tu rol no tiene permiso para esta sección"
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=("Tu rol solo puede ver esta sección, no modificarla" if only_reads
+                        else "Tu rol no tiene permiso para esta acción"),
             )
         return current_user
 
@@ -161,6 +166,31 @@ CanUsuarios = View("usuarios")
 CanAuditoria = View("auditoria")
 CanRoles = View("roles")
 CanRolesRead = View("roles", "usuarios")
+
+# Etapa 2 — changing something needs «<view>.editar»; delicate actions, their own
+CanAlumnosEdit = View("alumnos.editar")
+CanInscripcionesEdit = View("inscripciones.editar", "alumnos.editar")
+CanEnrollmentChangesEdit = View("grupos.editar", "alumnos.editar", "inscripciones.editar",
+                                staff_only=True)
+CanProfesoresEdit = View("profesores.editar")
+CanProgramasEdit = View("programas.editar")
+CanGruposEdit = View("grupos.editar", staff_only=True)
+CanEgresadosEdit = View("egresados.editar")
+CanCalificacionesEdit = View("calificaciones.editar")
+CanAsistenciasEdit = View("asistencias.editar")
+CanAsistenciasStaffEdit = View("asistencias.editar", staff_only=True)
+CanJustificacionesEdit = View("asistencias.editar", "alumnos.editar", staff_only=True)
+CanTesoreriaEdit = View("tesoreria.editar")
+CanPeriodosEdit = View("periodos.editar")
+CanPlantelesEdit = View("planteles.editar")
+CanConfiguracionEdit = View("configuracion.editar")
+CanUsuariosEdit = View("usuarios.editar")
+CanRolesEdit = View("roles.editar")
+CanKardexCorregir = View("kardex_corregir", staff_only=True)
+CanRvoeCambio = View("rvoe_cambio", staff_only=True)
+CanPromocionCiclo = View("promocion_ciclo", staff_only=True)
+CanActasFirmar = View("actas", staff_only=True)
+CanPagosCancelar = View("pagos_cancelar")
 
 
 def own_subjects_only() -> bool:

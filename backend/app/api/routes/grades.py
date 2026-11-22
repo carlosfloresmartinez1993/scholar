@@ -10,12 +10,13 @@ from sqlmodel import select
 
 from app.api.deps import (
     CampusScope,
-    CanActas,
+    CanActasFirmar,
     CanAlumniRead,
-    CanAlumnos,
     CanCalificaciones,
-    CanEgresados,
+    CanCalificacionesEdit,
+    CanEgresadosEdit,
     CanGrid,
+    CanKardexCorregir,
     CanKardexRead,
     CurrentUser,
     SessionDep,
@@ -260,7 +261,7 @@ async def _apply_capture(
 
 @router.post("/capture")
 async def capture_grade(
-    session: SessionDep, current_user: CanCalificaciones, body: GradeCaptureIn
+    session: SessionDep, current_user: CanCalificacionesEdit, body: GradeCaptureIn
 ) -> GradePublic:
     grade = await _apply_capture(session, current_user, body)
     await session.commit()
@@ -270,7 +271,7 @@ async def capture_grade(
 
 @router.post("/capture-batch")
 async def capture_grades_batch(
-    session: SessionDep, current_user: CanCalificaciones, body: list[GradeCaptureIn]
+    session: SessionDep, current_user: CanCalificacionesEdit, body: list[GradeCaptureIn]
 ) -> list[GradePublic]:
     """Save a whole grid in one request instead of one POST per cell."""
     # parciales first: an extraordinario in the same batch is checked against them
@@ -311,7 +312,7 @@ async def _correctable(session, scope, subject_enrollment_id) -> tuple[SubjectEn
 
 @router.get("/subject-enrollments/{subject_enrollment_id}/correction")
 async def correction_form(
-    session: SessionDep, _: CanAlumnos, scope: CampusScope, subject_enrollment_id: uuid.UUID
+    session: SessionDep, _: CanKardexCorregir, scope: CampusScope, subject_enrollment_id: uuid.UUID
 ) -> dict:
     """What a subject of the record has captured, to correct it."""
     enrollment, group_subject = await _correctable(session, scope, subject_enrollment_id)
@@ -330,7 +331,7 @@ async def correction_form(
 
 @router.post("/subject-enrollments/{subject_enrollment_id}/correct")
 async def correct_grade(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanKardexCorregir, scope: CampusScope,
     subject_enrollment_id: uuid.UUID, body: GradeCorrectionIn,
 ) -> dict:
     """Corregir una calificación del historial, con motivo y a cualquier hora."""
@@ -394,7 +395,7 @@ async def correct_grade(
 @router.post("/group-subjects/{group_subject_id}/actas", status_code=201)
 async def generate_acta(
     session: SessionDep,
-    current_user: CanActas,
+    current_user: CanActasFirmar,
     group_subject_id: uuid.UUID,
     kind: ActaKind = ActaKind.ordinaria,
 ) -> GradeActaPublic:
@@ -453,7 +454,7 @@ async def list_actas(
 
 @router.post("/actas/{acta_id}/sign")
 async def sign_acta(
-    session: SessionDep, current_user: CanActas, acta_id: uuid.UUID, signed_by_name: str
+    session: SessionDep, current_user: CanActasFirmar, acta_id: uuid.UUID, signed_by_name: str
 ) -> GradeActaPublic:
     from app.models.common import utcnow
 
@@ -505,7 +506,7 @@ async def list_degree_records(session: SessionDep, _: CanAlumniRead) -> list[Deg
 
 @router.post("/degree-records", status_code=201)
 async def register_degree(
-    session: SessionDep, current_user: CanEgresados, body: DegreeRecordCreate
+    session: SessionDep, current_user: CanEgresadosEdit, body: DegreeRecordCreate
 ) -> DegreeRecordPublic:
     student = await session.get(Student, body.student_id)
     if student is None:

@@ -30,6 +30,9 @@ export interface PermissionItem {
   code: string;
   label: string;
   section: string;
+  /** a screen («ver», plus «editar» when edit_code) or a delicate action */
+  kind: "view" | "action";
+  edit_code: string | null;
 }
 
 // code of a level of the editable catalog (Programas → Niveles educativos)

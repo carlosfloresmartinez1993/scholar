@@ -7,8 +7,12 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from sqlmodel import func, select
 
-from app.api.deps import CanRoles, CanRolesRead, SessionDep
-from app.core.permissions import ADMIN_ROLE, ALL_PERMISSIONS, SPECIAL, VIEWS
+from app.api.deps import (
+    CanRolesEdit,
+    CanRolesRead,
+    SessionDep,
+)
+from app.core.permissions import ADMIN_ROLE, ALL_PERMISSIONS, EDITABLE, SPECIAL, VIEWS, edit
 from app.models import Role, RoleCreate, RolePermission, RolePublic, RoleUpdate, User
 from app.services import audit
 
@@ -34,6 +38,8 @@ async def _set_permissions(session, role: Role, permissions: list[str]) -> None:
     unknown = set(permissions) - ALL_PERMISSIONS
     if unknown:
         raise HTTPException(status_code=422, detail=f"Permiso desconocido: {', '.join(sorted(unknown))}")
+    # «editar» always comes with «ver»
+    permissions = list(set(permissions) | {p.removesuffix(".editar") for p in permissions if p.endswith(".editar")})
     for row in (await session.exec(select(RolePermission).where(RolePermission.role_id == role.id))).all():
         await session.delete(row)
     await session.flush()
@@ -43,8 +49,16 @@ async def _set_permissions(session, role: Role, permissions: list[str]) -> None:
 
 @router.get("/permissions")
 async def list_permissions(_: CanRolesRead) -> list[dict]:
-    """The catalog: one entry per view (and special action), grouped by section."""
-    return [{"code": c, "label": label, "section": section} for c, label, section in VIEWS + SPECIAL]
+    """The catalog, grouped by section: each view with its «editar» code when it has
+    one, and the delicate actions."""
+    return [
+        {"code": c, "label": label, "section": section, "kind": "view",
+         "edit_code": edit(c) if c in EDITABLE else None}
+        for c, label, section in VIEWS
+    ] + [
+        {"code": c, "label": label, "section": section, "kind": "action", "edit_code": None}
+        for c, label, section in SPECIAL
+    ]
 
 
 @router.get("")
@@ -54,7 +68,7 @@ async def list_roles(session: SessionDep, _: CanRolesRead) -> list[RolePublic]:
 
 
 @router.post("", status_code=201)
-async def create_role(session: SessionDep, current_user: CanRoles, body: RoleCreate) -> RolePublic:
+async def create_role(session: SessionDep, current_user: CanRolesEdit, body: RoleCreate) -> RolePublic:
     code = _code_for(body.name)
     base, n = code, 2
     while (await session.exec(select(Role).where(Role.code == code))).first() or code == "alumno":
@@ -73,7 +87,7 @@ async def create_role(session: SessionDep, current_user: CanRoles, body: RoleCre
 
 @router.patch("/{role_id}")
 async def update_role(
-    session: SessionDep, current_user: CanRoles, role_id: uuid.UUID, body: RoleUpdate
+    session: SessionDep, current_user: CanRolesEdit, role_id: uuid.UUID, body: RoleUpdate
 ) -> RolePublic:
     role = await session.get(Role, role_id)
     if role is None:
@@ -112,7 +126,7 @@ async def update_role(
 
 
 @router.delete("/{role_id}", status_code=204)
-async def delete_role(session: SessionDep, current_user: CanRoles, role_id: uuid.UUID) -> None:
+async def delete_role(session: SessionDep, current_user: CanRolesEdit, role_id: uuid.UUID) -> None:
     role = await session.get(Role, role_id)
     if role is None:
         raise HTTPException(status_code=404, detail="Rol no encontrado")

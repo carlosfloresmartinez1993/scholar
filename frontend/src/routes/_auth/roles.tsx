@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/api/client";
+import { cn } from "@/lib/utils";
 import { queryKeys } from "@/api/query-keys";
 import type { PermissionItem, RoleItem } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,20 @@ export const Route = createFileRoute("/_auth/roles")({
 
 const ADMIN = "admin_sistema";
 const NONE = "__none__";
+
+type Level = "none" | "view" | "edit";
+
+function levelOf(role: RoleItem, item: PermissionItem): Level {
+  if (role.code === ADMIN) return item.edit_code ? "edit" : "view";
+  if (item.edit_code && role.permissions.includes(item.edit_code)) return "edit";
+  return role.permissions.includes(item.code) ? "view" : "none";
+}
+
+const LEVEL_STYLE: Record<Level, string> = {
+  none: "text-muted-foreground",
+  view: "",
+  edit: "font-semibold",
+};
 const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 function RolesPage() {
@@ -58,16 +73,21 @@ function RolesPage() {
   });
   const [editing, setEditing] = useState<RoleItem | "new" | null>(null);
 
+  // a screen: none / ver / ver y editar; an action: on / off
   const toggle = useMutation({
-    mutationFn: ({ role, permission, on }: { role: RoleItem; permission: string; on: boolean }) =>
-      api<RoleItem>(`/roles/${role.id}`, {
+    mutationFn: ({ role, item, level }: { role: RoleItem; item: PermissionItem; level: Level }) => {
+      const rest = role.permissions.filter((p) => p !== item.code && p !== item.edit_code);
+      const added =
+        level === "edit" && item.edit_code
+          ? [item.code, item.edit_code]
+          : level === "none"
+            ? []
+            : [item.code];
+      return api<RoleItem>(`/roles/${role.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          permissions: on
-            ? [...role.permissions, permission]
-            : role.permissions.filter((p) => p !== permission),
-        }),
-      }),
+        body: JSON.stringify({ permissions: [...rest, ...added] }),
+      });
+    },
     onSuccess: (role) => {
       queryClient.invalidateQueries({ queryKey: ["roles"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.me });
@@ -96,9 +116,11 @@ function RolesPage() {
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Marca qué pantallas puede abrir cada rol. Se guarda al marcar y aplica desde la siguiente
-        acción del usuario: el servidor revisa el permiso en cada consulta, no solo el menú. El
-        administrador de sistema siempre tiene todo. Los cambios quedan en Auditoría.
+        Para cada pantalla elige si el rol no tiene acceso, solo la puede <b>ver</b>, o la puede{" "}
+        <b>ver y editar</b>. Las acciones especiales (corregir kárdex, cambio de RVOE, actas…) se
+        dan aparte. Se guarda al elegir y aplica desde la siguiente acción del usuario: el servidor
+        revisa el permiso en cada consulta, no solo el menú. El administrador de sistema siempre
+        tiene todo. Los cambios quedan en Auditoría.
       </p>
 
       {isLoading || !roles || !catalog ? (
@@ -108,7 +130,7 @@ function RolesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-48">Pantalla</TableHead>
+                <TableHead className="min-w-48">Pantalla o acción</TableHead>
                 {roles.map((r) => (
                   <TableHead key={r.id} className="min-w-36 text-center align-top">
                     <div className="flex flex-col items-center gap-1 py-1">
@@ -166,14 +188,34 @@ function RolesPage() {
                         <TableCell className="font-semibold">{p.label}</TableCell>
                         {roles.map((r) => (
                           <TableCell key={r.id} className="text-center">
-                            <Checkbox
-                              aria-label={`${p.label} para ${r.name}`}
-                              checked={r.code === ADMIN || r.permissions.includes(p.code)}
-                              disabled={r.code === ADMIN || toggle.isPending}
-                              onCheckedChange={(v) =>
-                                toggle.mutate({ role: r, permission: p.code, on: v === true })
-                              }
-                            />
+                            {p.edit_code ? (
+                              <Select
+                                value={levelOf(r, p)}
+                                disabled={r.code === ADMIN || toggle.isPending}
+                                onValueChange={(v) => toggle.mutate({ role: r, item: p, level: v as Level })}
+                              >
+                                <SelectTrigger
+                                  aria-label={`${p.label} para ${r.name}`}
+                                  className={cn("mx-auto h-8 w-32 text-xs", LEVEL_STYLE[levelOf(r, p)])}
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Sin acceso</SelectItem>
+                                  <SelectItem value="view">Ver</SelectItem>
+                                  <SelectItem value="edit">Ver y editar</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Checkbox
+                                aria-label={`${p.label} para ${r.name}`}
+                                checked={levelOf(r, p) !== "none"}
+                                disabled={r.code === ADMIN || toggle.isPending}
+                                onCheckedChange={(v) =>
+                                  toggle.mutate({ role: r, item: p, level: v === true ? "view" : "none" })
+                                }
+                              />
+                            )}
                           </TableCell>
                         ))}
                       </TableRow>

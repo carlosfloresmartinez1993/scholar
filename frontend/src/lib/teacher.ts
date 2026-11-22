@@ -36,6 +36,19 @@ export function permissionFor(pathname: string): string | null {
   return hit ? hit[1] : null;
 }
 
+// screens where something can be changed («<view>.editar»)
+const EDITABLE = new Set([
+  "alumnos", "profesores", "inscripciones", "programas", "grupos", "egresados",
+  "calificaciones", "asistencias", "tesoreria", "periodos", "planteles", "configuracion",
+  "usuarios", "roles",
+]);
+
+/** The user may open this screen but not change anything in it. */
+export function readOnlyHere(me: UserPublic | null | undefined, pathname: string): boolean {
+  const view = permissionFor(pathname);
+  return !!view && EDITABLE.has(view) && can(me, view) && !can(me, `${view}.editar`);
+}
+
 /** Where to send a user who may not open the page they asked for. */
 export function firstAllowedPath(me: UserPublic): string {
   if (can(me, "inicio")) return "/";

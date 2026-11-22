@@ -13,7 +13,7 @@ from sqlmodel import select
 
 from app.api.deps import (
     CanUsersRead,
-    CanUsuarios,
+    CanUsuariosEdit,
     CurrentUser,
     SessionDep,
     build_user_public,
@@ -201,7 +201,7 @@ async def list_users(
 
 
 @router.post("", status_code=201)
-async def create_user(session: SessionDep, actor: CanUsuarios, body: UserCreate) -> UserPublic:
+async def create_user(session: SessionDep, actor: CanUsuariosEdit, body: UserCreate) -> UserPublic:
     existing = (await session.exec(select(User).where(User.email == body.email.lower()))).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -227,7 +227,7 @@ async def create_user(session: SessionDep, actor: CanUsuarios, body: UserCreate)
 
 @router.patch("/{user_id}")
 async def update_user(
-    session: SessionDep, actor: CanUsuarios, user_id: uuid.UUID, body: UserUpdate
+    session: SessionDep, actor: CanUsuariosEdit, user_id: uuid.UUID, body: UserUpdate
 ) -> UserPublic:
     user = await session.get(User, user_id)
     if user is None:
@@ -258,7 +258,7 @@ async def update_user(
 
 
 @router.delete("/{user_id}")
-async def deactivate_user(session: SessionDep, actor: CanUsuarios, user_id: uuid.UUID) -> dict:
+async def deactivate_user(session: SessionDep, actor: CanUsuariosEdit, user_id: uuid.UUID) -> dict:
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

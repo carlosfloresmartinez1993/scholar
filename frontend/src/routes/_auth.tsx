@@ -4,6 +4,7 @@ import {
   Link,
   Outlet,
   redirect,
+  useLocation,
   useNavigate,
 } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -33,7 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "@/components/command-palette";
-import { can, firstAllowedPath, isTeacher, permissionFor } from "@/lib/teacher";
+import { can, firstAllowedPath, isTeacher, permissionFor, readOnlyHere } from "@/lib/teacher";
 import { api } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type { UserPublic } from "@/api/types";
@@ -152,6 +153,7 @@ export function userInitials(me?: UserPublic): string {
 }
 
 function AppShell() {
+  const location = useLocation();
   const { data: me } = useQuery({
     queryKey: queryKeys.me,
     queryFn: () => api<UserPublic>("/auth/me"),
@@ -301,6 +303,12 @@ function AppShell() {
         >
           <Header onSearch={teacher ? undefined : () => setPaletteOpen(true)} />
           <main className="flex-1 p-6">
+            {readOnlyHere(me, location.pathname) && (
+              <div className="mb-4 rounded-md border border-sky-300 bg-sky-50 px-4 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
+                <b>Solo lectura.</b> Tu rol puede ver esta sección, pero no modificarla: si intentas
+                guardar algo, el sistema no lo permitirá.
+              </div>
+            )}
             <Outlet />
           </main>
         </div>

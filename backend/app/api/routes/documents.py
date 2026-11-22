@@ -11,7 +11,9 @@ from sqlmodel import select
 from app.api.deps import (
     AnyStaff,
     CanAlumnos,
+    CanAlumnosEdit,
     CanProfesores,
+    CanProfesoresEdit,
     SessionDep,
 )
 from app.api.routes.catalog import get_default_institution
@@ -68,7 +70,7 @@ async def list_requirements(session: SessionDep, _: AnyStaff) -> list[Requiremen
 
 @router.post("/requirements", status_code=201)
 async def create_requirement(
-    session: SessionDep, current_user: CanAlumnos, body: RequirementCreate
+    session: SessionDep, current_user: CanAlumnosEdit, body: RequirementCreate
 ) -> RequirementPublic:
     institution = await get_default_institution(session)
     requirement = DocumentRequirement(**body.model_dump(), institution_id=institution.id)
@@ -85,7 +87,7 @@ async def create_requirement(
 @router.post("/students/{student_id}/documents", status_code=201)
 async def upload_student_document(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     student_id: uuid.UUID,
     file: UploadFile,
     title: str,
@@ -149,7 +151,7 @@ async def download_student_document(
 @router.post("/student-documents/{document_id}/review")
 async def review_student_document(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     document_id: uuid.UUID,
     body: DocumentReviewIn,
 ) -> StudentDocumentPublic:
@@ -241,7 +243,7 @@ async def _student_plan_context(
 
 @router.post("/issue", status_code=201)
 async def issue_document(
-    session: SessionDep, current_user: CanAlumnos, body: IssueDocumentIn
+    session: SessionDep, current_user: CanAlumnosEdit, body: IssueDocumentIn
 ) -> IssuedDocumentPublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -314,7 +316,7 @@ async def list_regulations(session: SessionDep, _: AnyStaff) -> list[RegulationP
 
 @router.post("/regulations", status_code=201)
 async def publish_regulation(
-    session: SessionDep, current_user: CanAlumnos, body: RegulationCreate
+    session: SessionDep, current_user: CanAlumnosEdit, body: RegulationCreate
 ) -> RegulationPublic:
     institution = await get_default_institution(session)
     current = (
@@ -339,7 +341,7 @@ async def publish_regulation(
 
 @router.post("/regulations/{regulation_id}/acceptances", status_code=201)
 async def record_acceptance(
-    session: SessionDep, current_user: CanAlumnos, regulation_id: uuid.UUID, student_id: uuid.UUID
+    session: SessionDep, current_user: CanAlumnosEdit, regulation_id: uuid.UUID, student_id: uuid.UUID
 ) -> dict:
     if await session.get(Regulation, regulation_id) is None:
         raise HTTPException(status_code=404, detail="Reglamento no encontrado")
@@ -375,7 +377,7 @@ async def list_teacher_profiles(session: SessionDep, _: CanProfesores) -> list[T
 
 @router.put("/teachers", status_code=201)
 async def upsert_teacher_profile(
-    session: SessionDep, current_user: CanProfesores, body: TeacherProfileUpsert
+    session: SessionDep, current_user: CanProfesoresEdit, body: TeacherProfileUpsert
 ) -> TeacherProfilePublic:
     user = await session.get(User, body.user_id)
     if user is None or user.role != UserRole.docente:
@@ -399,7 +401,7 @@ async def upsert_teacher_profile(
 @router.post("/teachers/{profile_id}/documents", status_code=201)
 async def upload_teacher_document(
     session: SessionDep,
-    current_user: CanProfesores,
+    current_user: CanProfesoresEdit,
     profile_id: uuid.UUID,
     file: UploadFile,
     title: str,

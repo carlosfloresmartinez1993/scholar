@@ -13,7 +13,9 @@ from sqlmodel import func, select
 from app.api.deps import (
     AnyStaff,
     CanBecasAutorizar,
+    CanPagosCancelar,
     CanTesoreria,
+    CanTesoreriaEdit,
     CanTesoreriaReports,
     SessionDep,
 )
@@ -87,7 +89,7 @@ async def list_concepts(session: SessionDep, _: AnyStaff) -> list[ChargeConceptP
 
 @router.post("/concepts", status_code=201)
 async def create_concept(
-    session: SessionDep, current_user: CanTesoreria, body: ChargeConceptCreate
+    session: SessionDep, current_user: CanTesoreriaEdit, body: ChargeConceptCreate
 ) -> ChargeConceptPublic:
     institution = await get_default_institution(session)
     concept = ChargeConcept(**body.model_dump(), institution_id=institution.id)
@@ -101,7 +103,7 @@ async def create_concept(
 
 @router.patch("/concepts/{concept_id}")
 async def update_concept(
-    session: SessionDep, current_user: CanTesoreria, concept_id: uuid.UUID,
+    session: SessionDep, current_user: CanTesoreriaEdit, concept_id: uuid.UUID,
     body: ChargeConceptUpdate,
 ) -> ChargeConceptPublic:
     """Edit a concept in place (e.g. yearly price bump). Existing charges froze
@@ -129,7 +131,7 @@ async def update_concept(
 
 @router.post("/charges", status_code=201)
 async def create_charge(
-    session: SessionDep, current_user: CanTesoreria, body: ChargeCreate
+    session: SessionDep, current_user: CanTesoreriaEdit, body: ChargeCreate
 ) -> ChargePublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -165,7 +167,7 @@ async def create_charge(
 
 @router.post("/payment-plans", status_code=201)
 async def generate_payment_plan(
-    session: SessionDep, current_user: CanTesoreria, body: PaymentPlanGenerateIn
+    session: SessionDep, current_user: CanTesoreriaEdit, body: PaymentPlanGenerateIn
 ) -> list[ChargePublic]:
     """RF-T02: N installments of a concept; scholarships applied per charge (RF-T05)."""
     student = await session.get(Student, body.student_id)
@@ -210,7 +212,7 @@ async def generate_payment_plan(
 
 @router.post("/groups/{group_id}/generate-charges")
 async def generate_group_charges(
-    session: SessionDep, current_user: CanTesoreria, group_id: uuid.UUID,
+    session: SessionDep, current_user: CanTesoreriaEdit, group_id: uuid.UUID,
     waive_enrollment_fee: bool = False,
 ) -> dict:
     """Cohort billing (Servo's AsignaciónCobranza): bill every active enrollment in
@@ -306,7 +308,7 @@ async def group_billing_status(
 
 @router.post("/charges/{charge_id}/cancel")
 async def cancel_charge(
-    session: SessionDep, current_user: CanTesoreria, charge_id: uuid.UUID, reason: str = ""
+    session: SessionDep, current_user: CanPagosCancelar, charge_id: uuid.UUID, reason: str = ""
 ) -> dict:
     charge = await session.get(Charge, charge_id)
     if charge is None:
@@ -340,7 +342,7 @@ async def cancel_charge(
 
 @router.post("/charges/{charge_id}/condone")
 async def condone_charge(
-    session: SessionDep, current_user: CanTesoreria, charge_id: uuid.UUID,
+    session: SessionDep, current_user: CanPagosCancelar, charge_id: uuid.UUID,
     body: ChargeCondoneIn,
 ) -> ChargePublic:
     """Condonación: forgive part or all of a charge's open balance at caja,
@@ -387,7 +389,7 @@ async def condone_charge(
 
 @router.post("/payments", status_code=201)
 async def register_payment(
-    session: SessionDep, current_user: CanTesoreria, body: PaymentCreate
+    session: SessionDep, current_user: CanTesoreriaEdit, body: PaymentCreate
 ) -> PaymentPublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -492,7 +494,7 @@ async def register_payment(
 
 @router.post("/payments/{payment_id}/cancel")
 async def cancel_payment(
-    session: SessionDep, current_user: CanTesoreria, payment_id: uuid.UUID, reason: str
+    session: SessionDep, current_user: CanPagosCancelar, payment_id: uuid.UUID, reason: str
 ) -> PaymentPublic:
     payment = await session.get(Payment, payment_id)
     if payment is None:
@@ -577,7 +579,7 @@ async def list_scholarships(
 
 @router.post("/scholarships", status_code=201)
 async def create_scholarship(
-    session: SessionDep, current_user: CanTesoreria, body: ScholarshipCreate
+    session: SessionDep, current_user: CanTesoreriaEdit, body: ScholarshipCreate
 ) -> ScholarshipPublic:
     """RF-T05: creates a beca. Requested by treasury staff it stays `solicitada`
     (no discount) until an admin authorizes it; created by an admin/superuser it
@@ -704,7 +706,7 @@ async def get_fiscal_profile(
 
 @router.put("/students/{student_id}/fiscal")
 async def upsert_fiscal_profile(
-    session: SessionDep, current_user: CanTesoreria, student_id: uuid.UUID, body: FiscalProfileBase
+    session: SessionDep, current_user: CanTesoreriaEdit, student_id: uuid.UUID, body: FiscalProfileBase
 ) -> FiscalProfilePublic:
     if await session.get(Student, student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
@@ -746,7 +748,7 @@ async def upsert_fiscal_profile(
 # --- Late fees (RF-T06) -----------------------------------------------------------------------
 
 @router.post("/late-fees/run")
-async def run_late_fees(session: SessionDep, current_user: CanTesoreria) -> dict:
+async def run_late_fees(session: SessionDep, current_user: CanTesoreriaEdit) -> dict:
     institution = await get_default_institution(session)
     # Becas are never auto-suspended — a scholarship is kept for the whole career
     # even if a colegiatura goes unpaid (policy). Late fees still accrue after the

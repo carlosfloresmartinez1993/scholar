@@ -13,13 +13,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import select
 
 from app.api.deps import (
-    AnyStaff,
     CampusScope,
-    CanAlumnos,
-    CanEnrollmentChanges,
-    CanGrupos,
-    CanInscripciones,
+    CanAlumnosEdit,
+    CanEnrollmentChangesEdit,
+    CanInscripcionesEdit,
+    CanKardexCorregir,
+    CanPromocionCiclo,
     CanReportes,
+    CanRvoeCambio,
     CanStudentsRead,
     SessionDep,
     can_read_debt,
@@ -178,7 +179,7 @@ async def list_students(
 
 @router.post("", status_code=201)
 async def create_student(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope, body: StudentCreate
+    session: SessionDep, current_user: CanAlumnosEdit, scope: CampusScope, body: StudentCreate
 ) -> StudentPublic:
     ensure_in_scope(scope, body.campus_id)  # can only create in a campus you belong to
     institution = await get_default_institution(session)
@@ -202,7 +203,7 @@ async def get_student(
 @router.patch("/{student_id}")
 async def update_student(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     scope: CampusScope,
     student_id: uuid.UUID,
     body: StudentUpdate,
@@ -243,7 +244,7 @@ async def list_relatives(
 @router.post("/{student_id}/relatives", status_code=201)
 async def add_relative(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     student_id: uuid.UUID,
     body: RelativeIn,
 ) -> RelativePublic:
@@ -261,7 +262,7 @@ async def add_relative(
 @router.delete("/{student_id}/relatives/{relative_id}")
 async def delete_relative(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     student_id: uuid.UUID,
     relative_id: uuid.UUID,
 ) -> dict:
@@ -296,7 +297,7 @@ async def portal_access_status(
 @router.post("/{student_id}/portal-access", status_code=201)
 async def enable_portal_access(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     student_id: uuid.UUID,
     background: BackgroundTasks,
 ) -> UserPublic:
@@ -315,7 +316,7 @@ async def enable_portal_access(
 
 @router.delete("/{student_id}/portal-access")
 async def disable_portal_access(
-    session: SessionDep, current_user: CanAlumnos, student_id: uuid.UUID
+    session: SessionDep, current_user: CanAlumnosEdit, student_id: uuid.UUID
 ) -> dict:
     user = (
         await session.exec(select(User).where(User.student_id == student_id))
@@ -339,7 +340,7 @@ PHOTO_MAX_BYTES = 5 * 1024 * 1024
 @router.post("/{student_id}/photo")
 async def upload_student_photo(
     session: SessionDep,
-    current_user: CanAlumnos,
+    current_user: CanAlumnosEdit,
     student_id: uuid.UUID,
     file: UploadFile,
 ) -> StudentPublic:
@@ -403,7 +404,7 @@ async def list_plan_enrollments(
 
 @router.post("/plan-enrollments", status_code=201)
 async def enroll_in_plan(
-    session: SessionDep, current_user: CanInscripciones, body: PlanEnrollmentCreate
+    session: SessionDep, current_user: CanInscripcionesEdit, body: PlanEnrollmentCreate
 ) -> PlanEnrollmentPublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -448,7 +449,7 @@ async def list_group_enrollments(
 
 @router.post("/group-enrollments", status_code=201)
 async def enroll_in_group(
-    session: SessionDep, current_user: CanEnrollmentChanges, scope: CampusScope,
+    session: SessionDep, current_user: CanEnrollmentChangesEdit, scope: CampusScope,
     body: GroupEnrollmentCreate,
 ) -> GroupEnrollmentPublic:
     student = await session.get(Student, body.student_id)
@@ -484,7 +485,7 @@ async def other_groups_for_subject(
 
 @router.post("/group-enrollments/other-group", status_code=201)
 async def enroll_subjects_in_other_group(
-    session: SessionDep, current_user: CanEnrollmentChanges, scope: CampusScope,
+    session: SessionDep, current_user: CanEnrollmentChangesEdit, scope: CampusScope,
     body: OtherGroupEnrollment,
 ) -> list[SubjectEnrollmentPublic]:
     """«Cursar materia en otro grupo»: no charges; the student keeps their group."""
@@ -502,7 +503,7 @@ async def enroll_subjects_in_other_group(
 
 @router.post("/group-enrollments/subjects", status_code=201)
 async def add_subjects_to_group_enrollment(
-    session: SessionDep, current_user: CanEnrollmentChanges, scope: CampusScope,
+    session: SessionDep, current_user: CanEnrollmentChangesEdit, scope: CampusScope,
     body: GroupEnrollmentSubjectsAdd,
 ) -> list[SubjectEnrollmentPublic]:
     """Add plan subjects to a student already enrolled in the group (no billing)."""
@@ -545,7 +546,7 @@ async def student_current_group(
 
 @router.get("/{student_id}/rvoe-change/proposal")
 async def rvoe_change_proposal(
-    session: SessionDep, _: CanStudentsRead, scope: CampusScope, student_id: uuid.UUID,
+    session: SessionDep, _: CanRvoeCambio, scope: CampusScope, student_id: uuid.UUID,
     from_plan_version_id: uuid.UUID, target_group_id: uuid.UUID,
 ) -> dict:
     """Cambio de RVOE, step 2: the proposed decision for every subject of the new
@@ -556,7 +557,7 @@ async def rvoe_change_proposal(
 
 @router.post("/{student_id}/rvoe-change")
 async def rvoe_change(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanRvoeCambio, scope: CampusScope,
     student_id: uuid.UUID, body: RvoeChangeIn,
 ) -> dict:
     """Cambio de RVOE: close the current plan, enroll into the destination group and
@@ -579,7 +580,7 @@ async def _student_in_scope(session, scope, student_id) -> Student:
 
 @router.get("/{student_id}/recognitions/candidates")
 async def recognitions_candidates(
-    session: SessionDep, _: CanStudentsRead, scope: CampusScope, student_id: uuid.UUID,
+    session: SessionDep, _: CanKardexCorregir, scope: CampusScope, student_id: uuid.UUID,
     plan_version_id: uuid.UUID,
 ) -> dict:
     """Subjects below the student's current cuatrimestre with nothing recorded yet."""
@@ -589,7 +590,7 @@ async def recognitions_candidates(
 
 @router.post("/{student_id}/recognitions", status_code=201)
 async def recognize_studies(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanKardexCorregir, scope: CampusScope,
     student_id: uuid.UUID, body: RecognitionsIn,
 ) -> list[SubjectEnrollmentPublic]:
     """Reconocer estudios previos: EQ/REV/CONV, pending until the authority's grade."""
@@ -605,7 +606,7 @@ async def recognize_studies(
 
 @router.post("/subject-enrollments/{subject_enrollment_id}/official-grade")
 async def official_grade(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanKardexCorregir, scope: CampusScope,
     subject_enrollment_id: uuid.UUID, body: OfficialGradeIn,
 ) -> SubjectEnrollmentPublic:
     """The authority's grade for a subject recognized by EQ/REV/CONV."""
@@ -621,7 +622,7 @@ async def official_grade(
 
 @router.patch("/subject-enrollments/{subject_enrollment_id}/recognition")
 async def correct_recognition(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanKardexCorregir, scope: CampusScope,
     subject_enrollment_id: uuid.UUID, body: RecognitionUpdateIn,
 ) -> SubjectEnrollmentPublic:
     """Corregir una EQ/REV/CONV: tipo, calificación (o pendiente) y origen."""
@@ -640,7 +641,7 @@ async def correct_recognition(
 
 @router.post("/subject-enrollments/{subject_enrollment_id}/recognition/undo", status_code=204)
 async def undo_subject_recognition(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanKardexCorregir, scope: CampusScope,
     subject_enrollment_id: uuid.UUID, body: RecognitionUndoIn,
 ) -> None:
     """La materia no debía reconocerse: sigue en su periodo del RVOE, pendiente."""
@@ -654,7 +655,7 @@ async def undo_subject_recognition(
 
 @router.post("/{student_id}/rvoe-change/revert")
 async def rvoe_change_revert(
-    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
+    session: SessionDep, current_user: CanRvoeCambio, scope: CampusScope,
     student_id: uuid.UUID, body: RvoeChangeRevertIn,
 ) -> dict:
     """Revertir un cambio de RVOE: el alumno regresa a su plan y grupo anteriores."""
@@ -666,7 +667,7 @@ async def rvoe_change_revert(
 
 @router.post("/subject-enrollments/drop")
 async def drop_subject_enrollments(
-    session: SessionDep, current_user: CanEnrollmentChanges, scope: CampusScope,
+    session: SessionDep, current_user: CanEnrollmentChangesEdit, scope: CampusScope,
     body: SubjectDropIn,
 ) -> list[SubjectEnrollmentPublic]:
     """Baja de materias en curso: salen de las listas del grupo y del kárdex."""
@@ -684,7 +685,7 @@ async def drop_subject_enrollments(
 
 @router.post("/{student_id}/group-change")
 async def group_change(
-    session: SessionDep, current_user: CanEnrollmentChanges, scope: CampusScope,
+    session: SessionDep, current_user: CanEnrollmentChangesEdit, scope: CampusScope,
     student_id: uuid.UUID, body: GroupChangeIn,
 ) -> GroupEnrollmentPublic:
     """Cambio de grupo (mismo ciclo y plan): las materias en curso se mueven con
@@ -703,7 +704,7 @@ async def group_change(
 @router.post("/intake", status_code=201)
 async def wizard_intake(
     session: SessionDep,
-    current_user: CanInscripciones,
+    current_user: CanInscripcionesEdit,
     scope: CampusScope,
     body: WizardIntakeIn,
     background: BackgroundTasks,
@@ -753,7 +754,7 @@ ROSTER_MAX_BYTES = 10 * 1024 * 1024
 
 @router.post("/bulk-intake/parse")
 async def parse_bulk_intake_file(
-    _: CanInscripciones, file: UploadFile
+    _: CanInscripcionesEdit, file: UploadFile
 ) -> RosterParseResult:
     """Parse a roster export (servoescolar.mx .xlsx, or any .xlsx/.csv) into a
     cell grid plus the detected column→field mapping, without touching the DB.
@@ -769,7 +770,7 @@ async def parse_bulk_intake_file(
 
 @router.post("/bulk-intake", status_code=201)
 async def bulk_intake(
-    session: SessionDep, current_user: CanInscripciones, scope: CampusScope, body: BulkIntakeIn
+    session: SessionDep, current_user: CanInscripcionesEdit, scope: CampusScope, body: BulkIntakeIn
 ) -> BulkIntakeResult:
     """Onboard a whole cohort of NEW students into one group: create + enroll +
     auto-bill each row. Existing CURPs are rejected (enroll them via the group
@@ -841,7 +842,7 @@ async def bulk_intake(
 
 @router.post("/promote-cycle")
 async def promote_cycle_endpoint(
-    session: SessionDep, current_user: CanGrupos, dry_run: bool = True
+    session: SessionDep, current_user: CanPromocionCiclo, dry_run: bool = True
 ) -> dict:
     """Preview (dry_run=true, default) or run cycle promotion: enroll + bill each
     linked next-term group's passing, continuing students (reinscripción). Scoped

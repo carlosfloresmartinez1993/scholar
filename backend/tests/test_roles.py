@@ -42,9 +42,10 @@ async def _client_for(email):
         yield c
 
 
-async def _user(client, email, role):
+async def _user(client, email, role, campuses=None):
     r = await client.post(f"{API}/users", json={
-        "email": email, "full_name": email.split("@")[0], "role": role, "password": PASSWORD})
+        "email": email, "full_name": email.split("@")[0], "role": role, "password": PASSWORD,
+        **({"campuses": campuses} if campuses else {})})
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -86,7 +87,7 @@ async def test_removing_a_view_applies_at_once(client, seed):
         assert (await c.post(f"{API}/catalog/terms", json={
             "name": "2027-2", "period_type": "cuatrimestral",
             "start_date": "2027-05-01", "end_date": "2027-08-20"})).status_code == 201
-        without = [p for p in se["permissions"] if p != "periodos"]
+        without = [p for p in se["permissions"] if p not in ("periodos", "periodos.editar")]
         assert (await client.patch(f"{API}/roles/{se['id']}", json={"permissions": without})).status_code == 200
         # the very next request is refused
         assert (await c.post(f"{API}/catalog/terms", json={
@@ -110,7 +111,7 @@ async def test_admin_role_and_system_roles_are_protected(client, seed):
 
 async def test_nobody_hands_out_more_than_they_have(client, seed):
     await login(client)
-    await client.post(f"{API}/roles", json={"name": "Altas", "permissions": ["usuarios"]})
+    await client.post(f"{API}/roles", json={"name": "Altas", "permissions": ["usuarios.editar"]})
     await _user(client, "altas@inue.edu.mx", "altas")
     async with _client_for("altas@inue.edu.mx") as c:
         for role in ("admin_sistema", "direccion"):
@@ -136,3 +137,39 @@ async def test_a_role_limited_to_its_own_materias(client, seed):
         # «alumnos» is checked as staff data: a role limited to its materias stays out
         assert (await c.get(f"{API}/students")).status_code == 403
         assert (await c.get(f"{API}/catalog/terms")).status_code == 200
+
+
+async def test_etapa2_ver_editar_and_delicate_actions(client, seed):
+    """Ver lets a role read a screen, not change it; corregir el kárdex is its own sign-off."""
+    from tests.test_academic_flow import build_catalog
+    from tests.test_student_kardex import enroll_student
+
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    student = await enroll_student(client, str(seed["campus"].id), catalog["group"]["id"])
+    ses = (await client.get(f"{API}/students/{student['id']}/subject-enrollments")).json()
+
+    permissions = {p["code"]: p for p in (await client.get(f"{API}/roles/permissions")).json()}
+    assert permissions["alumnos"]["edit_code"] == "alumnos.editar"
+    assert permissions["reportes"]["edit_code"] is None
+    assert permissions["kardex_corregir"]["kind"] == "action"
+
+    # «editar» brings «ver» with it
+    edits = (await client.post(f"{API}/roles", json={
+        "name": "Captura alumnos", "permissions": ["alumnos.editar"]})).json()
+    assert set(edits["permissions"]) == {"alumnos", "alumnos.editar"}
+    await client.post(f"{API}/roles", json={"name": "Consulta", "permissions": ["alumnos"]})
+    campus = [str(seed["campus"].id)]
+    await _user(client, "consulta@inue.edu.mx", "consulta", campus)
+    await _user(client, "captura@inue.edu.mx", "captura_alumnos", campus)
+
+    async with _client_for("consulta@inue.edu.mx") as c:
+        assert (await c.get(f"{API}/students/{student['id']}")).status_code == 200
+        denied = await c.patch(f"{API}/students/{student['id']}", json={"phone": "6460000000"})
+        assert denied.status_code == 403 and "solo puede ver" in denied.json()["detail"]
+    async with _client_for("captura@inue.edu.mx") as c:
+        assert (await c.patch(f"{API}/students/{student['id']}", json={"phone": "6460000000"})).status_code == 200
+        # editing alumnos is not correcting their kárdex
+        fix = await c.post(f"{API}/grades/subject-enrollments/{ses[0]['id']}/correct",
+                           json={"final_grade": 9, "reason": "prueba"})
+        assert fix.status_code == 403
