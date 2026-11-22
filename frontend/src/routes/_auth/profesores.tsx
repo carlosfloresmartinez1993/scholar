@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { FileUp, Pencil, Plus } from "lucide-react";
 import { api, apiUpload, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
-import type { Campus } from "@/api/types";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -90,7 +89,8 @@ function ProfesoresPage() {
       </div>
       <p className="text-sm text-muted-foreground">
         Aquí se dan de alta los profesores (su acceso les llega por correo) y se lleva su
-        expediente. Se asignan a cada materia en Grupos.
+        expediente. Un profesor puede dar clase en cualquier plantel: se le asigna cada materia
+        en Grupos, y con eso ve esos grupos.
       </p>
       <Input
         className="max-w-sm"
@@ -107,7 +107,7 @@ function ProfesoresPage() {
               <TableHead>Correo</TableHead>
               <TableHead>Grado máximo</TableHead>
               <TableHead>Cédula</TableHead>
-              <TableHead>Planteles</TableHead>
+              <TableHead>Da clase en</TableHead>
               <TableHead className="text-right">Materias en curso</TableHead>
               <TableHead>Estado</TableHead>
             </TableRow>
@@ -336,14 +336,9 @@ function TeacherDialog({
   onCreated: (t: Teacher) => void;
 }) {
   const queryClient = useQueryClient();
-  const { data: campuses } = useQuery({
-    queryKey: queryKeys.campuses,
-    queryFn: () => api<Campus[]>("/catalog/campuses"),
-  });
   const [form, setForm] = useState({
     full_name: teacher?.full_name ?? "",
     email: teacher?.email ?? "",
-    campus_ids: teacher?.campuses.map((c) => c.id) ?? [],
     cedula_profesional: teacher?.cedula_profesional ?? "",
     max_degree: teacher?.max_degree ?? "",
     cv_summary: teacher?.cv_summary ?? "",
@@ -432,27 +427,6 @@ function TeacherDialog({
               value={form.cv_summary}
               onChange={(e) => setForm({ ...form, cv_summary: e.target.value })}
             />
-          </div>
-          <div className="grid gap-2">
-            <Label>Planteles donde da clase</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {campuses?.map((c) => (
-                <label key={c.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={form.campus_ids.includes(c.id)}
-                    onCheckedChange={(v) =>
-                      setForm({
-                        ...form,
-                        campus_ids: v
-                          ? [...form.campus_ids, c.id]
-                          : form.campus_ids.filter((x) => x !== c.id),
-                      })
-                    }
-                  />
-                  {c.name}
-                </label>
-              ))}
-            </div>
           </div>
           {teacher && (
             <label className="flex items-center gap-2 text-sm font-medium">

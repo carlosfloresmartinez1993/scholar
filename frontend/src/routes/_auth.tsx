@@ -336,6 +336,12 @@ function Header({ onSearch }: { onSearch: () => void }) {
 function CampusSwitcher() {
   const { campusId, setCampusId, availableCampuses, canSelectAll, noCampusAccess } =
     useCampus();
+  const { data: me } = useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<UserPublic>("/auth/me"),
+  });
+  // a profesor teaches in any plantel and sees the groups assigned to them
+  if (me?.role === "docente" && !me.is_superuser) return null;
   // Zero memberships: say so instead of silently hiding the switcher.
   if (noCampusAccess)
     return (

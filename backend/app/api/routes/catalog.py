@@ -65,6 +65,7 @@ from app.models import (
     TermImport,
     TermPublic,
     TermUpdate,
+    UserRole,
 )
 from app.models.common import utcnow
 from app.services import audit, calendar
@@ -924,7 +925,7 @@ async def update_term(
 @router.get("/groups")
 async def list_groups(
     session: SessionDep,
-    _: AnyStaff,
+    current_user: AnyStaff,
     scope: CampusScope,
     term_id: uuid.UUID | None = None,
     plan_version_id: uuid.UUID | None = None,
@@ -934,14 +935,22 @@ async def list_groups(
     q = select(Group).order_by(Group.code)
     if not include_internal:  # equivalencia/convalidación groups: nobody attends them
         q = q.where(~internal_group_clause())
-    if scope is not None:
+    teacher = current_user.role == UserRole.docente and not current_user.is_superuser
+    if teacher:
+        # a profesor may teach in any plantel: they see the groups where they have a
+        # materia assigned, wherever it is (not the planteles of their account)
+        q = q.where(Group.id.in_(  # type: ignore[attr-defined]
+            select(GroupSubject.group_id).where(GroupSubject.teacher_user_id == current_user.id)
+        ))
+    elif scope is not None:
         q = q.where(Group.campus_id.in_(scope))  # type: ignore[attr-defined]
     if term_id:
         q = q.where(Group.term_id == term_id)
     if plan_version_id:
         q = q.where(Group.plan_version_id == plan_version_id)
     if campus_id:
-        ensure_in_scope(scope, campus_id)  # a ?campus_id outside membership is 403
+        if not teacher:
+            ensure_in_scope(scope, campus_id)  # a ?campus_id outside membership is 403
         q = q.where(Group.campus_id == campus_id)
     return (await session.exec(q)).all()
 
@@ -1153,11 +1162,12 @@ async def list_group_students(
 
 @router.get("/groups/{group_id}/subjects")
 async def list_group_subjects(
-    session: SessionDep, _: AnyStaff, group_id: uuid.UUID
+    session: SessionDep, current_user: AnyStaff, group_id: uuid.UUID
 ) -> list[GroupSubjectPublic]:
-    return (
-        await session.exec(select(GroupSubject).where(GroupSubject.group_id == group_id))
-    ).all()
+    q = select(GroupSubject).where(GroupSubject.group_id == group_id)
+    if current_user.role == UserRole.docente and not current_user.is_superuser:
+        q = q.where(GroupSubject.teacher_user_id == current_user.id)  # only their materias
+    return (await session.exec(q)).all()
 
 
 @router.post("/group-subjects", status_code=201)

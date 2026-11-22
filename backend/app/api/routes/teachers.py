@@ -22,7 +22,6 @@ from app.models import (
     TeacherProfile,
     Term,
     User,
-    UserCampus,
     UserRole,
 )
 from app.services import audit
@@ -34,7 +33,6 @@ router = APIRouter(prefix="/teachers", tags=["teachers"])
 class TeacherCreate(SQLModel):
     full_name: str = Field(min_length=3, max_length=255)
     email: EmailStr
-    campus_ids: list[uuid.UUID] = []
     cedula_profesional: str = Field(default="", max_length=32)
     max_degree: str = Field(default="", max_length=128)
     cv_summary: str = Field(default="", max_length=2048)
@@ -44,7 +42,6 @@ class TeacherUpdate(SQLModel):
     full_name: str | None = Field(default=None, min_length=3, max_length=255)
     email: EmailStr | None = None
     is_active: bool | None = None
-    campus_ids: list[uuid.UUID] | None = None
     cedula_profesional: str | None = Field(default=None, max_length=32)
     max_degree: str | None = Field(default=None, max_length=128)
     cv_summary: str | None = Field(default=None, max_length=2048)
@@ -77,13 +74,21 @@ async def _profile(session, user_id: uuid.UUID) -> TeacherProfile | None:
 
 
 async def _campuses_of(session, user_ids: list) -> dict:
+    """The planteles where each one teaches now (materias in open cycles). A profesor
+    may teach in any plantel; it follows from their classes, not from their account."""
     out: dict = {u: [] for u in user_ids}
     if user_ids:
         for user_id, campus_id, name in (
             await session.exec(
-                select(UserCampus.user_id, Campus.id, Campus.name)
-                .join(Campus, Campus.id == UserCampus.campus_id)
-                .where(UserCampus.user_id.in_(user_ids))  # type: ignore[attr-defined]
+                select(GroupSubject.teacher_user_id, Campus.id, Campus.name)
+                .join(Group, Group.id == GroupSubject.group_id)
+                .join(Term, Term.id == Group.term_id)
+                .join(Campus, Campus.id == Group.campus_id)
+                .where(
+                    GroupSubject.teacher_user_id.in_(user_ids),  # type: ignore[union-attr]
+                    Term.is_open == True,  # noqa: E712
+                )
+                .distinct()
                 .order_by(Campus.name)
             )
         ).all():
@@ -104,16 +109,6 @@ def _public(user: User, profile: TeacherProfile | None, campuses: list, classes_
         "cv_summary": profile.cv_summary if profile else "",
         "classes_now": classes_now,  # materias assigned in open cycles
     }
-
-
-async def _set_campuses(session, user_id: uuid.UUID, campus_ids: list) -> None:
-    for row in (await session.exec(select(UserCampus).where(UserCampus.user_id == user_id))).all():
-        await session.delete(row)
-    await session.flush()
-    for campus_id in dict.fromkeys(campus_ids):
-        if await session.get(Campus, campus_id) is None:
-            raise HTTPException(status_code=404, detail="Plantel no encontrado")
-        session.add(UserCampus(user_id=user_id, campus_id=campus_id))
 
 
 @router.get("")
@@ -159,7 +154,6 @@ async def create_teacher(
     )
     session.add(user)
     await session.flush()
-    await _set_campuses(session, user.id, body.campus_ids)
     profile = TeacherProfile(
         user_id=user.id, cedula_profesional=body.cedula_profesional.strip(),
         max_degree=body.max_degree.strip(), cv_summary=body.cv_summary.strip(),
@@ -235,8 +229,6 @@ async def update_teacher(
     if changes.get("is_active") is not None:
         user.is_active = changes["is_active"]
     session.add(user)
-    if changes.get("campus_ids") is not None:
-        await _set_campuses(session, user.id, changes["campus_ids"])
     profile = await _profile(session, user_id) or TeacherProfile(user_id=user.id)
     for key in ("cedula_profesional", "max_degree", "cv_summary"):
         if changes.get(key) is not None:
