@@ -4,7 +4,12 @@ import uuid
 
 from fastapi import APIRouter
 
-from app.api.deps import AnyStaff, CampusScope, SessionDep, ensure_in_scope
+from app.api.deps import (
+    CampusScope,
+    CanAlumniRead,
+    SessionDep,
+    ensure_in_scope,
+)
 from app.models.alumni import AlumniRow, AlumniStats
 from app.services import alumni
 
@@ -14,7 +19,7 @@ router = APIRouter(prefix="/alumni", tags=["alumni"])
 @router.get("")
 async def list_alumni(
     session: SessionDep,
-    _: AnyStaff,
+    _: CanAlumniRead,
     scope: CampusScope,
     q: str | None = None,
     term_id: uuid.UUID | None = None,
@@ -38,7 +43,7 @@ async def list_alumni(
 @router.get("/stats")
 async def alumni_dashboard(
     session: SessionDep,
-    _: AnyStaff,
+    _: CanAlumniRead,
     scope: CampusScope,
     q: str | None = None,
     term_id: uuid.UUID | None = None,

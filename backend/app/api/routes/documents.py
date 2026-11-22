@@ -8,7 +8,12 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlmodel import select
 
-from app.api.deps import AcademicStaff, AnyStaff, ServiciosEscolares, SessionDep
+from app.api.deps import (
+    AnyStaff,
+    CanAlumnos,
+    CanProfesores,
+    SessionDep,
+)
 from app.api.routes.catalog import get_default_institution
 from app.models import (
     DocumentRequirement,
@@ -63,7 +68,7 @@ async def list_requirements(session: SessionDep, _: AnyStaff) -> list[Requiremen
 
 @router.post("/requirements", status_code=201)
 async def create_requirement(
-    session: SessionDep, current_user: ServiciosEscolares, body: RequirementCreate
+    session: SessionDep, current_user: CanAlumnos, body: RequirementCreate
 ) -> RequirementPublic:
     institution = await get_default_institution(session)
     requirement = DocumentRequirement(**body.model_dump(), institution_id=institution.id)
@@ -80,7 +85,7 @@ async def create_requirement(
 @router.post("/students/{student_id}/documents", status_code=201)
 async def upload_student_document(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanAlumnos,
     student_id: uuid.UUID,
     file: UploadFile,
     title: str,
@@ -118,7 +123,7 @@ async def upload_student_document(
 
 @router.get("/students/{student_id}/documents")
 async def list_student_documents(
-    session: SessionDep, _: AcademicStaff, student_id: uuid.UUID
+    session: SessionDep, _: CanAlumnos, student_id: uuid.UUID
 ) -> list[StudentDocumentPublic]:
     return (
         await session.exec(
@@ -131,7 +136,7 @@ async def list_student_documents(
 
 @router.get("/files/{document_id}")
 async def download_student_document(
-    session: SessionDep, _: AcademicStaff, document_id: uuid.UUID
+    session: SessionDep, _: CanAlumnos, document_id: uuid.UUID
 ) -> FileResponse:
     document = await session.get(StudentDocument, document_id)
     if document is None:
@@ -144,7 +149,7 @@ async def download_student_document(
 @router.post("/student-documents/{document_id}/review")
 async def review_student_document(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanAlumnos,
     document_id: uuid.UUID,
     body: DocumentReviewIn,
 ) -> StudentDocumentPublic:
@@ -168,7 +173,7 @@ async def review_student_document(
 # --- Expediente view (RF-D01/D02) ----------------------------------------------------
 
 @router.get("/students/{student_id}/expediente")
-async def expediente(session: SessionDep, _: AcademicStaff, student_id: uuid.UUID) -> dict:
+async def expediente(session: SessionDep, _: CanAlumnos, student_id: uuid.UUID) -> dict:
     """Single view: data, checklist status, documents, issued docs, debt flag."""
     student = await session.get(Student, student_id)
     if student is None:
@@ -236,7 +241,7 @@ async def _student_plan_context(
 
 @router.post("/issue", status_code=201)
 async def issue_document(
-    session: SessionDep, current_user: ServiciosEscolares, body: IssueDocumentIn
+    session: SessionDep, current_user: CanAlumnos, body: IssueDocumentIn
 ) -> IssuedDocumentPublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -292,7 +297,7 @@ async def issue_document(
 
 @router.get("/issued")
 async def list_issued(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID | None = None
+    session: SessionDep, _: CanAlumnos, student_id: uuid.UUID | None = None
 ) -> list[IssuedDocumentPublic]:
     q = select(IssuedDocument).order_by(IssuedDocument.issued_at.desc())
     if student_id:
@@ -309,7 +314,7 @@ async def list_regulations(session: SessionDep, _: AnyStaff) -> list[RegulationP
 
 @router.post("/regulations", status_code=201)
 async def publish_regulation(
-    session: SessionDep, current_user: ServiciosEscolares, body: RegulationCreate
+    session: SessionDep, current_user: CanAlumnos, body: RegulationCreate
 ) -> RegulationPublic:
     institution = await get_default_institution(session)
     current = (
@@ -334,7 +339,7 @@ async def publish_regulation(
 
 @router.post("/regulations/{regulation_id}/acceptances", status_code=201)
 async def record_acceptance(
-    session: SessionDep, current_user: AnyStaff, regulation_id: uuid.UUID, student_id: uuid.UUID
+    session: SessionDep, current_user: CanAlumnos, regulation_id: uuid.UUID, student_id: uuid.UUID
 ) -> dict:
     if await session.get(Regulation, regulation_id) is None:
         raise HTTPException(status_code=404, detail="Reglamento no encontrado")
@@ -364,13 +369,13 @@ async def record_acceptance(
 # --- Teacher expedientes (RF-D07) ---------------------------------------------------------
 
 @router.get("/teachers")
-async def list_teacher_profiles(session: SessionDep, _: AnyStaff) -> list[TeacherProfilePublic]:
+async def list_teacher_profiles(session: SessionDep, _: CanProfesores) -> list[TeacherProfilePublic]:
     return (await session.exec(select(TeacherProfile))).all()
 
 
 @router.put("/teachers", status_code=201)
 async def upsert_teacher_profile(
-    session: SessionDep, current_user: ServiciosEscolares, body: TeacherProfileUpsert
+    session: SessionDep, current_user: CanProfesores, body: TeacherProfileUpsert
 ) -> TeacherProfilePublic:
     user = await session.get(User, body.user_id)
     if user is None or user.role != UserRole.docente:
@@ -394,7 +399,7 @@ async def upsert_teacher_profile(
 @router.post("/teachers/{profile_id}/documents", status_code=201)
 async def upload_teacher_document(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanProfesores,
     profile_id: uuid.UUID,
     file: UploadFile,
     title: str,
@@ -421,7 +426,7 @@ async def upload_teacher_document(
 
 @router.get("/teachers/{profile_id}/documents")
 async def list_teacher_documents(
-    session: SessionDep, _: AnyStaff, profile_id: uuid.UUID
+    session: SessionDep, _: CanProfesores, profile_id: uuid.UUID
 ) -> list[TeacherDocumentPublic]:
     return (
         await session.exec(

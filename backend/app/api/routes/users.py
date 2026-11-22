@@ -12,10 +12,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from sqlmodel import select
 
 from app.api.deps import (
-    AnyStaff,
+    CanUsersRead,
+    CanUsuarios,
     CurrentUser,
     SessionDep,
-    SuperUser,
     build_user_public,
     build_users_public,
 )
@@ -163,9 +163,35 @@ async def _set_campus_membership(
         session.add(UserCampus(user_id=user_id, campus_id=campus_id))
 
 
+async def _check_role_grant(session, actor: User, role_code: str | None, target: User | None,
+                            make_superuser: bool | None) -> None:
+    """Nobody hands out more than they have: a role must exist and be active, its
+    permissions must be within the actor's own, and only a superuser touches
+    superusers. (The portal «alumno» role is never assigned here.)"""
+    from app.models import Role, RolePermission
+    from app.services.roles import access_of
+
+    if (make_superuser or (target is not None and target.is_superuser)) and not actor.is_superuser:
+        raise HTTPException(status_code=403, detail="Solo un superusuario puede modificar superusuarios")
+    if role_code is None:
+        return
+    if role_code == UserRole.alumno:
+        raise HTTPException(status_code=422, detail="Las cuentas de alumno se crean desde el alumno")
+    role = (await session.exec(select(Role).where(Role.code == role_code))).first()
+    if role is None or not role.is_active:
+        raise HTTPException(status_code=422, detail="Ese rol no existe o está inactivo")
+    mine, _, _ = await access_of(session, actor)
+    granted = set(
+        (await session.exec(select(RolePermission.permission).where(RolePermission.role_id == role.id))).all()
+    )
+    if role.code == "admin_sistema" or not granted <= mine:
+        if not (actor.is_superuser or actor.role == "admin_sistema"):
+            raise HTTPException(status_code=403, detail="No puedes asignar un rol con más permisos que el tuyo")
+
+
 @router.get("")
 async def list_users(
-    session: SessionDep, _: AnyStaff, role: UserRole | None = None
+    session: SessionDep, _: CanUsersRead, role: str | None = None
 ) -> list[UserPublic]:
     q = select(User).order_by(User.created_at)
     if role:
@@ -175,10 +201,11 @@ async def list_users(
 
 
 @router.post("", status_code=201)
-async def create_user(session: SessionDep, actor: SuperUser, body: UserCreate) -> UserPublic:
+async def create_user(session: SessionDep, actor: CanUsuarios, body: UserCreate) -> UserPublic:
     existing = (await session.exec(select(User).where(User.email == body.email.lower()))).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
+    await _check_role_grant(session, actor, body.role, None, body.is_superuser)
     user = User(
         email=body.email.lower(),
         full_name=body.full_name,
@@ -200,12 +227,15 @@ async def create_user(session: SessionDep, actor: SuperUser, body: UserCreate) -
 
 @router.patch("/{user_id}")
 async def update_user(
-    session: SessionDep, actor: SuperUser, user_id: uuid.UUID, body: UserUpdate
+    session: SessionDep, actor: CanUsuarios, user_id: uuid.UUID, body: UserUpdate
 ) -> UserPublic:
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     changes = body.model_dump(exclude_unset=True)
+    await _check_role_grant(session, actor, changes.get("role"), user, changes.get("is_superuser"))
+    if user.id == actor.id and changes.get("role") not in (None, actor.role):
+        raise HTTPException(status_code=400, detail="No puedes cambiar tu propio rol")
     if "password" in changes:
         password = changes.pop("password")
         if password:
@@ -228,12 +258,14 @@ async def update_user(
 
 
 @router.delete("/{user_id}")
-async def deactivate_user(session: SessionDep, actor: SuperUser, user_id: uuid.UUID) -> dict:
+async def deactivate_user(session: SessionDep, actor: CanUsuarios, user_id: uuid.UUID) -> dict:
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if user.id == actor.id:
         raise HTTPException(status_code=400, detail="No puedes desactivar tu propia cuenta")
+    if user.is_superuser and not actor.is_superuser:
+        raise HTTPException(status_code=403, detail="Solo un superusuario puede modificar superusuarios")
     user.is_active = False
     session.add(user)
     audit.record(session, actor=actor.email, action="user.deactivated", entity="user",

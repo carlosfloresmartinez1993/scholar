@@ -18,6 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.db import get_session
 from app.core.security import get_password_hash
 from app.services.levels import ensure_default_levels
+from app.services.roles import ensure_default_roles
 from app.main import app
 from app.models import Campus, Institution, User, UserCampus, UserRole
 
@@ -52,6 +53,7 @@ async def seed(session_factory):
         campus = Campus(institution_id=institution.id, name="Campus Ensenada")
         session.add(campus)
         await ensure_default_levels(session, institution.id)
+        await ensure_default_roles(session)
         hashed = get_password_hash(PASSWORD)
         users = {}
         for email, role, is_super in [

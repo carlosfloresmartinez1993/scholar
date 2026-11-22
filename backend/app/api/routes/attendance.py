@@ -6,11 +6,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from sqlmodel import select
 
 from app.api.deps import (
-    AnyStaff,
-    ServiciosEscolares,
+    CanAsistencias,
+    CanAsistenciasStaff,
+    CanJustificaciones,
     SessionDep,
-    StaffOrTeacher,
-    TeacherOrAcademic,
     ensure_own_subject,
 )
 from app.models import (
@@ -43,18 +42,14 @@ router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 
 async def _can_mark(user: User, group_subject: GroupSubject) -> None:
-    if user.is_superuser or user.role in (
-        UserRole.servicios_escolares, UserRole.admin_sistema, UserRole.coordinador_academico
-    ):
-        return
-    if user.role == UserRole.docente and group_subject.teacher_user_id == user.id:
-        return
-    raise HTTPException(status_code=403, detail="No tienes asignada esta materia")
+    """Asistencias was checked by the endpoint; a role limited to its own materias
+    only marks those assigned to the user."""
+    ensure_own_subject(user, group_subject)
 
 
 @router.post("/sessions", status_code=201)
 async def record_session(
-    session: SessionDep, current_user: TeacherOrAcademic, body: SessionWithAttendanceIn
+    session: SessionDep, current_user: CanAsistencias, body: SessionWithAttendanceIn
 ) -> ClassSessionPublic:
     """RF-A01: create (or update) a session and its roll call in one request."""
     group_subject = await session.get(GroupSubject, body.group_subject_id)
@@ -142,7 +137,7 @@ async def record_session(
 
 @router.get("/group-subjects/{group_subject_id}/sessions")
 async def list_sessions(
-    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: CanAsistencias, group_subject_id: uuid.UUID
 ) -> list[ClassSessionPublic]:
     group_subject = await session.get(GroupSubject, group_subject_id)
     if group_subject is not None:
@@ -158,7 +153,7 @@ async def list_sessions(
 
 @router.get("/sessions/{session_id}/records")
 async def session_records(
-    session: SessionDep, current_user: StaffOrTeacher, session_id: uuid.UUID
+    session: SessionDep, current_user: CanAsistencias, session_id: uuid.UUID
 ) -> list[AttendanceRecordPublic]:
     class_session = await session.get(ClassSession, session_id)
     group_subject = await session.get(GroupSubject, class_session.group_subject_id) if class_session else None
@@ -173,7 +168,7 @@ async def session_records(
 
 @router.get("/group-subjects/{group_subject_id}/report")
 async def attendance_report(
-    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: CanAsistencias, group_subject_id: uuid.UUID
 ) -> list[dict]:
     group_subject = await session.get(GroupSubject, group_subject_id)
     if group_subject is not None:
@@ -207,7 +202,7 @@ async def attendance_report(
 @router.post("/group-subjects/{group_subject_id}/notify-at-risk")
 async def notify_at_risk(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanAsistenciasStaff,
     group_subject_id: uuid.UUID,
     background: BackgroundTasks,
     threshold_margin: float = 5.0,
@@ -242,7 +237,7 @@ async def notify_at_risk(
 
 @router.post("/justifications", status_code=201)
 async def create_justification(
-    session: SessionDep, current_user: AnyStaff, body: JustificationCreate
+    session: SessionDep, current_user: CanJustificaciones, body: JustificationCreate
 ) -> JustificationPublic:
     if await session.get(Student, body.student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
@@ -259,7 +254,7 @@ async def create_justification(
 
 @router.post("/justifications/{justification_id}/evidence")
 async def upload_evidence(
-    session: SessionDep, current_user: AnyStaff, justification_id: uuid.UUID, file: UploadFile
+    session: SessionDep, current_user: CanJustificaciones, justification_id: uuid.UUID, file: UploadFile
 ) -> JustificationPublic:
     justification = await session.get(AbsenceJustification, justification_id)
     if justification is None:
@@ -278,7 +273,7 @@ async def upload_evidence(
 @router.get("/justifications")
 async def list_justifications(
     session: SessionDep,
-    _: AnyStaff,
+    _: CanJustificaciones,
     student_id: uuid.UUID | None = None,
     status: JustificationStatus | None = None,
 ) -> list[JustificationPublic]:
@@ -293,7 +288,7 @@ async def list_justifications(
 @router.post("/justifications/{justification_id}/review")
 async def review_justification(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanJustificaciones,
     justification_id: uuid.UUID,
     body: JustificationReviewIn,
 ) -> JustificationPublic:

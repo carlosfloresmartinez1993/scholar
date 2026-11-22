@@ -43,7 +43,7 @@ function PerfilPage() {
           <p className="text-sm text-muted-foreground">
             {me?.email}
             {me &&
-              ` · ${me.is_superuser ? "Superusuario" : ROLE_LABELS[me.role]}`}
+              ` · ${me.is_superuser ? "Superusuario" : (me.role_name || ROLE_LABELS[me.role] || me.role)}`}
           </p>
         </div>
       </div>

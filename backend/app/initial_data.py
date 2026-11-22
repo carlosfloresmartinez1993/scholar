@@ -10,6 +10,7 @@ from app.core.db import async_session_factory
 from app.core.security import get_password_hash
 from app.models import Campus, Institution, User, UserRole
 from app.services.levels import ensure_default_levels
+from app.services.roles import ensure_default_roles
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ async def main() -> None:
             )
             logger.info("institution + campus created")
         await ensure_default_levels(session, institution.id)
+        await ensure_default_roles(session)
 
         existing = (
             await session.exec(select(User).where(User.email == settings.FIRST_SUPERUSER))

@@ -36,7 +36,9 @@ class UserPosition(str, Enum):
 class UserBase(SQLModel):
     email: EmailStr = Field(unique=True, index=True, max_length=255)
     full_name: str = Field(max_length=255)
-    role: UserRole = UserRole.docente
+    # code of a Role (Administración → Roles); the UserRole values are the system
+    # ones, and «alumno» is the student portal account
+    role: str = Field(default=UserRole.docente.value, max_length=64)
     is_active: bool = True
     is_superuser: bool = False
     display_name: str | None = Field(default=None, max_length=255)
@@ -88,7 +90,7 @@ class UserCreate(UserBase):
 class UserUpdate(SQLModel):
     email: EmailStr | None = None
     full_name: str | None = None
-    role: UserRole | None = None
+    role: str | None = Field(default=None, max_length=64)
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
     # when provided, replaces the user's whole campus membership set
@@ -106,6 +108,10 @@ class UserPublic(UserBase):
     # means role/superuser grants every campus (campuses lists them all).
     campuses: list[uuid.UUID] = []
     all_campuses: bool = False
+    # what the role allows (Etapa 1: the views it may open) — computed
+    permissions: list[str] = []
+    own_subjects_only: bool = False
+    role_name: str = ""
 
 
 class ProfileUpdate(SQLModel):

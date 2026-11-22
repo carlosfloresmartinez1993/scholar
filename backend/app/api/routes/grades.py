@@ -9,13 +9,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.api.deps import (
-    AnyStaff,
     CampusScope,
+    CanActas,
+    CanAlumniRead,
+    CanAlumnos,
+    CanCalificaciones,
+    CanEgresados,
+    CanGrid,
+    CanKardexRead,
     CurrentUser,
-    ServiciosEscolares,
     SessionDep,
-    StaffOrTeacher,
-    TeacherOrAcademic,
     ensure_in_scope,
     ensure_own_subject,
 )
@@ -59,12 +62,9 @@ router = APIRouter(prefix="/grades", tags=["grades"])
 
 
 async def _can_capture(session: SessionDep, user: User, group_subject: GroupSubject) -> None:
-    """RF-C01: teachers only capture their own subjects; Servicios Escolares any."""
-    if user.is_superuser or user.role in (UserRole.servicios_escolares, UserRole.admin_sistema):
-        return
-    if user.role == UserRole.docente and group_subject.teacher_user_id == user.id:
-        return
-    raise HTTPException(status_code=403, detail="No tienes asignada esta materia")
+    """RF-C01: Calificaciones was checked by the endpoint; a role limited to its own
+    materias (docente) only captures those assigned to the user."""
+    ensure_own_subject(user, group_subject)
 
 
 async def _capture_window_open(session: SessionDep, group_subject: GroupSubject) -> None:
@@ -78,7 +78,7 @@ async def _capture_window_open(session: SessionDep, group_subject: GroupSubject)
 
 @router.get("/group-subjects/{group_subject_id}/grid")
 async def grade_grid(
-    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: CanGrid, group_subject_id: uuid.UUID
 ) -> dict:
     """Students × evaluation components matrix for capture UI."""
     group_subject = await session.get(GroupSubject, group_subject_id)
@@ -260,7 +260,7 @@ async def _apply_capture(
 
 @router.post("/capture")
 async def capture_grade(
-    session: SessionDep, current_user: TeacherOrAcademic, body: GradeCaptureIn
+    session: SessionDep, current_user: CanCalificaciones, body: GradeCaptureIn
 ) -> GradePublic:
     grade = await _apply_capture(session, current_user, body)
     await session.commit()
@@ -270,7 +270,7 @@ async def capture_grade(
 
 @router.post("/capture-batch")
 async def capture_grades_batch(
-    session: SessionDep, current_user: TeacherOrAcademic, body: list[GradeCaptureIn]
+    session: SessionDep, current_user: CanCalificaciones, body: list[GradeCaptureIn]
 ) -> list[GradePublic]:
     """Save a whole grid in one request instead of one POST per cell."""
     # parciales first: an extraordinario in the same batch is checked against them
@@ -311,7 +311,7 @@ async def _correctable(session, scope, subject_enrollment_id) -> tuple[SubjectEn
 
 @router.get("/subject-enrollments/{subject_enrollment_id}/correction")
 async def correction_form(
-    session: SessionDep, _: ServiciosEscolares, scope: CampusScope, subject_enrollment_id: uuid.UUID
+    session: SessionDep, _: CanAlumnos, scope: CampusScope, subject_enrollment_id: uuid.UUID
 ) -> dict:
     """What a subject of the record has captured, to correct it."""
     enrollment, group_subject = await _correctable(session, scope, subject_enrollment_id)
@@ -330,7 +330,7 @@ async def correction_form(
 
 @router.post("/subject-enrollments/{subject_enrollment_id}/correct")
 async def correct_grade(
-    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope,
+    session: SessionDep, current_user: CanAlumnos, scope: CampusScope,
     subject_enrollment_id: uuid.UUID, body: GradeCorrectionIn,
 ) -> dict:
     """Corregir una calificación del historial, con motivo y a cualquier hora."""
@@ -394,7 +394,7 @@ async def correct_grade(
 @router.post("/group-subjects/{group_subject_id}/actas", status_code=201)
 async def generate_acta(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanActas,
     group_subject_id: uuid.UUID,
     kind: ActaKind = ActaKind.ordinaria,
 ) -> GradeActaPublic:
@@ -439,7 +439,7 @@ async def generate_acta(
 
 @router.get("/group-subjects/{group_subject_id}/actas")
 async def list_actas(
-    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: CanCalificaciones, group_subject_id: uuid.UUID
 ) -> list[GradeActaPublic]:
     group_subject = await session.get(GroupSubject, group_subject_id)
     if group_subject is not None:
@@ -453,7 +453,7 @@ async def list_actas(
 
 @router.post("/actas/{acta_id}/sign")
 async def sign_acta(
-    session: SessionDep, current_user: ServiciosEscolares, acta_id: uuid.UUID, signed_by_name: str
+    session: SessionDep, current_user: CanActas, acta_id: uuid.UUID, signed_by_name: str
 ) -> GradeActaPublic:
     from app.models.common import utcnow
 
@@ -474,7 +474,7 @@ async def sign_acta(
 
 @router.get("/students/{student_id}/kardex")
 async def kardex(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID, plan_version_id: uuid.UUID
+    session: SessionDep, _: CanKardexRead, student_id: uuid.UUID, plan_version_id: uuid.UUID
 ) -> dict:
     student = await session.get(Student, student_id)
     if student is None:
@@ -487,7 +487,7 @@ async def kardex(
 
 @router.get("/students/{student_id}/kardex-completo")
 async def full_kardex(
-    session: SessionDep, _: AnyStaff, student_id: uuid.UUID, program_id: uuid.UUID | None = None
+    session: SessionDep, _: CanKardexRead, student_id: uuid.UUID, program_id: uuid.UUID | None = None
 ) -> dict:
     """One kárdex per carrera across every plan/RVOE of it (see student_kardex)."""
     student = await session.get(Student, student_id)
@@ -499,13 +499,13 @@ async def full_kardex(
 # --- Degree registry (RF-C09) ---------------------------------------------------------
 
 @router.get("/degree-records")
-async def list_degree_records(session: SessionDep, _: AnyStaff) -> list[DegreeRecordPublic]:
+async def list_degree_records(session: SessionDep, _: CanAlumniRead) -> list[DegreeRecordPublic]:
     return (await session.exec(select(DegreeRecord).order_by(DegreeRecord.created_at))).all()
 
 
 @router.post("/degree-records", status_code=201)
 async def register_degree(
-    session: SessionDep, current_user: ServiciosEscolares, body: DegreeRecordCreate
+    session: SessionDep, current_user: CanEgresados, body: DegreeRecordCreate
 ) -> DegreeRecordPublic:
     student = await session.get(Student, body.student_id)
     if student is None:

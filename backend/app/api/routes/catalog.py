@@ -11,13 +11,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, or_, select
 
 from app.api.deps import (
-    AcademicStaff,
     AnyStaff,
     CampusScope,
+    CanConfiguracion,
+    CanGrupos,
+    CanPeriodos,
+    CanPlanteles,
+    CanProgramas,
+    CanStudentsRead,
+    SessionDep,
     StaffOrTeacher,
     ensure_in_scope,
-    ServiciosEscolares,
-    SessionDep,
+    is_teacher,
 )
 from app.models import (
     Campus,
@@ -108,7 +113,7 @@ async def get_institution(session: SessionDep, _: AnyStaff) -> InstitutionPublic
 
 @router.patch("/institution")
 async def update_institution(
-    session: SessionDep, current_user: ServiciosEscolares, body: InstitutionUpdate
+    session: SessionDep, current_user: CanConfiguracion, body: InstitutionUpdate
 ) -> InstitutionPublic:
     institution = await get_default_institution(session)
     for k, v in body.model_dump(exclude_unset=True).items():
@@ -130,7 +135,7 @@ async def list_campuses(session: SessionDep, _: StaffOrTeacher) -> list[CampusPu
 
 @router.post("/campuses", status_code=201)
 async def create_campus(
-    session: SessionDep, current_user: ServiciosEscolares, body: CampusCreate
+    session: SessionDep, current_user: CanPlanteles, body: CampusCreate
 ) -> CampusPublic:
     institution_id = body.institution_id or (await get_default_institution(session)).id
     campus = Campus(**body.model_dump(exclude={"institution_id"}), institution_id=institution_id)
@@ -156,7 +161,7 @@ def _remove_file(path: str | None) -> None:
 
 @router.post("/campuses/{campus_id}/logo")
 async def upload_campus_logo(
-    session: SessionDep, current_user: ServiciosEscolares, campus_id: uuid.UUID, file: UploadFile
+    session: SessionDep, current_user: CanPlanteles, campus_id: uuid.UUID, file: UploadFile
 ) -> CampusPublic:
     """The logo that goes on top of the kárdex of this campus' students."""
     campus = await session.get(Campus, campus_id)
@@ -188,7 +193,7 @@ async def get_campus_logo(session: SessionDep, _: AnyStaff, campus_id: uuid.UUID
 
 @router.delete("/campuses/{campus_id}/logo")
 async def delete_campus_logo(
-    session: SessionDep, current_user: ServiciosEscolares, campus_id: uuid.UUID
+    session: SessionDep, current_user: CanPlanteles, campus_id: uuid.UUID
 ) -> CampusPublic:
     campus = await session.get(Campus, campus_id)
     if campus is None:
@@ -206,7 +211,7 @@ async def delete_campus_logo(
 
 @router.patch("/campuses/{campus_id}")
 async def update_campus(
-    session: SessionDep, current_user: ServiciosEscolares, campus_id: uuid.UUID,
+    session: SessionDep, current_user: CanPlanteles, campus_id: uuid.UUID,
     body: CampusUpdate,
 ) -> CampusPublic:
     campus = await session.get(Campus, campus_id)
@@ -247,7 +252,7 @@ async def list_education_levels(
 
 @router.post("/education-levels", status_code=201)
 async def create_education_level(
-    session: SessionDep, current_user: ServiciosEscolares, body: EducationLevelCreate
+    session: SessionDep, current_user: CanProgramas, body: EducationLevelCreate
 ) -> EducationLevelPublic:
     institution = await get_default_institution(session)
     code = body.code.strip().lower().replace(" ", "_")
@@ -272,7 +277,7 @@ async def create_education_level(
 
 @router.patch("/education-levels/{level_id}")
 async def update_education_level(
-    session: SessionDep, current_user: ServiciosEscolares, level_id: uuid.UUID,
+    session: SessionDep, current_user: CanProgramas, level_id: uuid.UUID,
     body: EducationLevelUpdate,
 ) -> EducationLevelPublic:
     level = await session.get(EducationLevel, level_id)
@@ -291,7 +296,7 @@ async def update_education_level(
 
 @router.delete("/education-levels/{level_id}", status_code=204)
 async def delete_education_level(
-    session: SessionDep, current_user: ServiciosEscolares, level_id: uuid.UUID
+    session: SessionDep, current_user: CanProgramas, level_id: uuid.UUID
 ) -> None:
     level = await session.get(EducationLevel, level_id)
     if level is None:
@@ -343,7 +348,7 @@ async def list_programs(
 
 @router.post("/programs", status_code=201)
 async def create_program(
-    session: SessionDep, current_user: ServiciosEscolares, body: ProgramCreate
+    session: SessionDep, current_user: CanProgramas, body: ProgramCreate
 ) -> ProgramPublic:
     institution = await get_default_institution(session)
     await require_level(session, institution.id, body.level)
@@ -364,7 +369,7 @@ async def create_program(
 @router.patch("/programs/{program_id}")
 async def update_program(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanProgramas,
     program_id: uuid.UUID,
     body: ProgramUpdate,
 ) -> ProgramPublic:
@@ -432,7 +437,7 @@ async def list_calendar_terms(session: SessionDep, _: AnyStaff) -> list[dict]:
 
 
 @router.post("/campuses/sync-calendar")
-async def sync_campuses_from_calendar(session: SessionDep, current_user: ServiciosEscolares) -> dict:
+async def sync_campuses_from_calendar(session: SessionDep, current_user: CanPlanteles) -> dict:
     """Bring the calendar's campuses: create the missing ones, link the matching
     ones; a campus already linked is never overwritten."""
     result = await sync_campuses(session, current_user, await get_default_institution(session))
@@ -441,14 +446,14 @@ async def sync_campuses_from_calendar(session: SessionDep, current_user: Servici
 
 
 @router.get("/calendar/programs/preview")
-async def calendar_programs_preview(session: SessionDep, _: ServiciosEscolares) -> list[dict]:
+async def calendar_programs_preview(session: SessionDep, _: CanProgramas) -> list[dict]:
     """The calendar's programs and what importing each would do."""
     return await programs_preview(session, await get_default_institution(session))
 
 
 @router.post("/programs/import-calendar")
 async def import_programs_from_calendar(
-    session: SessionDep, current_user: ServiciosEscolares, body: CalendarProgramsImport
+    session: SessionDep, current_user: CanProgramas, body: CalendarProgramsImport
 ) -> dict:
     """Copy the chosen calendar programs into scholar (or link the existing ones)."""
     result = await import_programs(
@@ -486,7 +491,7 @@ async def list_rvoes(
 
 @router.post("/rvoes", status_code=201)
 async def create_rvoe(
-    session: SessionDep, current_user: ServiciosEscolares, scope: CampusScope, body: RvoeCreate
+    session: SessionDep, current_user: CanProgramas, scope: CampusScope, body: RvoeCreate
 ) -> RvoePublic:
     ensure_in_scope(scope, body.campus_id)  # RVOE lives in a specific campus
     if await session.get(Program, body.program_id) is None:
@@ -513,7 +518,7 @@ async def create_rvoe(
 
 @router.patch("/rvoes/{rvoe_id}")
 async def update_rvoe(
-    session: SessionDep, current_user: ServiciosEscolares, rvoe_id: uuid.UUID, body: RvoeUpdate
+    session: SessionDep, current_user: CanProgramas, rvoe_id: uuid.UUID, body: RvoeUpdate
 ) -> RvoePublic:
     rvoe = await session.get(Rvoe, rvoe_id)
     if rvoe is None:
@@ -552,7 +557,7 @@ async def list_plan_versions(
 
 @router.post("/plan-versions", status_code=201)
 async def create_plan_version(
-    session: SessionDep, current_user: ServiciosEscolares, body: PlanVersionCreate
+    session: SessionDep, current_user: CanProgramas, body: PlanVersionCreate
 ) -> PlanVersionPublic:
     if await session.get(Rvoe, body.rvoe_id) is None:
         raise HTTPException(status_code=404, detail="RVOE no encontrado")
@@ -580,7 +585,7 @@ async def _subject_public(session: SessionDep, subject: PlanSubject) -> PlanSubj
 
 @router.patch("/plan-versions/{plan_version_id}")
 async def update_plan_version(
-    session: SessionDep, current_user: ServiciosEscolares, plan_version_id: uuid.UUID,
+    session: SessionDep, current_user: CanProgramas, plan_version_id: uuid.UUID,
     body: PlanVersionUpdate,
 ) -> PlanVersionPublic:
     plan = await session.get(PlanVersion, plan_version_id)
@@ -636,7 +641,7 @@ async def list_plan_subjects(
 
 @router.post("/plan-subjects", status_code=201)
 async def create_plan_subject(
-    session: SessionDep, current_user: ServiciosEscolares, body: PlanSubjectCreate
+    session: SessionDep, current_user: CanProgramas, body: PlanSubjectCreate
 ) -> PlanSubjectPublic:
     if await session.get(PlanVersion, body.plan_version_id) is None:
         raise HTTPException(status_code=404, detail="Plan de estudios no encontrado")
@@ -657,7 +662,7 @@ async def create_plan_subject(
 
 @router.patch("/plan-subjects/{subject_id}")
 async def update_plan_subject(
-    session: SessionDep, current_user: ServiciosEscolares, subject_id: uuid.UUID,
+    session: SessionDep, current_user: CanProgramas, subject_id: uuid.UUID,
     body: PlanSubjectUpdate,
 ) -> PlanSubjectPublic:
     """Edit a materia of the plan (name, clave, cuatrimestre, créditos, horas). The
@@ -698,7 +703,7 @@ async def update_plan_subject(
 @router.put("/plan-subjects/{subject_id}/prerequisites")
 async def set_prerequisites(
     session: SessionDep,
-    current_user: ServiciosEscolares,
+    current_user: CanProgramas,
     subject_id: uuid.UUID,
     prerequisite_ids: list[uuid.UUID],
 ) -> PlanSubjectPublic:
@@ -742,7 +747,7 @@ async def list_evaluation_components(
 
 @router.post("/evaluation-components", status_code=201)
 async def create_evaluation_component(
-    session: SessionDep, current_user: ServiciosEscolares, body: EvaluationComponentCreate
+    session: SessionDep, current_user: CanProgramas, body: EvaluationComponentCreate
 ) -> EvaluationComponentPublic:
     if await session.get(PlanSubject, body.plan_subject_id) is None:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
@@ -773,7 +778,7 @@ async def create_evaluation_component(
 
 @router.delete("/evaluation-components/{component_id}")
 async def delete_evaluation_component(
-    session: SessionDep, current_user: ServiciosEscolares, component_id: uuid.UUID
+    session: SessionDep, current_user: CanProgramas, component_id: uuid.UUID
 ) -> dict:
     component = await session.get(EvaluationComponent, component_id)
     if component is None:
@@ -794,7 +799,7 @@ async def list_terms(session: SessionDep, _: StaffOrTeacher) -> list[TermPublic]
 
 @router.post("/terms", status_code=201)
 async def create_term(
-    session: SessionDep, current_user: ServiciosEscolares, body: TermCreate
+    session: SessionDep, current_user: CanPeriodos, body: TermCreate
 ) -> TermPublic:
     institution = await get_default_institution(session)
     term = Term(**body.model_dump(), institution_id=institution.id)
@@ -821,7 +826,7 @@ def _cal_date(value: object) -> date:
 
 @router.post("/terms/import", status_code=201)
 async def import_term_from_calendar(
-    session: SessionDep, current_user: ServiciosEscolares, body: TermImport
+    session: SessionDep, current_user: CanPeriodos, body: TermImport
 ) -> TermPublic:
     """Create a scholar term from a calendar term — name + dates come from the
     calendar (the source of truth for periods), no manual date entry."""
@@ -873,7 +878,7 @@ async def import_term_from_calendar(
 
 @router.post("/terms/{term_id}/sync-calendar")
 async def sync_term_from_calendar(
-    session: SessionDep, current_user: ServiciosEscolares, term_id: uuid.UUID
+    session: SessionDep, current_user: CanPeriodos, term_id: uuid.UUID
 ) -> TermPublic:
     """Re-pull a linked term's dates from the calendar (if the calendar changed
     them). Colegiatura due dates are derived from these, so they stay in sync."""
@@ -902,7 +907,7 @@ async def sync_term_from_calendar(
 
 @router.patch("/terms/{term_id}")
 async def update_term(
-    session: SessionDep, current_user: ServiciosEscolares, term_id: uuid.UUID, body: TermUpdate
+    session: SessionDep, current_user: CanPeriodos, term_id: uuid.UUID, body: TermUpdate
 ) -> TermPublic:
     term = await session.get(Term, term_id)
     if term is None:
@@ -936,7 +941,7 @@ async def list_groups(
     q = select(Group).order_by(Group.code)
     if not include_internal:  # equivalencia/convalidación groups: nobody attends them
         q = q.where(~internal_group_clause())
-    teacher = current_user.role == UserRole.docente and not current_user.is_superuser
+    teacher = is_teacher(current_user)  # a role limited to its own materias
     if teacher:
         # a profesor may teach in any plantel: they see the groups where they have a
         # materia assigned, wherever it is (not the planteles of their account)
@@ -986,7 +991,7 @@ async def _validate_promotion_source(
 
 @router.post("/groups", status_code=201)
 async def create_group(
-    session: SessionDep, current_user: AcademicStaff, scope: CampusScope, body: GroupCreate
+    session: SessionDep, current_user: CanGrupos, scope: CampusScope, body: GroupCreate
 ) -> GroupPublic:
     rvoe = await require_operable_rvoe(session, body.plan_version_id)  # RT-03
     # campus is derived from the plan's RVOE — enforce it is one you belong to
@@ -1015,7 +1020,7 @@ async def create_group(
 
 @router.patch("/groups/{group_id}")
 async def update_group(
-    session: SessionDep, current_user: AcademicStaff, group_id: uuid.UUID, body: GroupUpdate
+    session: SessionDep, current_user: CanGrupos, group_id: uuid.UUID, body: GroupUpdate
 ) -> GroupPublic:
     group = await session.get(Group, group_id)
     if group is None:
@@ -1082,7 +1087,7 @@ async def _group_in_use(session: SessionDep, group: Group) -> bool:
 
 @router.delete("/groups/{group_id}", status_code=204)
 async def delete_group(
-    session: SessionDep, current_user: AcademicStaff, scope: CampusScope, group_id: uuid.UUID
+    session: SessionDep, current_user: CanGrupos, scope: CampusScope, group_id: uuid.UUID
 ) -> None:
     """Borrar un grupo creado por error. Con alumnos, clases o actas no se puede:
     se desactiva."""
@@ -1108,7 +1113,7 @@ async def delete_group(
 
 @router.get("/terms/{term_id}/calendar-groups/preview")
 async def calendar_groups_preview(
-    session: SessionDep, _: AcademicStaff, term_id: uuid.UUID
+    session: SessionDep, _: CanGrupos, term_id: uuid.UUID
 ) -> dict:
     """The calendar's groups of this term and what importing each would do."""
     term = await session.get(Term, term_id)
@@ -1119,7 +1124,7 @@ async def calendar_groups_preview(
 
 @router.post("/terms/{term_id}/calendar-groups/import")
 async def import_calendar_groups(
-    session: SessionDep, current_user: AcademicStaff, scope: CampusScope, term_id: uuid.UUID,
+    session: SessionDep, current_user: CanGrupos, scope: CampusScope, term_id: uuid.UUID,
     body: CalendarGroupsImport,
 ) -> dict:
     """Create the chosen calendar groups in this term (plan and cuatrimestre as
@@ -1134,7 +1139,7 @@ async def import_calendar_groups(
 
 @router.get("/groups/{group_id}/students")
 async def list_group_students(
-    session: SessionDep, _: AnyStaff, group_id: uuid.UUID
+    session: SessionDep, _: CanStudentsRead, group_id: uuid.UUID
 ) -> list[dict]:
     """Enrolled students of a group (staff view; the integration API has its own)."""
     from app.models import GroupEnrollment, Student
@@ -1166,14 +1171,14 @@ async def list_group_subjects(
     session: SessionDep, current_user: StaffOrTeacher, group_id: uuid.UUID
 ) -> list[GroupSubjectPublic]:
     q = select(GroupSubject).where(GroupSubject.group_id == group_id)
-    if current_user.role == UserRole.docente and not current_user.is_superuser:
+    if is_teacher(current_user):
         q = q.where(GroupSubject.teacher_user_id == current_user.id)  # only their materias
     return (await session.exec(q)).all()
 
 
 @router.post("/group-subjects", status_code=201)
 async def create_group_subject(
-    session: SessionDep, current_user: AcademicStaff, body: GroupSubjectCreate
+    session: SessionDep, current_user: CanGrupos, body: GroupSubjectCreate
 ) -> GroupSubjectPublic:
     group = await session.get(Group, body.group_id)
     if group is None:
@@ -1207,7 +1212,7 @@ async def create_group_subject(
 @router.patch("/group-subjects/{group_subject_id}")
 async def update_group_subject(
     session: SessionDep,
-    current_user: AcademicStaff,
+    current_user: CanGrupos,
     group_subject_id: uuid.UUID,
     body: GroupSubjectCreate,
 ) -> GroupSubjectPublic:

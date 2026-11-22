@@ -200,3 +200,10 @@ from app.models.alumni import (
     AlumniStats,
     AlumniTermBucket,
 )
+from app.models.roles import (
+    Role,
+    RoleCreate,
+    RolePermission,
+    RolePublic,
+    RoleUpdate,
+)

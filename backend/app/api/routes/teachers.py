@@ -11,7 +11,10 @@ from fastapi.responses import FileResponse
 from pydantic import EmailStr
 from sqlmodel import Field, SQLModel, func, select
 
-from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep
+from app.api.deps import (
+    CanProfesores,
+    SessionDep,
+)
 from app.core.security import get_password_hash
 from app.models import (
     Campus,
@@ -112,7 +115,7 @@ def _public(user: User, profile: TeacherProfile | None, campuses: list, classes_
 
 
 @router.get("")
-async def list_teachers(session: SessionDep, _: AnyStaff) -> list[dict]:
+async def list_teachers(session: SessionDep, _: CanProfesores) -> list[dict]:
     users = (
         await session.exec(select(User).where(User.role == UserRole.docente).order_by(User.full_name))
     ).all()
@@ -140,7 +143,7 @@ async def list_teachers(session: SessionDep, _: AnyStaff) -> list[dict]:
 
 @router.post("", status_code=201)
 async def create_teacher(
-    session: SessionDep, current_user: ServiciosEscolares, body: TeacherCreate,
+    session: SessionDep, current_user: CanProfesores, body: TeacherCreate,
     background: BackgroundTasks,
 ) -> dict:
     """Account (role docente, generated password sent by email) + expediente."""
@@ -169,7 +172,7 @@ async def create_teacher(
 
 
 @router.get("/{user_id}")
-async def get_teacher(session: SessionDep, _: AnyStaff, user_id: uuid.UUID) -> dict:
+async def get_teacher(session: SessionDep, _: CanProfesores, user_id: uuid.UUID) -> dict:
     """Ficha: datos, expediente, documentos y sus clases (newest cycle first)."""
     user = await _teacher(session, user_id)
     profile = await _profile(session, user_id)
@@ -214,7 +217,7 @@ async def get_teacher(session: SessionDep, _: AnyStaff, user_id: uuid.UUID) -> d
 
 @router.patch("/{user_id}")
 async def update_teacher(
-    session: SessionDep, current_user: ServiciosEscolares, user_id: uuid.UUID, body: TeacherUpdate,
+    session: SessionDep, current_user: CanProfesores, user_id: uuid.UUID, body: TeacherUpdate,
 ) -> dict:
     user = await _teacher(session, user_id)
     changes = body.model_dump(exclude_unset=True)
@@ -242,7 +245,7 @@ async def update_teacher(
 
 
 @router.get("/documents/{document_id}/file")
-async def download_teacher_document(session: SessionDep, _: AnyStaff, document_id: uuid.UUID) -> FileResponse:
+async def download_teacher_document(session: SessionDep, _: CanProfesores, document_id: uuid.UUID) -> FileResponse:
     document = await session.get(TeacherDocument, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Documento no encontrado")

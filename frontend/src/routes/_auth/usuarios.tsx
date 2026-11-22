@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Plus, Pencil } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
-import type { Campus, UserPublic, UserRole } from "@/api/types";
+import type { Campus, RoleItem, UserPublic, UserRole } from "@/api/types";
 import { formatDateTime, ROLE_LABELS } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +71,13 @@ function UsuariosPage() {
     queryKey: queryKeys.users(),
     queryFn: () => api<UserPublic[]>("/users"),
   });
+  // the roles of Administración → Roles (system and new ones)
+  const { data: roles } = useQuery({
+    queryKey: ["roles"],
+    queryFn: () => api<RoleItem[]>("/roles"),
+  });
+  const roleName = (code: string) =>
+    roles?.find((r) => r.code === code)?.name ?? ROLE_LABELS[code] ?? code;
   const { data: campuses } = useQuery({
     queryKey: queryKeys.campuses,
     queryFn: () => api<Campus[]>("/catalog/campuses"),
@@ -165,7 +172,7 @@ function UsuariosPage() {
                 <TableCell>{u.email}</TableCell>
                 <TableCell>
                   <Badge variant={u.is_superuser ? "default" : "secondary"}>
-                    {u.is_superuser ? "Superusuario" : ROLE_LABELS[u.role]}
+                    {u.is_superuser ? "Superusuario" : roleName(u.role)}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -253,11 +260,13 @@ function UsuariosPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(Object.keys(ROLE_LABELS) as UserRole[]).map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {ROLE_LABELS[r]}
-                    </SelectItem>
-                  ))}
+                  {(roles ?? [])
+                    .filter((r) => r.is_active || r.code === form.role)
+                    .map((r) => (
+                      <SelectItem key={r.code} value={r.code}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

@@ -16,7 +16,6 @@ import type {
   StudentStatus,
   SubjectEnrollmentStatus,
   UserPosition,
-  UserRole,
 } from "@/api/types";
 
 // --- Spanish labels for backend enums -------------------------------------
@@ -151,7 +150,7 @@ export const POSITION_LABELS: Record<UserPosition, string> = {
   administrativo: "Administrativo",
 };
 
-export const ROLE_LABELS: Record<UserRole, string> = {
+export const ROLE_LABELS: Record<string, string> = {
   admin_sistema: "Administrador del sistema",
   direccion: "Dirección",
   servicios_escolares: "Servicios escolares",

@@ -68,7 +68,8 @@ SuperUser = Annotated[User, Depends(get_current_active_superuser)]
 
 
 def require_roles(*roles: UserRole):
-    """RT-07: allow only the given staff roles (superusers always pass)."""
+    """Allow only the given role codes (superusers always pass). Kept for the few
+    places that are about who a user IS, not what they may open."""
 
     async def checker(current_user: Annotated[User, Depends(get_current_user)]) -> User:
         if current_user.is_superuser or current_user.role in roles:
@@ -78,54 +79,114 @@ def require_roles(*roles: UserRole):
     return checker
 
 
-# Common role bundles. NOTE: these are EXPLICIT lists — UserRole.alumno is
-# deliberately absent from every one of them, so portal accounts can never
-# reach staff endpoints (superusers are staff by definition and always pass).
-STAFF_ACADEMIC = (
-    UserRole.admin_sistema,
-    UserRole.direccion,
-    UserRole.servicios_escolares,
-    UserRole.coordinador_academico,
-)
-# A docente is NOT in STAFF_ALL: they only capture grades and take attendance of
-# their own materias (StaffOrTeacher + ensure_own_subject on those endpoints).
-STAFF_ALL = STAFF_ACADEMIC + (UserRole.tesoreria,)
+# --- Permissions by view (Administración → Roles) --------------------------------
+# Every staff endpoint names the views that may use it; the role's permissions are
+# read from the database on each request, so a change in Roles applies at once.
 
-ServiciosEscolares = Annotated[
-    User, Depends(require_roles(UserRole.admin_sistema, UserRole.direccion, UserRole.servicios_escolares))
-]
-AcademicStaff = Annotated[User, Depends(require_roles(*STAFF_ACADEMIC))]
-AnyStaff = Annotated[User, Depends(require_roles(*STAFF_ALL))]
-TreasuryStaff = Annotated[
-    User, Depends(require_roles(UserRole.admin_sistema, UserRole.direccion, UserRole.tesoreria))
-]
-# Authorizes actions requiring management sign-off (e.g. scholarship approval).
-Authorizer = Annotated[
-    User, Depends(require_roles(UserRole.admin_sistema, UserRole.direccion))
-]
-TeacherOrAcademic = Annotated[
-    User, Depends(require_roles(*STAFF_ACADEMIC, UserRole.docente))
-]
-# What the grade capture and attendance screens read: any staff, and the docente
-# (who is then limited to their own materias)
-StaffOrTeacher = Annotated[User, Depends(require_roles(*STAFF_ALL, UserRole.docente))]
+# own_subjects_only of this request's role (a docente: only their materias)
+_own_subjects: ContextVar[bool] = ContextVar("own_subjects", default=False)
 
 
-def is_teacher(user: User) -> bool:
-    return user.role == UserRole.docente and not user.is_superuser
+async def _role_access(request: Request, session: AsyncSession, user: User) -> tuple[set[str], bool, str]:
+    cached = getattr(request.state, "access", None)
+    if cached is None:
+        from app.services.roles import access_of
+
+        cached = await access_of(session, user)
+        request.state.access = cached
+    return cached
+
+
+def require_view(*views: str, any_view: bool = False, staff_only: bool = False):
+    """Pass if the user's role grants one of `views` (or, with any_view, any view at
+    all). staff_only keeps out roles limited to their own materias (docentes)."""
+
+    async def checker(
+        request: Request, session: SessionDep,
+        current_user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
+        if current_user.role == UserRole.alumno:  # portal accounts never reach staff screens
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough privileges")
+        permissions, own, _ = await _role_access(request, session, current_user)
+        _own_subjects.set(own)
+        allowed = bool(permissions) if any_view else bool(permissions & set(views))
+        if staff_only and own:
+            allowed = False
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Tu rol no tiene permiso para esta sección"
+            )
+        return current_user
+
+    return checker
+
+
+def View(*views: str, staff_only: bool = False):
+    return Annotated[User, Depends(require_view(*views, staff_only=staff_only))]
+
+
+# office staff: any view, not limited to their own materias (general reference data)
+AnyStaff = Annotated[User, Depends(require_view(any_view=True, staff_only=True))]
+# any staff role, docentes included (then limited to their own materias)
+StaffOrTeacher = Annotated[User, Depends(require_view(any_view=True))]
+
+# one per screen (or group of screens that share the data)
+CanInicio = View("inicio")
+CanAlumnos = View("alumnos")
+CanStudentsRead = View("alumnos", "inscripciones", "grupos", "tesoreria", "egresados", "reportes",
+                       staff_only=True)
+CanKardexRead = View("alumnos", "egresados", "reportes", "inscripciones", "grupos", staff_only=True)
+CanInscripciones = View("inscripciones", "alumnos")
+CanEnrollmentChanges = View("grupos", "alumnos", "inscripciones", staff_only=True)
+CanProfesores = View("profesores")
+CanUsersRead = View("usuarios", "grupos", "profesores", staff_only=True)
+CanProgramas = View("programas")
+CanGrupos = View("grupos", staff_only=True)
+CanGrid = View("calificaciones", "asistencias", "grupos")
+CanEgresados = View("egresados")
+CanAlumniRead = View("egresados", "reportes", "alumnos", staff_only=True)
+CanCalificaciones = View("calificaciones")
+CanActas = View("calificaciones", staff_only=True)
+CanAsistencias = View("asistencias")
+CanAsistenciasStaff = View("asistencias", staff_only=True)
+CanJustificaciones = View("asistencias", "alumnos", staff_only=True)
+CanTesoreria = View("tesoreria")
+CanTesoreriaReports = View("tesoreria", "reportes")
+CanBecasAutorizar = View("becas_autorizar")
+CanReportes = View("reportes", "alumnos", staff_only=True)
+CanPeriodos = View("periodos")
+CanPlanteles = View("planteles")
+CanConfiguracion = View("configuracion")
+CanUsuarios = View("usuarios")
+CanAuditoria = View("auditoria")
+CanRoles = View("roles")
+CanRolesRead = View("roles", "usuarios")
+
+
+def own_subjects_only() -> bool:
+    """This request's role sees only the materias assigned to its users."""
+    return _own_subjects.get()
+
+
+def is_teacher(user: User) -> bool:  # kept name: «limited to their own materias»
+    return own_subjects_only() and not user.is_superuser
 
 
 def ensure_own_subject(user: User, group_subject) -> None:
-    """A docente only sees the materias assigned to them."""
+    """A role limited to its own materias only reaches those assigned to the user."""
     if is_teacher(user) and group_subject.teacher_user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes asignada esta materia")
+
 
 # Roles that may already see a NAMED student's balance: tesorería through the
 # statement (TreasuryStaff), academic staff through the expediente, which
 # carries overdue_balance. UserRole.docente is deliberately absent from both, so
 # it is absent here — a teacher can read the students list, and that list must
 # not become the one place a teacher learns what every student owes.
-STAFF_FINANCIAL = STAFF_ACADEMIC + (UserRole.tesoreria,)
+STAFF_FINANCIAL = (
+    UserRole.admin_sistema, UserRole.direccion, UserRole.servicios_escolares,
+    UserRole.coordinador_academico, UserRole.tesoreria,
+)
 
 
 def can_read_debt(user: User) -> bool:
@@ -200,6 +261,8 @@ async def build_users_public(session: AsyncSession, users: list[User]) -> list[U
 async def build_user_public(session: AsyncSession, user: User) -> UserPublic:
     """UserPublic with the computed campus scope filled in (for /auth/me and the
     users admin so the frontend knows which campuses to offer)."""
+    from app.services.roles import access_of
+
     public = UserPublic.model_validate(user, from_attributes=True)
     if is_all_campus(user):
         public.campuses = await _all_campus_ids(session)
@@ -207,6 +270,10 @@ async def build_user_public(session: AsyncSession, user: User) -> UserPublic:
     else:
         public.campuses = await _member_campus_ids(session, user)
         public.all_campuses = False
+    permissions, own, role_name = await access_of(session, user)
+    public.permissions = sorted(permissions)
+    public.own_subjects_only = own
+    public.role_name = role_name
     return public
 
 

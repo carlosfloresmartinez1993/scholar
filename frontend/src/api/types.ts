@@ -2,6 +2,8 @@
 
 // --- Enums -----------------------------------------------------------------
 
+// code of a role (Administración → Roles). The system ones are listed; new roles
+// created from the interface have their own codes.
 export type UserRole =
   | "admin_sistema"
   | "direccion"
@@ -9,7 +11,26 @@ export type UserRole =
   | "coordinador_academico"
   | "tesoreria"
   | "docente"
-  | "alumno";
+  | "alumno"
+  | (string & {});
+
+export interface RoleItem {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+  own_subjects_only: boolean;
+  is_active: boolean;
+  permissions: string[];
+  users_count: number;
+}
+
+export interface PermissionItem {
+  code: string;
+  label: string;
+  section: string;
+}
 
 // code of a level of the editable catalog (Programas → Niveles educativos)
 export type EducationLevel = string;
@@ -162,6 +183,11 @@ export interface UserPublic {
   campuses: string[];
   /** true for superuser / admin_sistema — every campus, no membership needed. */
   all_campuses: boolean;
+  /** what the role allows (the views it may open) */
+  permissions?: string[];
+  /** a role limited to its own materias (like a docente) */
+  own_subjects_only?: boolean;
+  role_name?: string;
 }
 
 export interface AuditEntry {

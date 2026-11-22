@@ -23,6 +23,7 @@ import {
   Award,
   LogOut,
   Building2,
+  ShieldCheck,
   Presentation,
   Settings,
   Search,
@@ -32,7 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "@/components/command-palette";
-import { isTeacher, TEACHER_PATHS } from "@/lib/teacher";
+import { can, firstAllowedPath, isTeacher, permissionFor } from "@/lib/teacher";
 import { api } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type { UserPublic } from "@/api/types";
@@ -70,12 +71,10 @@ export const Route = createFileRoute("/_auth")({
     if (!me) throw redirect({ to: "/login" });
     // student accounts live in their own portal, never the staff shell
     if (me.role === "alumno") throw redirect({ to: "/portal" });
-    // a docente only captures grades and takes attendance (and their profile)
-    if (
-      isTeacher(me) &&
-      !TEACHER_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
-    ) {
-      throw redirect({ to: "/calificaciones" });
+    // each screen needs its view permission (the server checks it too)
+    const needed = permissionFor(location.pathname);
+    if (needed && !can(me, needed)) {
+      throw redirect({ to: firstAllowedPath(me) });
     }
   },
   component: AppShell,
@@ -85,46 +84,42 @@ const NAV_GROUPS = [
   {
     label: "Escolar",
     items: [
-      { to: "/", label: "Inicio", icon: Home },
-      { to: "/alumnos", label: "Alumnos", icon: GraduationCap },
+      { to: "/", label: "Inicio", icon: Home, perm: "inicio" },
+      { to: "/alumnos", label: "Alumnos", icon: GraduationCap, perm: "alumnos" },
       {
-        to: "/profesores", label: "Profesores", icon: Presentation,
-        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+        to: "/profesores", label: "Profesores", icon: Presentation, perm: "profesores",
       },
       {
-        to: "/inscripciones", label: "Inscripciones", icon: ClipboardList,
-        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+        to: "/inscripciones", label: "Inscripciones", icon: ClipboardList, perm: "inscripciones",
       },
-      { to: "/programas", label: "Programas", icon: Landmark },
-      { to: "/grupos", label: "Grupos", icon: Users },
-      { to: "/egresados", label: "Egresados", icon: Award },
+      { to: "/programas", label: "Programas", icon: Landmark, perm: "programas" },
+      { to: "/grupos", label: "Grupos", icon: Users, perm: "grupos" },
+      { to: "/egresados", label: "Egresados", icon: Award, perm: "egresados" },
     ],
   },
   {
     label: "Académico",
     items: [
-      { to: "/calificaciones", label: "Calificaciones", icon: NotebookPen },
-      { to: "/asistencias", label: "Asistencias", icon: ClipboardCheck },
+      { to: "/calificaciones", label: "Calificaciones", icon: NotebookPen, perm: "calificaciones" },
+      { to: "/asistencias", label: "Asistencias", icon: ClipboardCheck, perm: "asistencias" },
     ],
   },
   {
     label: "Gestión",
     items: [
-      { to: "/tesoreria", label: "Tesorería", icon: Banknote },
+      { to: "/tesoreria", label: "Tesorería", icon: Banknote, perm: "tesoreria" },
       {
         to: "/reportes",
         label: "Reportes",
         icon: BarChart3,
-        roles: ["admin_sistema", "direccion", "tesoreria"],
+        perm: "reportes",
       },
-      { to: "/periodos", label: "Periodos", icon: CalendarRange },
+      { to: "/periodos", label: "Periodos", icon: CalendarRange, perm: "periodos" },
       {
-        to: "/planteles", label: "Planteles", icon: Building2,
-        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+        to: "/planteles", label: "Planteles", icon: Building2, perm: "planteles",
       },
       {
-        to: "/configuracion", label: "Configuración", icon: Settings,
-        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+        to: "/configuracion", label: "Configuración", icon: Settings, perm: "configuracion",
       },
     ],
   },
@@ -133,8 +128,9 @@ const NAV_GROUPS = [
 const NAV_ADMIN = {
   label: "Administración",
   items: [
-    { to: "/usuarios", label: "Usuarios", icon: UserCog },
-    { to: "/auditoria", label: "Auditoría", icon: ScrollText },
+    { to: "/usuarios", label: "Usuarios", icon: UserCog, perm: "usuarios" },
+    { to: "/roles", label: "Roles", icon: ShieldCheck, perm: "roles" },
+    { to: "/auditoria", label: "Auditoría", icon: ScrollText, perm: "auditoria" },
   ],
 } as const;
 
@@ -142,7 +138,7 @@ const NAV_ADMIN = {
 function positionLabel(me?: UserPublic): string {
   if (!me) return "";
   if (me.position) return POSITION_LABELS[me.position];
-  return me.is_superuser ? "Superusuario" : ROLE_LABELS[me.role];
+  return me.is_superuser ? "Superusuario" : me.role_name || ROLE_LABELS[me.role] || me.role;
 }
 
 /** "María López" -> "ML"; falls back to the email's first letter. */
@@ -178,17 +174,11 @@ function AppShell() {
     }
   }, [collapsed]);
 
-  const isAdmin = me?.is_superuser || me?.role === "admin_sistema";
   const teacher = isTeacher(me);
-  // a docente sees only the screens of their materias
-  const groups = teacher
-    ? NAV_GROUPS.map((g) => ({
-        ...g,
-        items: g.items.filter((i) => (TEACHER_PATHS as readonly string[]).includes(i.to)),
-      })).filter((g) => g.items.length > 0)
-    : isAdmin
-      ? [...NAV_GROUPS, NAV_ADMIN]
-      : [...NAV_GROUPS];
+  // the menu shows the screens the user's role may open; a section with none, hides
+  const groups = [...NAV_GROUPS, NAV_ADMIN]
+    .map((g) => ({ ...g, items: g.items.filter((i) => can(me, i.perm)) }))
+    .filter((g) => g.items.length > 0);
 
   async function logout() {
     try {
@@ -239,12 +229,6 @@ function AppShell() {
                   </p>
                 )}
                 {group.items
-                  .filter((item) =>
-                    !("roles" in item) ||
-                    me?.is_superuser ||
-                    (me?.role !== undefined &&
-                      (item.roles as readonly string[]).includes(me.role)),
-                  )
                   .map(({ to, label, icon: Icon }) => (
                   <Link
                     key={to}

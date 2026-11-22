@@ -10,7 +10,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlmodel import func, select
 
-from app.api.deps import AnyStaff, Authorizer, SessionDep, TreasuryStaff
+from app.api.deps import (
+    AnyStaff,
+    CanBecasAutorizar,
+    CanTesoreria,
+    CanTesoreriaReports,
+    SessionDep,
+)
 from app.api.routes.catalog import get_default_institution
 from app.models import (
     AccountStatement,
@@ -81,7 +87,7 @@ async def list_concepts(session: SessionDep, _: AnyStaff) -> list[ChargeConceptP
 
 @router.post("/concepts", status_code=201)
 async def create_concept(
-    session: SessionDep, current_user: TreasuryStaff, body: ChargeConceptCreate
+    session: SessionDep, current_user: CanTesoreria, body: ChargeConceptCreate
 ) -> ChargeConceptPublic:
     institution = await get_default_institution(session)
     concept = ChargeConcept(**body.model_dump(), institution_id=institution.id)
@@ -95,7 +101,7 @@ async def create_concept(
 
 @router.patch("/concepts/{concept_id}")
 async def update_concept(
-    session: SessionDep, current_user: TreasuryStaff, concept_id: uuid.UUID,
+    session: SessionDep, current_user: CanTesoreria, concept_id: uuid.UUID,
     body: ChargeConceptUpdate,
 ) -> ChargeConceptPublic:
     """Edit a concept in place (e.g. yearly price bump). Existing charges froze
@@ -123,7 +129,7 @@ async def update_concept(
 
 @router.post("/charges", status_code=201)
 async def create_charge(
-    session: SessionDep, current_user: TreasuryStaff, body: ChargeCreate
+    session: SessionDep, current_user: CanTesoreria, body: ChargeCreate
 ) -> ChargePublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -159,7 +165,7 @@ async def create_charge(
 
 @router.post("/payment-plans", status_code=201)
 async def generate_payment_plan(
-    session: SessionDep, current_user: TreasuryStaff, body: PaymentPlanGenerateIn
+    session: SessionDep, current_user: CanTesoreria, body: PaymentPlanGenerateIn
 ) -> list[ChargePublic]:
     """RF-T02: N installments of a concept; scholarships applied per charge (RF-T05)."""
     student = await session.get(Student, body.student_id)
@@ -204,7 +210,7 @@ async def generate_payment_plan(
 
 @router.post("/groups/{group_id}/generate-charges")
 async def generate_group_charges(
-    session: SessionDep, current_user: TreasuryStaff, group_id: uuid.UUID,
+    session: SessionDep, current_user: CanTesoreria, group_id: uuid.UUID,
     waive_enrollment_fee: bool = False,
 ) -> dict:
     """Cohort billing (Servo's AsignaciónCobranza): bill every active enrollment in
@@ -256,7 +262,7 @@ async def generate_group_charges(
 
 @router.get("/groups/{group_id}/billing-status")
 async def group_billing_status(
-    session: SessionDep, _: TreasuryStaff, group_id: uuid.UUID
+    session: SessionDep, _: CanTesoreria, group_id: uuid.UUID
 ) -> list[dict]:
     """Roster of a group's active enrollments with whether each has been billed —
     so staff see who's missing charges and can back-bill the gaps."""
@@ -300,7 +306,7 @@ async def group_billing_status(
 
 @router.post("/charges/{charge_id}/cancel")
 async def cancel_charge(
-    session: SessionDep, current_user: TreasuryStaff, charge_id: uuid.UUID, reason: str = ""
+    session: SessionDep, current_user: CanTesoreria, charge_id: uuid.UUID, reason: str = ""
 ) -> dict:
     charge = await session.get(Charge, charge_id)
     if charge is None:
@@ -334,7 +340,7 @@ async def cancel_charge(
 
 @router.post("/charges/{charge_id}/condone")
 async def condone_charge(
-    session: SessionDep, current_user: TreasuryStaff, charge_id: uuid.UUID,
+    session: SessionDep, current_user: CanTesoreria, charge_id: uuid.UUID,
     body: ChargeCondoneIn,
 ) -> ChargePublic:
     """Condonación: forgive part or all of a charge's open balance at caja,
@@ -381,7 +387,7 @@ async def condone_charge(
 
 @router.post("/payments", status_code=201)
 async def register_payment(
-    session: SessionDep, current_user: TreasuryStaff, body: PaymentCreate
+    session: SessionDep, current_user: CanTesoreria, body: PaymentCreate
 ) -> PaymentPublic:
     student = await session.get(Student, body.student_id)
     if student is None:
@@ -486,7 +492,7 @@ async def register_payment(
 
 @router.post("/payments/{payment_id}/cancel")
 async def cancel_payment(
-    session: SessionDep, current_user: TreasuryStaff, payment_id: uuid.UUID, reason: str
+    session: SessionDep, current_user: CanTesoreria, payment_id: uuid.UUID, reason: str
 ) -> PaymentPublic:
     payment = await session.get(Payment, payment_id)
     if payment is None:
@@ -517,7 +523,7 @@ async def cancel_payment(
 
 @router.get("/students/{student_id}/statement")
 async def account_statement(
-    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID
+    session: SessionDep, _: CanTesoreria, student_id: uuid.UUID
 ) -> AccountStatement:
     """RF-T04: cargos, pagos, saldo y próximos vencimientos."""
     if await session.get(Student, student_id) is None:
@@ -529,7 +535,7 @@ async def account_statement(
 
 @router.put("/scholarship-pcts")
 async def set_scholarship_pcts(
-    session: SessionDep, current_user: Authorizer, body: list[float]
+    session: SessionDep, current_user: CanBecasAutorizar, body: list[float]
 ) -> list[float]:
     """Dirección pre-authorizes the beca percentages caja can grant without a
     per-scholarship sign-off. Replaces the whole list."""
@@ -558,7 +564,7 @@ async def set_scholarship_pcts(
 
 @router.get("/scholarships")
 async def list_scholarships(
-    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID | None = None,
+    session: SessionDep, _: CanTesoreria, student_id: uuid.UUID | None = None,
     status: ScholarshipStatus | None = None,
 ) -> list[ScholarshipPublic]:
     q = select(Scholarship).order_by(Scholarship.created_at.desc())  # type: ignore[attr-defined]
@@ -571,7 +577,7 @@ async def list_scholarships(
 
 @router.post("/scholarships", status_code=201)
 async def create_scholarship(
-    session: SessionDep, current_user: TreasuryStaff, body: ScholarshipCreate
+    session: SessionDep, current_user: CanTesoreria, body: ScholarshipCreate
 ) -> ScholarshipPublic:
     """RF-T05: creates a beca. Requested by treasury staff it stays `solicitada`
     (no discount) until an admin authorizes it; created by an admin/superuser it
@@ -597,9 +603,10 @@ async def create_scholarship(
     # Pre-authorized percentage (set by Dirección beforehand) → no per-beca
     # sign-off: the cashier doesn't wait for an authorization mid-process.
     pre_authorized = any(abs(p - body.pct) < 0.001 for p in institution.scholarship_pcts)
-    auto_approve = pre_authorized or current_user.is_superuser or current_user.role in (
-        UserRole.admin_sistema, UserRole.direccion
-    )
+    from app.services.roles import access_of
+
+    # who may authorize becas creates them already authorized
+    auto_approve = pre_authorized or "becas_autorizar" in (await access_of(session, current_user))[0]
     scholarship = Scholarship(
         **body.model_dump(), status=ScholarshipStatus.solicitada, requested_by=current_user.id
     )
@@ -625,7 +632,7 @@ async def create_scholarship(
 
 @router.post("/scholarships/{scholarship_id}/authorize")
 async def authorize_scholarship(
-    session: SessionDep, current_user: Authorizer, scholarship_id: uuid.UUID
+    session: SessionDep, current_user: CanBecasAutorizar, scholarship_id: uuid.UUID
 ) -> ScholarshipPublic:
     """Admin sign-off: a `solicitada` scholarship becomes `activa` and starts
     discounting future charges (RF-T05)."""
@@ -651,7 +658,7 @@ async def authorize_scholarship(
 
 @router.post("/scholarships/{scholarship_id}/reject")
 async def reject_scholarship(
-    session: SessionDep, current_user: Authorizer, scholarship_id: uuid.UUID, reason: str = ""
+    session: SessionDep, current_user: CanBecasAutorizar, scholarship_id: uuid.UUID, reason: str = ""
 ) -> ScholarshipPublic:
     scholarship = await session.get(Scholarship, scholarship_id)
     if scholarship is None:
@@ -671,7 +678,7 @@ async def reject_scholarship(
 
 @router.get("/fiscal-receptors")
 async def search_fiscal_receptors(
-    session: SessionDep, _: TreasuryStaff, q: str = ""
+    session: SessionDep, _: CanTesoreria, q: str = ""
 ) -> list[FiscalReceptorPublic]:
     """Registered invoicing clients: search by RFC or razón social so recurrent
     receptors aren't recaptured."""
@@ -686,7 +693,7 @@ async def search_fiscal_receptors(
 
 @router.get("/students/{student_id}/fiscal")
 async def get_fiscal_profile(
-    session: SessionDep, _: TreasuryStaff, student_id: uuid.UUID
+    session: SessionDep, _: CanTesoreria, student_id: uuid.UUID
 ) -> FiscalProfilePublic | None:
     return (
         await session.exec(
@@ -697,7 +704,7 @@ async def get_fiscal_profile(
 
 @router.put("/students/{student_id}/fiscal")
 async def upsert_fiscal_profile(
-    session: SessionDep, current_user: TreasuryStaff, student_id: uuid.UUID, body: FiscalProfileBase
+    session: SessionDep, current_user: CanTesoreria, student_id: uuid.UUID, body: FiscalProfileBase
 ) -> FiscalProfilePublic:
     if await session.get(Student, student_id) is None:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
@@ -739,7 +746,7 @@ async def upsert_fiscal_profile(
 # --- Late fees (RF-T06) -----------------------------------------------------------------------
 
 @router.post("/late-fees/run")
-async def run_late_fees(session: SessionDep, current_user: TreasuryStaff) -> dict:
+async def run_late_fees(session: SessionDep, current_user: CanTesoreria) -> dict:
     institution = await get_default_institution(session)
     # Becas are never auto-suspended — a scholarship is kept for the whole career
     # even if a colegiatura goes unpaid (policy). Late fees still accrue after the
@@ -753,13 +760,13 @@ async def run_late_fees(session: SessionDep, current_user: TreasuryStaff) -> dic
 
 
 @router.get("/reports/scholarships")
-async def scholarship_report(session: SessionDep, _: TreasuryStaff) -> dict:
+async def scholarship_report(session: SessionDep, _: CanTesoreriaReports) -> dict:
     """RF-T reports: becados, % becados y beca aplicada acumulada al día."""
     return await scholarship_metrics(session)
 
 
 @router.get("/reports/term-summary")
-async def term_summary_report(session: SessionDep, _: TreasuryStaff) -> list[dict]:
+async def term_summary_report(session: SessionDep, _: CanTesoreriaReports) -> list[dict]:
     """RF-T08: expected vs collected per cuatrimestre, with the concept split."""
     return await term_billing_summary(session)
 
@@ -768,7 +775,7 @@ async def term_summary_report(session: SessionDep, _: TreasuryStaff) -> list[dic
 
 @router.get("/reports/collection")
 async def collection_report(
-    session: SessionDep, _: TreasuryStaff, date_from: date, date_to: date
+    session: SessionDep, _: CanTesoreriaReports, date_from: date, date_to: date
 ) -> dict:
     payments = (
         await session.exec(
@@ -792,7 +799,7 @@ async def collection_report(
 
 
 @router.get("/reports/aging")
-async def aging_report(session: SessionDep, _: TreasuryStaff) -> list[dict]:
+async def aging_report(session: SessionDep, _: CanTesoreriaReports) -> list[dict]:
     """Cartera vencida por antigüedad (RF-T08)."""
     today = utcnow().date()
     charges = (
@@ -831,7 +838,7 @@ async def aging_report(session: SessionDep, _: TreasuryStaff) -> list[dict]:
 
 @router.get("/exports/movements")
 async def export_movements(
-    session: SessionDep, _: TreasuryStaff, date_from: date, date_to: date
+    session: SessionDep, _: CanTesoreriaReports, date_from: date, date_to: date
 ) -> StreamingResponse:
     """RF-T10: CSV compatible with common Mexican accounting systems."""
     payments = (

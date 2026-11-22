@@ -27,6 +27,7 @@ const ACTIONS = [
   { label: "Periodos", to: "/periodos", hint: "Página" },
   { label: "Planteles", to: "/planteles", hint: "Página" },
   { label: "Profesores", to: "/profesores", hint: "Página" },
+  { label: "Roles", to: "/roles", hint: "Página" },
   { label: "Configuración", to: "/configuracion", hint: "Página" },
   { label: "Mi perfil", to: "/perfil", hint: "Página" },
 ] as const;
