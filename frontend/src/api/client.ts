@@ -50,8 +50,17 @@ export class ApiError extends Error {
 
 async function parseError(res: Response): Promise<ApiError> {
   const body = await res.json().catch(() => ({ detail: res.statusText }));
+  // a validation error (422) is a list: say which data is wrong
+  const invalid = Array.isArray(body.detail) ? body.detail[0] : null;
+  const field = invalid?.loc?.[invalid.loc.length - 1];
   const detail =
-    typeof body.detail === "string" ? body.detail : "Error en la solicitud";
+    typeof body.detail === "string"
+      ? body.detail
+      : field === "email"
+        ? "El correo no es válido"
+        : invalid
+          ? "Revisa los datos capturados"
+          : "Error en la solicitud";
   return new ApiError(res.status, detail);
 }
 

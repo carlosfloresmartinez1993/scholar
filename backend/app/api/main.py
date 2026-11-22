@@ -13,6 +13,7 @@ from app.api.routes import (
     integration,
     portal,
     students,
+    teachers,
     treasury,
     users,
 )
@@ -24,6 +25,7 @@ api_router.include_router(users.router)
 api_router.include_router(catalog.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(students.router)
+api_router.include_router(teachers.router)
 api_router.include_router(alumni.router)
 api_router.include_router(grades.router)
 api_router.include_router(attendance.router)

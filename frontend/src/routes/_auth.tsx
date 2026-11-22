@@ -23,6 +23,7 @@ import {
   Award,
   LogOut,
   Building2,
+  Presentation,
   Settings,
   Search,
   User,
@@ -78,6 +79,10 @@ const NAV_GROUPS = [
     items: [
       { to: "/", label: "Inicio", icon: Home },
       { to: "/alumnos", label: "Alumnos", icon: GraduationCap },
+      {
+        to: "/profesores", label: "Profesores", icon: Presentation,
+        roles: ["admin_sistema", "direccion", "servicios_escolares"],
+      },
       {
         to: "/inscripciones", label: "Inscripciones", icon: ClipboardList,
         roles: ["admin_sistema", "direccion", "servicios_escolares"],
