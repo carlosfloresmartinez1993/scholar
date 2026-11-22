@@ -179,19 +179,14 @@ async def test_with_debt_still_serializes_the_rest_of_the_row(client, seed):
 
 
 async def test_docente_cannot_read_the_adeudo_column(client, seed):
-    """The students list is AnyStaff, which includes docente — but a teacher can
-    read a student's balance nowhere else (the statement is TreasuryStaff, the
-    expediente is AcademicStaff). The column must not be the first place."""
+    """A docente reads no student list at all, so never the adeudo column."""
     await login(client)
     student = await make_student(client, str(seed["campus"].id))
     await _charge(client, student["id"], "Colegiatura vencida", 2500, PAST)
 
     await login(client, "docente@inue.edu.mx")
-    # the list itself still works — a teacher has always been able to read it
-    plain = await client.get("/api/v1/students")
-    assert plain.status_code == 200
-    assert plain.json()[0]["overdue_balance"] is None
-
+    # a docente only captures grades and attendance of their materias: no list
+    assert (await client.get("/api/v1/students")).status_code == 403
     assert (await client.get(
         "/api/v1/students", params={"with_debt": True}
     )).status_code == 403

@@ -81,3 +81,42 @@ async def test_a_teacher_sees_their_groups_in_any_campus(client, seed, monkeypat
         assert other["id"] not in {g["campus_id"] for g in groups}
         theirs = (await t.get(f"{API}/catalog/groups/{catalog['group']['id']}/subjects")).json()
         assert [s["id"] for s in theirs] == [mine["id"]]
+
+
+async def test_a_teacher_only_reaches_their_own_capture_and_attendance(client, seed, monkeypatch):
+    import re
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    sent = []
+    monkeypatch.setattr("app.api.routes.teachers.send_email", lambda **kw: sent.append(kw))
+    await login(client)
+    catalog = await build_catalog(client, str(seed["campus"].id))
+    teacher = (await client.post(f"{API}/teachers", json={
+        "full_name": "Beto Docente", "email": "beto.docente@inue.edu.mx"})).json()
+    password = re.search(r"Contraseña: <b>([^<]+)</b>", sent[-1]["html"]).group(1)
+    gs = (await client.get(f"{API}/catalog/groups/{catalog['group']['id']}/subjects")).json()[0]
+    # another materia of the group, not theirs
+    other = (await client.post(f"{API}/catalog/group-subjects", json={
+        "group_id": catalog["group"]["id"], "plan_subject_id": catalog["subject_b"]["id"]})).json()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as t:
+        await t.post(f"{API}/auth/login", data={"username": "beto.docente@inue.edu.mx", "password": password})
+        # not assigned yet: not even that grid
+        assert (await t.get(f"{API}/grades/group-subjects/{gs['id']}/grid")).status_code == 403
+        await client.patch(f"{API}/catalog/group-subjects/{gs['id']}", json={
+            "group_id": gs["group_id"], "plan_subject_id": gs["plan_subject_id"],
+            "teacher_user_id": teacher["id"]})
+        for url in (f"/grades/group-subjects/{gs['id']}/grid",
+                    f"/attendance/group-subjects/{gs['id']}/sessions",
+                    f"/attendance/group-subjects/{gs['id']}/report",
+                    f"/grades/group-subjects/{gs['id']}/actas",
+                    "/catalog/terms"):
+            assert (await t.get(API + url)).status_code == 200, url
+        assert (await t.get(f"{API}/grades/group-subjects/{other['id']}/grid")).status_code == 403
+        # the rest of the system is closed
+        for url in ("/students", "/catalog/programs", "/teachers", "/dashboard/activity?days=30",
+                    f"/grades/students/{catalog['group']['id']}/kardex-completo"):
+            assert (await t.get(API + url)).status_code == 403, url

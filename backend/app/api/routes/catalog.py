@@ -14,6 +14,7 @@ from app.api.deps import (
     AcademicStaff,
     AnyStaff,
     CampusScope,
+    StaffOrTeacher,
     ensure_in_scope,
     ServiciosEscolares,
     SessionDep,
@@ -123,7 +124,7 @@ async def update_institution(
 # --- Campuses ------------------------------------------------------------------
 
 @router.get("/campuses")
-async def list_campuses(session: SessionDep, _: AnyStaff) -> list[CampusPublic]:
+async def list_campuses(session: SessionDep, _: StaffOrTeacher) -> list[CampusPublic]:
     return (await session.exec(select(Campus).order_by(Campus.name))).all()
 
 
@@ -621,7 +622,7 @@ async def update_plan_version(
 
 @router.get("/plan-versions/{plan_version_id}/subjects")
 async def list_plan_subjects(
-    session: SessionDep, _: AnyStaff, plan_version_id: uuid.UUID
+    session: SessionDep, _: StaffOrTeacher, plan_version_id: uuid.UUID
 ) -> list[PlanSubjectPublic]:
     subjects = (
         await session.exec(
@@ -787,7 +788,7 @@ async def delete_evaluation_component(
 # --- Terms (RT-06) ------------------------------------------------------------------
 
 @router.get("/terms")
-async def list_terms(session: SessionDep, _: AnyStaff) -> list[TermPublic]:
+async def list_terms(session: SessionDep, _: StaffOrTeacher) -> list[TermPublic]:
     return (await session.exec(select(Term).order_by(Term.start_date.desc()))).all()
 
 
@@ -925,7 +926,7 @@ async def update_term(
 @router.get("/groups")
 async def list_groups(
     session: SessionDep,
-    current_user: AnyStaff,
+    current_user: StaffOrTeacher,
     scope: CampusScope,
     term_id: uuid.UUID | None = None,
     plan_version_id: uuid.UUID | None = None,
@@ -1162,7 +1163,7 @@ async def list_group_students(
 
 @router.get("/groups/{group_id}/subjects")
 async def list_group_subjects(
-    session: SessionDep, current_user: AnyStaff, group_id: uuid.UUID
+    session: SessionDep, current_user: StaffOrTeacher, group_id: uuid.UUID
 ) -> list[GroupSubjectPublic]:
     q = select(GroupSubject).where(GroupSubject.group_id == group_id)
     if current_user.role == UserRole.docente and not current_user.is_superuser:

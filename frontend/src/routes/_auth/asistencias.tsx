@@ -6,6 +6,7 @@ import { Check, ClipboardCheck, Save, X } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import { useAcademicSelector } from "@/components/academic-selector";
+import { useIsTeacher } from "@/lib/teacher";
 import type {
   AttendanceRecord,
   AttendanceReportRow,
@@ -58,6 +59,7 @@ const ROLL_STATUSES: AttendanceStatus[] = [
 
 function AsistenciasPage() {
   const { groupSubjectId, selector } = useAcademicSelector();
+  const teacher = useIsTeacher();
 
   return (
     <div className="space-y-6">
@@ -78,7 +80,8 @@ function AsistenciasPage() {
         </>
       )}
 
-      <JustificationsSection />
+      {/* justificantes are reviewed by Servicios Escolares, not the docente */}
+      {!teacher && <JustificationsSection />}
     </div>
   );
 }

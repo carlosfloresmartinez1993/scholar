@@ -14,8 +14,10 @@ from app.api.deps import (
     CurrentUser,
     ServiciosEscolares,
     SessionDep,
+    StaffOrTeacher,
     TeacherOrAcademic,
     ensure_in_scope,
+    ensure_own_subject,
 )
 from app.api.routes.catalog import get_default_institution
 from app.models import (
@@ -76,12 +78,13 @@ async def _capture_window_open(session: SessionDep, group_subject: GroupSubject)
 
 @router.get("/group-subjects/{group_subject_id}/grid")
 async def grade_grid(
-    session: SessionDep, _: AnyStaff, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
 ) -> dict:
     """Students × evaluation components matrix for capture UI."""
     group_subject = await session.get(GroupSubject, group_subject_id)
     if group_subject is None:
         raise HTTPException(status_code=404, detail="Materia de grupo no encontrada")
+    ensure_own_subject(current_user, group_subject)
     components = (
         await session.exec(
             select(EvaluationComponent)
@@ -436,8 +439,11 @@ async def generate_acta(
 
 @router.get("/group-subjects/{group_subject_id}/actas")
 async def list_actas(
-    session: SessionDep, _: AnyStaff, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
 ) -> list[GradeActaPublic]:
+    group_subject = await session.get(GroupSubject, group_subject_id)
+    if group_subject is not None:
+        ensure_own_subject(current_user, group_subject)
     return (
         await session.exec(
             select(GradeActa).where(GradeActa.group_subject_id == group_subject_id)

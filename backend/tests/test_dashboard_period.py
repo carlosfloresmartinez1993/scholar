@@ -58,8 +58,11 @@ async def test_series_total_matches_kpi_window(client, seed, session_factory):
 
 
 async def test_activity_visible_to_staff(client, seed):
-    # any staff (e.g. docente) can read the dashboard activity feed
-    await login(client, "docente@inue.edu.mx")
+    # staff (e.g. tesorería) can read the dashboard activity feed
+    await login(client, "tesoreria@inue.edu.mx")
     response = await client.get("/api/v1/dashboard/activity?days=30")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+    # a docente only captures grades and attendance: no dashboard
+    await login(client, "docente@inue.edu.mx")
+    assert (await client.get("/api/v1/dashboard/activity?days=30")).status_code == 403

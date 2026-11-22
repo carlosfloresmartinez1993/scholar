@@ -5,7 +5,14 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from sqlmodel import select
 
-from app.api.deps import AnyStaff, ServiciosEscolares, SessionDep, TeacherOrAcademic
+from app.api.deps import (
+    AnyStaff,
+    ServiciosEscolares,
+    SessionDep,
+    StaffOrTeacher,
+    TeacherOrAcademic,
+    ensure_own_subject,
+)
 from app.models import (
     AbsenceJustification,
     AttendanceRecord,
@@ -135,8 +142,11 @@ async def record_session(
 
 @router.get("/group-subjects/{group_subject_id}/sessions")
 async def list_sessions(
-    session: SessionDep, _: AnyStaff, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
 ) -> list[ClassSessionPublic]:
+    group_subject = await session.get(GroupSubject, group_subject_id)
+    if group_subject is not None:
+        ensure_own_subject(current_user, group_subject)
     return (
         await session.exec(
             select(ClassSession)
@@ -148,8 +158,12 @@ async def list_sessions(
 
 @router.get("/sessions/{session_id}/records")
 async def session_records(
-    session: SessionDep, _: AnyStaff, session_id: uuid.UUID
+    session: SessionDep, current_user: StaffOrTeacher, session_id: uuid.UUID
 ) -> list[AttendanceRecordPublic]:
+    class_session = await session.get(ClassSession, session_id)
+    group_subject = await session.get(GroupSubject, class_session.group_subject_id) if class_session else None
+    if group_subject is not None:
+        ensure_own_subject(current_user, group_subject)
     return (
         await session.exec(
             select(AttendanceRecord).where(AttendanceRecord.session_id == session_id)
@@ -159,8 +173,11 @@ async def session_records(
 
 @router.get("/group-subjects/{group_subject_id}/report")
 async def attendance_report(
-    session: SessionDep, _: AnyStaff, group_subject_id: uuid.UUID
+    session: SessionDep, current_user: StaffOrTeacher, group_subject_id: uuid.UUID
 ) -> list[dict]:
+    group_subject = await session.get(GroupSubject, group_subject_id)
+    if group_subject is not None:
+        ensure_own_subject(current_user, group_subject)
     """RF-A05: per-student attendance % and right-to-exam for a subject."""
     student_ids = (
         await session.exec(

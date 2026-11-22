@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "@/components/command-palette";
+import { isTeacher, TEACHER_PATHS } from "@/lib/teacher";
 import { api } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import type { UserPublic } from "@/api/types";
@@ -54,7 +55,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export const Route = createFileRoute("/_auth")({
-  beforeLoad: async ({ context }) => {
+  beforeLoad: async ({ context, location }) => {
     let me = context.queryClient.getQueryData<UserPublic>(queryKeys.me);
     if (!me) {
       try {
@@ -69,6 +70,13 @@ export const Route = createFileRoute("/_auth")({
     if (!me) throw redirect({ to: "/login" });
     // student accounts live in their own portal, never the staff shell
     if (me.role === "alumno") throw redirect({ to: "/portal" });
+    // a docente only captures grades and takes attendance (and their profile)
+    if (
+      isTeacher(me) &&
+      !TEACHER_PATHS.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+    ) {
+      throw redirect({ to: "/calificaciones" });
+    }
   },
   component: AppShell,
 });
@@ -171,7 +179,16 @@ function AppShell() {
   }, [collapsed]);
 
   const isAdmin = me?.is_superuser || me?.role === "admin_sistema";
-  const groups = isAdmin ? [...NAV_GROUPS, NAV_ADMIN] : [...NAV_GROUPS];
+  const teacher = isTeacher(me);
+  // a docente sees only the screens of their materias
+  const groups = teacher
+    ? NAV_GROUPS.map((g) => ({
+        ...g,
+        items: g.items.filter((i) => (TEACHER_PATHS as readonly string[]).includes(i.to)),
+      })).filter((g) => g.items.length > 0)
+    : isAdmin
+      ? [...NAV_GROUPS, NAV_ADMIN]
+      : [...NAV_GROUPS];
 
   async function logout() {
     try {
@@ -298,21 +315,21 @@ function AppShell() {
             collapsed ? "pl-16" : "pl-60",
           )}
         >
-          <Header onSearch={() => setPaletteOpen(true)} />
+          <Header onSearch={teacher ? undefined : () => setPaletteOpen(true)} />
           <main className="flex-1 p-6">
             <Outlet />
           </main>
         </div>
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        {!teacher && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
       </div>
     </CampusProvider>
   );
 }
 
-function Header({ onSearch }: { onSearch: () => void }) {
+function Header({ onSearch }: { onSearch?: () => void }) {
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-4 border-b bg-background/95 px-6 backdrop-blur">
-      <button
+      {!onSearch ? <span /> : <button
         type="button"
         onClick={onSearch}
         className="flex h-9 w-64 items-center gap-2 rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted sm:w-80"
@@ -323,7 +340,7 @@ function Header({ onSearch }: { onSearch: () => void }) {
         <kbd className="rounded-sm border bg-background px-1.5 py-0.5 font-sans text-[10px] font-semibold text-muted-foreground">
           ⌘K
         </kbd>
-      </button>
+      </button>}
 
       <div className="flex items-center gap-4">
         <CampusSwitcher />

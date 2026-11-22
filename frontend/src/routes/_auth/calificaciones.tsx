@@ -6,6 +6,7 @@ import { Eye, FileSignature, FileText, NotebookPen } from "lucide-react";
 import { api, ApiError } from "@/api/client";
 import { queryKeys } from "@/api/query-keys";
 import { useAcademicSelector } from "@/components/academic-selector";
+import { useIsTeacher } from "@/lib/teacher";
 import {
   canCaptureReplacement,
   ordinaryGrade,
@@ -59,6 +60,7 @@ export const Route = createFileRoute("/_auth/calificaciones")({
 
 function CalificacionesPage() {
   const { term, groupSubjectId, selector } = useAcademicSelector();
+  const teacher = useIsTeacher();
 
   return (
     <div className="space-y-6">
@@ -80,7 +82,8 @@ function CalificacionesPage() {
       ) : (
         <>
           <GradeGridSection groupSubjectId={groupSubjectId} />
-          <ActasSection groupSubjectId={groupSubjectId} />
+          {/* actas are generated and signed by Servicios Escolares */}
+          {!teacher && <ActasSection groupSubjectId={groupSubjectId} />}
         </>
       )}
     </div>

@@ -87,7 +87,9 @@ STAFF_ACADEMIC = (
     UserRole.servicios_escolares,
     UserRole.coordinador_academico,
 )
-STAFF_ALL = STAFF_ACADEMIC + (UserRole.tesoreria, UserRole.docente)
+# A docente is NOT in STAFF_ALL: they only capture grades and take attendance of
+# their own materias (StaffOrTeacher + ensure_own_subject on those endpoints).
+STAFF_ALL = STAFF_ACADEMIC + (UserRole.tesoreria,)
 
 ServiciosEscolares = Annotated[
     User, Depends(require_roles(UserRole.admin_sistema, UserRole.direccion, UserRole.servicios_escolares))
@@ -104,6 +106,19 @@ Authorizer = Annotated[
 TeacherOrAcademic = Annotated[
     User, Depends(require_roles(*STAFF_ACADEMIC, UserRole.docente))
 ]
+# What the grade capture and attendance screens read: any staff, and the docente
+# (who is then limited to their own materias)
+StaffOrTeacher = Annotated[User, Depends(require_roles(*STAFF_ALL, UserRole.docente))]
+
+
+def is_teacher(user: User) -> bool:
+    return user.role == UserRole.docente and not user.is_superuser
+
+
+def ensure_own_subject(user: User, group_subject) -> None:
+    """A docente only sees the materias assigned to them."""
+    if is_teacher(user) and group_subject.teacher_user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes asignada esta materia")
 
 # Roles that may already see a NAMED student's balance: tesorería through the
 # statement (TreasuryStaff), academic staff through the expediente, which
