@@ -12,6 +12,7 @@ import {
   PlayCircle,
   RefreshCcw,
   Repeat,
+  RotateCcw,
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -47,6 +48,8 @@ const KIND_STYLE: Record<string, { icon: LucideIcon; tone: string }> = {
   ingreso: { icon: LogIn, tone: "text-emerald-600 dark:text-emerald-400" },
   cuatrimestre: { icon: CircleDot, tone: "text-primary" },
   reingreso: { icon: PlayCircle, tone: "text-emerald-600 dark:text-emerald-400" },
+  repite: { icon: RotateCcw, tone: "text-amber-600 dark:text-amber-400" },
+  recursa: { icon: RotateCcw, tone: "text-muted-foreground" },
   baja: { icon: PauseCircle, tone: "text-red-600 dark:text-red-400" },
   estatus: { icon: RefreshCcw, tone: "text-sky-600 dark:text-sky-400" },
   cambio_grupo: { icon: ArrowRightLeft, tone: "text-muted-foreground" },

@@ -115,6 +115,14 @@ async def student_history(session: AsyncSession, student: Student) -> dict:
         events.append({"date": when.isoformat(), "kind": kind, "title": title, "detail": detail,
                        "term": term, "actor": actor})
 
+    # the highest cuatrimestre the student is in, per cycle and plan: a lower group in
+    # that same cycle is a recursamiento, not going back
+    top: dict = {}
+    for ge, group, term, _, _, plan in rows:
+        if not ge.subjects_only and not recognition_kind(group.code):
+            key = (term.id, plan.id)
+            top[key] = max(top.get(key, 0), group.period_number)
+
     last_regular = None  # (term_id, period, when, plan_version_id)
     for ge, group, term, program, rvoe, plan in rows:
         when = datetime.combine(term.start_date, time.min)
@@ -129,20 +137,32 @@ async def student_history(session: AsyncSession, student: Student) -> dict:
             add(when, "otro_grupo", f"Cursa materias con el grupo {group.code}",
                 f"{', '.join(sorted(codes[ge.id]))} · {line}", term.name)
             continue
+        if group.period_number < top.get((term.id, plan.id), 0):
+            add(when, "recursa", f"Recursa materias de {group.period_number}.º con el grupo {group.code}",
+                f"{', '.join(sorted(codes[ge.id]))} · {line}", term.name)
+            continue
         if last_regular is None:
             title, kind = f"Ingresó a {program.name} — grupo {group.code} ({group.period_number}.º)", "ingreso"
         elif last_regular[0] == term.id and last_regular[1] == group.period_number:
-            title, kind = f"Cambió al grupo {group.code}", "cambio_grupo"
+            if last_regular[3] != plan.id:  # cambio de RVOE: same cuatrimestre, new plan
+                title, kind = (f"Sigue en {group.period_number}.º con el RVOE {rvoe.agreement_number}"
+                               f" — grupo {group.code}"), "rvoe"
+            else:
+                title, kind = f"Cambió al grupo {group.code}", "cambio_grupo"
         elif any(last_regular[2] < c[0] <= when and c[2].startswith("baja") for c in status_changes):
             title, kind = f"Reingreso en {group.period_number}.º — grupo {group.code}", "reingreso"
+        elif group.period_number == last_regular[1]:
+            # did not pass the cuatrimestre: takes it again in a later cycle
+            title, kind = f"Repite {group.period_number}.º — grupo {group.code}", "repite"
         elif group.period_number < last_regular[1]:
             title, kind = f"Volvió a {group.period_number}.º — grupo {group.code}", "cuatrimestre"
         else:
             title, kind = f"Pasó a {group.period_number}.º — grupo {group.code}", "cuatrimestre"
-        if last_regular is not None and last_regular[3] != plan.id and kind != "cambio_grupo":
+        if last_regular is not None and last_regular[3] != plan.id and kind not in ("cambio_grupo", "rvoe"):
             title += f" (RVOE {rvoe.agreement_number})"
         moved_out = ge.status == GroupEnrollmentStatus.baja and not counts[ge.id].get("aprobada")
-        add(when, kind, title, line + (" · salió del grupo" if moved_out else ""), term.name)
+        retakes = " (recursamiento)" if kind == "repite" else ""
+        add(when, kind, title, line + retakes + (" · salió del grupo" if moved_out else ""), term.name)
         last_regular = (term.id, group.period_number, when, plan.id)
 
     for when, before, after, actor in status_changes:

@@ -46,3 +46,56 @@ async def test_history_tells_what_happened(client, seed):
     assert history["current"]["group_code"] == "LD-2A"
     assert history["current"]["period_number"] == 2
     assert history["status_label"] == "Activo"
+
+
+async def test_a_repeated_cuatrimestre_says_repite(client, seed):
+    """Failed the cuatrimestre and is enrolled again in the same one next cycle."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])
+    ses = (await client.get(f"{API}/students/{student['id']}/subject-enrollments")).json()
+    await client.post(f"{API}/grades/subject-enrollments/{ses[0]['id']}/correct",
+                      json={"final_grade": 5, "reason": "reprobó"})
+    term2 = (await client.post(f"{API}/catalog/terms", json={
+        "name": "2027-1 ENE-ABR", "period_type": "cuatrimestral",
+        "start_date": "2027-01-11", "end_date": "2027-04-30"})).json()
+    again = (await client.post(f"{API}/catalog/groups", json={
+        "code": "LD-1C", "period_number": 1, "plan_version_id": catalog["plan"]["id"],
+        "term_id": term2["id"]})).json()
+    r = await client.post(f"{API}/students/group-enrollments", json={
+        "student_id": student["id"], "group_id": again["id"]})
+    assert r.status_code == 201, r.text
+
+    events = (await client.get(f"{API}/students/{student['id']}/history")).json()["events"]
+    repite = next(e for e in events if e["kind"] == "repite")
+    assert repite["title"] == "Repite 1.º — grupo LD-1C"
+    assert "recursamiento" in repite["detail"] and repite["term"] == "2027-1 ENE-ABR"
+    assert not any(e["title"].startswith("Pasó a 1.º") for e in events)
+
+
+async def test_a_lower_group_in_the_same_cycle_is_a_retake(client, seed):
+    """In 2.º and taking a failed 1.º subject with a 1.º group of the same cycle: it
+    is a recursamiento, not «volvió a 1.º»."""
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    student = await enroll_student(client, campus_id, catalog["group"]["id"])
+    ses = (await client.get(f"{API}/students/{student['id']}/subject-enrollments")).json()
+    await client.post(f"{API}/grades/subject-enrollments/{ses[0]['id']}/correct",
+                      json={"final_grade": 5, "reason": "reprobó"})
+    term2 = (await client.post(f"{API}/catalog/terms", json={
+        "name": "2027-1 ENE-ABR", "period_type": "cuatrimestral",
+        "start_date": "2027-01-11", "end_date": "2027-04-30"})).json()
+    base = {"plan_version_id": catalog["plan"]["id"], "term_id": term2["id"]}
+    second = (await client.post(f"{API}/catalog/groups", json={**base, "code": "LD-2A", "period_number": 2})).json()
+    first = (await client.post(f"{API}/catalog/groups", json={**base, "code": "LD-1C", "period_number": 1})).json()
+    for group_id in (second["id"], first["id"]):
+        r = await client.post(f"{API}/students/group-enrollments", json={
+            "student_id": student["id"], "group_id": group_id, "override_prerequisites": True})
+        assert r.status_code == 201, r.text
+
+    titles = [e["title"] for e in (await client.get(f"{API}/students/{student['id']}/history")).json()["events"]]
+    assert "Pasó a 2.º — grupo LD-2A" in titles
+    assert "Recursa materias de 1.º con el grupo LD-1C" in titles
+    assert not any(t.startswith(("Volvió", "Repite")) for t in titles)
