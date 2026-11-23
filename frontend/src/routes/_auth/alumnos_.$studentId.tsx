@@ -54,6 +54,7 @@ import { paymentToReceiptData, printReceipt } from "@/lib/receipt";
 import { printKardex } from "@/lib/kardex-print";
 import { fetchCampusLogo } from "@/lib/campus-logo";
 import { TakeInOtherGroupDialog } from "@/components/other-group-dialogs";
+import { StudentHistorySection } from "@/components/student-history";
 import { downloadKardexPdf } from "@/lib/kardex-pdf";
 import { downloadKardexCsv, downloadKardexExcel, downloadKardexWord } from "@/lib/kardex-export";
 import {
@@ -516,6 +517,7 @@ function DatosTab({ student }: { student: Student }) {
       </CardContent>
     </Card>
     <PortalAccessCard student={student} />
+    <StudentHistorySection studentId={student.id} />
     </div>
   );
 }

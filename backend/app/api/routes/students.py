@@ -536,6 +536,19 @@ async def _student_and_group(session, scope, student_id, group_id) -> tuple[Stud
     return student, group
 
 
+@router.get("/{student_id}/history")
+async def student_history_view(
+    session: SessionDep, _: CanStudentsRead, scope: CampusScope, student_id: uuid.UUID
+) -> dict:
+    """Historia del alumno: where they are now and what happened, in order."""
+    from app.services.student_history import student_history
+
+    student = await session.get(Student, student_id)
+    if student is None or (scope is not None and student.campus_id not in scope):
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return await student_history(session, student)
+
+
 @router.get("/{student_id}/current-group")
 async def student_current_group(
     session: SessionDep, _: CanStudentsRead, student_id: uuid.UUID
