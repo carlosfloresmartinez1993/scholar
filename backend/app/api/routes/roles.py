@@ -136,6 +136,7 @@ async def delete_role(session: SessionDep, current_user: CanRolesEdit, role_id: 
         raise HTTPException(status_code=409, detail="Hay usuarios con este rol: cámbiales el rol antes de borrarlo")
     for row in (await session.exec(select(RolePermission).where(RolePermission.role_id == role.id))).all():
         await session.delete(row)
+    await session.flush()  # its permissions first: they point at the role
     await session.delete(role)
     audit.record(session, actor=current_user.email, action="role.deleted", entity="role",
                  entity_id=str(role_id), detail=role.name)

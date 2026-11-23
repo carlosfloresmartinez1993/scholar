@@ -11,6 +11,7 @@ os.environ.setdefault("UPLOADS_DIR", "/tmp/scholar-test-uploads")
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -29,6 +30,14 @@ PASSWORD = "testpassword1"
 @pytest.fixture
 async def db_engine():
     engine = create_async_engine("sqlite+aiosqlite://", connect_args={"check_same_thread": False})
+
+    # like Postgres: a row can't be deleted while another still points at it
+    @event.listens_for(engine.sync_engine, "connect")
+    def _foreign_keys(dbapi_connection, _):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     yield engine

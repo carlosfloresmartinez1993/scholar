@@ -173,3 +173,11 @@ async def test_etapa2_ver_editar_and_delicate_actions(client, seed):
         fix = await c.post(f"{API}/grades/subject-enrollments/{ses[0]['id']}/correct",
                            json={"final_grade": 9, "reason": "prueba"})
         assert fix.status_code == 403
+
+
+async def test_a_role_without_users_can_be_deleted(client, seed):
+    await login(client)
+    role = (await client.post(f"{API}/roles", json={
+        "name": "Para borrar", "permissions": ["alumnos.editar", "reportes", "actas"]})).json()
+    assert (await client.delete(f"{API}/roles/{role['id']}")).status_code == 204
+    assert role["id"] not in {r["id"] for r in (await client.get(f"{API}/roles")).json()}

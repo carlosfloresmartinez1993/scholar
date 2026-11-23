@@ -5,7 +5,11 @@ from datetime import timedelta
 
 from app.models import GroupEnrollment
 from app.models.common import utcnow
+from sqlmodel import select
+
 from tests.conftest import login
+from tests.test_academic_flow import build_catalog
+from tests.test_treasury_documents import make_student
 
 
 async def test_stats_accepts_only_known_windows(client, seed):
@@ -32,20 +36,25 @@ async def test_enrollments_series_shape(client, seed):
 async def test_series_total_matches_kpi_window(client, seed, session_factory):
     """The chart and the 'inscripciones nuevas' KPI share the same calendar-day
     window: their totals must agree."""
-    # seed enrollments directly: one now (inside any window) and one far outside
+    # two real enrollments: one now (inside any window), one moved 40 days back
+    await login(client)
+    campus_id = str(seed["campus"].id)
+    catalog = await build_catalog(client, campus_id)
+    other = (await client.post("/api/v1/catalog/groups", json={
+        "code": "LD-1B", "period_number": 1, "plan_version_id": catalog["plan"]["id"],
+        "term_id": catalog["term"]["id"]})).json()
+    student = await make_student(client, campus_id)
+    for group_id in (catalog["group"]["id"], other["id"]):
+        await client.post("/api/v1/students/group-enrollments", json={
+            "student_id": student["id"], "group_id": group_id})
     async with session_factory() as session:
-        for created_at in (utcnow(), utcnow() - timedelta(days=40)):
-            session.add(
-                GroupEnrollment(
-                    student_id=uuid.uuid4(),
-                    group_id=uuid.uuid4(),
-                    plan_enrollment_id=uuid.uuid4(),
-                    created_at=created_at,
-                )
-            )
+        old = (await session.exec(
+            select(GroupEnrollment).where(GroupEnrollment.group_id == uuid.UUID(other["id"]))
+        )).one()
+        old.created_at = utcnow() - timedelta(days=40)
+        session.add(old)
         await session.commit()
 
-    await login(client)
     for days in (1, 7, 14, 30):
         stats = (await client.get(f"/api/v1/dashboard/stats?days={days}")).json()
         series = (
